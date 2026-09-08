@@ -6,3 +6,8 @@ build/
 .env
 .env.*
 !.env.example
+
+# Android / Gradle
+android/.gradle/
+android/local.properties
+android/**/build/

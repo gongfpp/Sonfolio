@@ -24,3 +24,14 @@ python3 -m http.server 4174
 - 录音与存储：录音服务、容量估算、保留策略和本地处理开关。
 
 原型界面会根据屏幕宽度自动切换为移动端全屏或桌面端手机壳预览。
+
+## Android 客户端工程
+
+`android/` 是正式客户端的 Kotlin + Jetpack Compose UI 壳，当前使用与 Web 原型一致的演示数据，包含 Today、Conversation、Search、Settings 和 Daily 页面。它已经可以生成 Debug APK，但尚未接入真实录音、Room、VAD 或 ASR；这些能力按可靠性优先级逐步加入。
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+```
+
+完整的技术选型、数据边界和分阶段实现顺序见 [`docs/technical-selection.md`](docs/technical-selection.md)。
