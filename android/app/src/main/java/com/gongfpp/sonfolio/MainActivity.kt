@@ -63,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -84,15 +85,40 @@ private val PaleGreenStrong = Color(0xFFDCEFD9)
 private val Amber = Color(0xFFDDA50B)
 private val AmberPale = Color(0xFFFFF3CB)
 
-private enum class ConversationType { Release, Lunch, Game, Unknown }
+internal enum class ConversationType { Release, Lunch, Game, Unknown }
 
-private sealed interface AppScreen {
+internal sealed interface AppScreen {
     data object Today : AppScreen
     data object Search : AppScreen
     data object Settings : AppScreen
     data object Daily : AppScreen
     data class Conversation(val type: ConversationType) : AppScreen
 }
+
+internal fun AppScreen.toSavedRoute(): String = when (this) {
+    AppScreen.Today -> "today"
+    AppScreen.Search -> "search"
+    AppScreen.Settings -> "settings"
+    AppScreen.Daily -> "daily"
+    is AppScreen.Conversation -> "conversation:${type.name}"
+}
+
+internal fun appScreenFromSavedRoute(route: String): AppScreen = when (route) {
+    "today" -> AppScreen.Today
+    "search" -> AppScreen.Search
+    "settings" -> AppScreen.Settings
+    "daily" -> AppScreen.Daily
+    else -> {
+        val typeName = route.substringAfter("conversation:", missingDelimiterValue = "")
+        val type = ConversationType.entries.firstOrNull { it.name == typeName }
+        if (type == null) AppScreen.Today else AppScreen.Conversation(type)
+    }
+}
+
+private val AppScreenSaver = Saver<AppScreen, String>(
+    save = { screen -> screen.toSavedRoute() },
+    restore = ::appScreenFromSavedRoute,
+)
 
 private data class ConversationPreview(
     val type: ConversationType,
@@ -158,7 +184,9 @@ private fun SonfolioTheme(content: @Composable () -> Unit) {
 
 @Composable
 private fun SonfolioApp() {
-    var screen by rememberSaveable { mutableStateOf<AppScreen>(AppScreen.Today) }
+    var screen by rememberSaveable(stateSaver = AppScreenSaver) {
+        mutableStateOf<AppScreen>(AppScreen.Today)
+    }
     val isMainScreen = screen is AppScreen.Today || screen is AppScreen.Search || screen is AppScreen.Settings
 
     Scaffold(
