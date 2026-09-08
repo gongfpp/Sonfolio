@@ -24,16 +24,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lightbulb
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -74,6 +74,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 private val Paper = Color(0xFFFBFAF6)
 private val Ink = Color(0xFF17201C)
@@ -84,8 +86,6 @@ private val PaleGreen = Color(0xFFE3F0DE)
 private val PaleGreenStrong = Color(0xFFDCEFD9)
 private val Amber = Color(0xFFDDA50B)
 private val AmberPale = Color(0xFFFFF3CB)
-
-internal enum class ConversationType { Release, Lunch, Game, Unknown }
 
 internal sealed interface AppScreen {
     data object Today : AppScreen
@@ -120,49 +120,13 @@ private val AppScreenSaver = Saver<AppScreen, String>(
     restore = ::appScreenFromSavedRoute,
 )
 
-private data class ConversationPreview(
-    val type: ConversationType,
-    val time: String,
-    val title: String,
-    val duration: String,
-    val summary: String,
-)
-
-private val conversations = listOf(
-    ConversationPreview(
-        ConversationType.Release,
-        "09:32",
-        "与同事讨论系统投产",
-        "12分钟",
-        "确认十点投产窗口，先备份数据库并复核回滚方案",
-    ),
-    ConversationPreview(
-        ConversationType.Lunch,
-        "12:11",
-        "午饭多人聊天",
-        "28分钟",
-        "聊到最近的工作节奏和周末安排",
-    ),
-    ConversationPreview(
-        ConversationType.Game,
-        "14:40",
-        "记录一个游戏想法",
-        "3分钟",
-        "构思电梯断电时的声音提示和玩家反馈",
-    ),
-    ConversationPreview(
-        ConversationType.Unknown,
-        "18:20",
-        "与未知人物对话",
-        "7分钟",
-        "围绕晚餐和回家时间的简短交流",
-    ),
-)
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SonfolioTheme { SonfolioApp() } }
+        setContent {
+            val viewModel: SonfolioViewModel = viewModel()
+            SonfolioTheme { SonfolioApp(viewModel) }
+        }
     }
 }
 
@@ -183,10 +147,11 @@ private fun SonfolioTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SonfolioApp() {
+private fun SonfolioApp(viewModel: SonfolioViewModel) {
     var screen by rememberSaveable(stateSaver = AppScreenSaver) {
         mutableStateOf<AppScreen>(AppScreen.Today)
     }
+    val conversations by viewModel.conversations.collectAsStateWithLifecycle()
     val isMainScreen = screen is AppScreen.Today || screen is AppScreen.Search || screen is AppScreen.Settings
 
     Scaffold(
@@ -218,7 +183,7 @@ private fun SonfolioApp() {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (val current = screen) {
-                AppScreen.Today -> TodayScreen(onOpen = { screen = it })
+                AppScreen.Today -> TodayScreen(conversations = conversations, onOpen = { screen = it })
                 AppScreen.Search -> SearchScreen(onOpen = { screen = it })
                 AppScreen.Settings -> SettingsScreen()
                 AppScreen.Daily -> DailyScreen(onBack = { screen = AppScreen.Today })
@@ -235,12 +200,12 @@ private fun SonfolioApp() {
 }
 
 @Composable
-private fun TodayScreen(onOpen: (AppScreen) -> Unit) {
+private fun TodayScreen(conversations: List<ConversationPreview>, onOpen: (AppScreen) -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp),
     ) {
         Text("今天 · 9月8日", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("4场对话 · 已连续记录 6小时 42分", color = InkSoft, fontSize = 14.sp)
+        Text("${conversations.size}场对话 · 已连续记录 6小时 42分", color = InkSoft, fontSize = 14.sp)
         Spacer(Modifier.height(16.dp))
         RecordingCard()
         SectionTitle("今天的对话")
@@ -254,7 +219,7 @@ private fun TodayScreen(onOpen: (AppScreen) -> Unit) {
             color = PaleGreen,
         ) {
             Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.List, contentDescription = null, tint = Green, modifier = Modifier.size(28.dp))
+                Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Green, modifier = Modifier.size(28.dp))
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text("今日总结", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Text("已整理 4 场对话 · 查看一日回顾", color = InkSoft, fontSize = 12.sp)
@@ -322,7 +287,7 @@ private fun TimelineCard(item: ConversationPreview, onClick: () -> Unit) {
 @Composable
 private fun DetailTopBar(title: String, meta: String, onBack: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
         Text(title, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         IconButton(onClick = {}) { Icon(Icons.Default.MoreVert, contentDescription = "更多") }
     }
@@ -448,10 +413,10 @@ private fun GameSummaryScreen(onBack: () -> Unit) {
             Surface(shape = CircleShape, color = AmberPale) { Text("信息量较大", color = Color(0xFF7C5D11), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
         }
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            StructuredCard("讨论主题", "电梯断电时如何让玩家先感知危险", Icons.Default.List)
+            StructuredCard("讨论主题", "电梯断电时如何让玩家先感知危险", Icons.AutoMirrored.Filled.List)
             StructuredCard("关键观点", "• 先用继电器断开的声音建立预警\n• 黑暗中保留短暂的方向提示", Icons.Default.Lightbulb)
             StructuredCard("共识与决定", "声音提示先于画面提示，作为第一版实验方案", Icons.Default.CheckCircle, PaleGreenStrong)
-            StructuredCard("未决问题", "不同电梯材质是否需要不同音色", Icons.Default.HelpOutline, Color(0xFFEDF3E6))
+            StructuredCard("未决问题", "不同电梯材质是否需要不同音色", Icons.AutoMirrored.Filled.HelpOutline, Color(0xFFEDF3E6))
         }
         Surface(
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp).clickable { transcriptOpen = true },

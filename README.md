@@ -27,7 +27,7 @@ python3 -m http.server 4174
 
 ## Android 客户端工程
 
-`android/` 是正式客户端的 Kotlin + Jetpack Compose UI 壳，当前使用与 Web 原型一致的演示数据，包含 Today、Conversation、Search、Settings 和 Daily 页面。它已经可以生成 Debug APK，但尚未接入真实录音、Room、VAD 或 ASR；这些能力按可靠性优先级逐步加入。
+`android/` 是正式客户端的 Kotlin + Jetpack Compose 工程，包含 Today、Conversation、Search、Settings 和 Daily 页面。当前已经接入 Room 本地数据库：首页时间线通过 `Flow -> ViewModel -> Compose` 读取数据库中的演示 Conversation，数据库同时建立了 AudioChunk、SpeechSegment、Transcript、ConversationSummary、Marker、RecordingGap 和 DailyJournal 等 V0.1 基础表。详情和搜索仍有部分演示内容，真实录音、VAD 和 ASR 尚未接入。
 
 ```bash
 cd android

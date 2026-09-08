@@ -4,7 +4,7 @@
 
 Sonfolio 的正式客户端选择 Android 原生 Kotlin。界面使用 Jetpack Compose，数据使用 Room/SQLite，持续录音由 Foreground Service 持有，录音后的 VAD、ASR 和结构化整理进入本地可重试的处理队列。V0.1 的核心目标是“录音不被 AI 失败打断”，所以录音链路与理解链路必须是两个互相隔离的生命周期。
 
-当前仓库中的 `android/` 是可编译的客户端 UI 壳，使用原型中的固定演示数据还原 Today、Conversation、Search、Settings 和 Daily 页面；它还没有接入真实麦克风、Room、VAD 或 ASR。这是有意的分阶段边界：先固定信息架构和视觉基线，再逐步替换数据源。
+当前仓库中的 `android/` 已经完成可编译、可在真机冷启动的客户端基线，并接入 Room 2.7.2、KSP、Repository、ViewModel 和数据库 Schema 导出。首页时间线的数据链路已经是 `Room Flow -> Repository -> ViewModel -> Compose`，演示 Conversation 会在空数据库中一次性初始化；详情和搜索仍有部分固定演示内容，真实麦克风、VAD 和 ASR 尚未接入。
 
 ## 为什么选择 Android 原生 Kotlin
 
@@ -14,7 +14,7 @@ Sonfolio 的正式客户端选择 Android 原生 Kotlin。界面使用 Jetpack C
 
 ## 为什么选择 Jetpack Compose
 
-Compose 用声明式状态描述页面，适合时间线、对话详情、搜索筛选、设置开关这类状态密集型界面。页面已经拆成 `RecordingCard`、`TimelineCard`、`SummaryCard`、`AudioPlayer` 和 `RetentionRow` 等组件，后续接入 Room 的 `Flow` 或处理队列状态时，只需替换状态来源，不必在 XML、ViewBinding 和手动刷新之间维护多套 UI 状态。Material 3 提供可访问的基础控件，但颜色、间距、圆角和信息层级仍由 Sonfolio 自己的设计令牌控制，以保持原型的暖白、墨色、森林绿和琥珀色视觉语言。
+Compose 用声明式状态描述页面，适合时间线、对话详情、搜索筛选、设置开关这类状态密集型界面。页面已经拆成 `RecordingCard`、`TimelineCard`、`SummaryCard`、`AudioPlayer` 和 `RetentionRow` 等组件，当前首页已经订阅 Room 的 `Flow`，数据库插入或处理状态变化会自动刷新时间线，不需要手动通知页面。Material 3 提供可访问的基础控件，但颜色、间距、圆角和信息层级仍由 Sonfolio 自己的设计令牌控制，以保持原型的暖白、墨色、森林绿和琥珀色视觉语言。
 
 Compose 只负责展示和交互，不负责录音、模型推理或文件清理。这样可以通过 ViewModel/Repository 将 UI 与设备服务隔开，也能让静态演示数据在真实数据接入前继续用于视觉回归。
 
@@ -28,7 +28,7 @@ AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal
 
 `AudioChunk` 是录音服务每 30 分钟创建的物理文件和时间范围；`SpeechSegment` 记录 VAD 命中的人声区间；`Transcript` 保存带时间戳的 ASR 文本；`Conversation` 按相邻间隔和环境连续性把多个语音段合并；`DailyJournal` 是一天级别的结构化回顾。每层都保存处理状态、错误信息和输入版本，任务重试采用幂等写入，避免重复转写或重复生成事件。
 
-正式实现使用 Room/SQLite 保存元数据和索引，音频文件保留在应用私有存储或用户指定的本地目录。Room 的迁移、事务和 Flow 适合长期累积的个人数据；全文搜索第一版使用 SQLite FTS5/Room FTS，先解决“能找到并跳到原始时间点”，语义向量搜索留到后续版本。数据库不能代替文件系统：音频文件路径、校验和、大小、保留策略和缺口状态都要显式记录。
+当前实现使用 Room 2.7.2/SQLite 保存元数据，并提交版本 1 的 Schema JSON，为后续迁移测试留下基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。音频文件保留在应用私有存储或用户指定的本地目录，数据库只保存路径、时间、大小、处理状态和摘要等元数据。全文搜索第一版使用 SQLite FTS5/Room FTS，先解决“能找到并跳到原始时间点”，语义向量搜索留到后续版本。
 
 ## 录音链路与处理链路
 
@@ -44,8 +44,8 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 
 ## 版本推进顺序
 
-1. 固定 Compose 信息架构和交互状态，保持当前静态 Web 原型作为视觉对照。
-2. 接入 Room 数据模型、迁移和演示数据导入，使首页、搜索和详情读取同一份本地数据。
+1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航状态已通过自定义 Saver 支持 Activity 重建。
+2. 已完成 Room 基础实体、Schema 版本 1、演示数据初始化和首页时间线读取；下一步把详情、转写和搜索也切换到同一数据库。
 3. 实现 Foreground Service、30 分钟切片、异常恢复、录音缺口记录和用户可见的录音健康状态。
 4. 接入 Silero VAD、SenseVoice/sherpa-onnx 和可重试处理队列，先跑通单个 chunk 的端侧流程。
 5. 加入基于间隔与环境连续性的 Conversation 合并、全文搜索和时间点回听。
