@@ -21,6 +21,7 @@ import androidx.room.RoomDatabase
 )
 abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
+    abstract fun recordingDao(): RecordingDao
 
     companion object {
         @Volatile

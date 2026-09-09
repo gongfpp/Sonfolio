@@ -27,11 +27,19 @@ python3 -m http.server 4174
 
 ## Android 客户端工程
 
-`android/` 是正式客户端的 Kotlin + Jetpack Compose 工程，包含 Today、Conversation、Search、Settings 和 Daily 页面。当前已经接入 Room 本地数据库：首页时间线通过 `Flow -> ViewModel -> Compose` 读取数据库中的演示 Conversation，数据库同时建立了 AudioChunk、SpeechSegment、Transcript、ConversationSummary、Marker、RecordingGap 和 DailyJournal 等 V0.1 基础表。详情和搜索仍有部分演示内容，真实录音、VAD 和 ASR 尚未接入。
+`android/` 是正式客户端的 Kotlin + Jetpack Compose 工程，包含 Today、Conversation、Search、Settings 和 Daily 页面。当前已经接入 Room 本地数据库：首页时间线通过 `Flow -> ViewModel -> Compose` 读取数据库中的演示 Conversation，数据库同时建立了 AudioChunk、SpeechSegment、Transcript、ConversationSummary、Marker、RecordingGap 和 DailyJournal 等 V0.1 基础表。
+
+`0.1.2` 已加入第一版真实录音链路：用户在前台授权后启动 microphone Foreground Service，`AudioRecord` 以 16 kHz、单声道、PCM 16-bit 写入 WAV，每 30 分钟形成一个 `AudioChunk`；通知栏和首页均提供唯一的“★ 标记刚才”入口，停止或异常时会收尾 WAV 并更新 Room，异常退出遗留的切片会在下次启动时修复。VAD、ASR 和全文搜索仍未接入。
 
 ```bash
 cd android
 ./gradlew :app:assembleDebug
+```
+
+安装 Debug APK：
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 完整的技术选型、数据边界和分阶段实现顺序见 [`docs/technical-selection.md`](docs/technical-selection.md)。

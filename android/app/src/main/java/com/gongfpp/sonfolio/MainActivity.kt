@@ -1,9 +1,15 @@
 package com.gongfpp.sonfolio
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -42,6 +48,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -60,7 +67,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
@@ -68,14 +77,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.ContextCompat
+import com.gongfpp.sonfolio.recording.RecordingStatus
+import kotlinx.coroutines.delay
 
 private val Paper = Color(0xFFFBFAF6)
 private val Ink = Color(0xFF17201C)
@@ -152,6 +166,48 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         mutableStateOf<AppScreen>(AppScreen.Today)
     }
     val conversations by viewModel.conversations.collectAsStateWithLifecycle()
+    val recordingStatus by viewModel.recordingStatus.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        val microphoneGranted = results[Manifest.permission.RECORD_AUDIO]
+            ?: (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED)
+        if (microphoneGranted) {
+            viewModel.startRecording()
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                results[Manifest.permission.POST_NOTIFICATIONS] == false
+            ) {
+                Toast.makeText(context, "通知未开启，通知栏标记按钮不可见", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            Toast.makeText(context, "需要麦克风权限才能开始记录", Toast.LENGTH_LONG).show()
+        }
+    }
+    val requestRecordingStart = {
+        val permissions = buildList {
+            if (
+                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.RECORD_AUDIO)
+            }
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (permissions.isEmpty()) {
+            viewModel.startRecording()
+        } else {
+            permissionLauncher.launch(permissions.toTypedArray())
+        }
+    }
     val isMainScreen = screen is AppScreen.Today || screen is AppScreen.Search || screen is AppScreen.Settings
 
     Scaffold(
@@ -183,7 +239,14 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (val current = screen) {
-                AppScreen.Today -> TodayScreen(conversations = conversations, onOpen = { screen = it })
+                AppScreen.Today -> TodayScreen(
+                    conversations = conversations,
+                    recordingStatus = recordingStatus,
+                    onStartRecording = requestRecordingStart,
+                    onStopRecording = viewModel::stopRecording,
+                    onMark = viewModel::markCurrentMoment,
+                    onOpen = { screen = it },
+                )
                 AppScreen.Search -> SearchScreen(onOpen = { screen = it })
                 AppScreen.Settings -> SettingsScreen()
                 AppScreen.Daily -> DailyScreen(onBack = { screen = AppScreen.Today })
@@ -200,14 +263,30 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
 }
 
 @Composable
-private fun TodayScreen(conversations: List<ConversationPreview>, onOpen: (AppScreen) -> Unit) {
+private fun TodayScreen(
+    conversations: List<ConversationPreview>,
+    recordingStatus: RecordingStatus,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onMark: () -> Unit,
+    onOpen: (AppScreen) -> Unit,
+) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp),
     ) {
         Text("今天 · 9月8日", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("${conversations.size}场对话 · 已连续记录 6小时 42分", color = InkSoft, fontSize = 14.sp)
+        Text(
+            "${conversations.size}场对话 · ${if (recordingStatus.isRecording) "录音服务运行中" else "今天尚未开始记录"}",
+            color = InkSoft,
+            fontSize = 14.sp,
+        )
         Spacer(Modifier.height(16.dp))
-        RecordingCard()
+        RecordingCard(
+            status = recordingStatus,
+            onStart = onStartRecording,
+            onStop = onStopRecording,
+            onMark = onMark,
+        )
         SectionTitle("今天的对话")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             conversations.forEach { item -> TimelineCard(item) { onOpen(AppScreen.Conversation(item.type)) } }
@@ -231,7 +310,25 @@ private fun TodayScreen(conversations: List<ConversationPreview>, onOpen: (AppSc
 }
 
 @Composable
-private fun RecordingCard() {
+private fun RecordingCard(
+    status: RecordingStatus,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onMark: () -> Unit,
+) {
+    var nowMillis by remember(status.startedAtMillis) {
+        mutableLongStateOf(System.currentTimeMillis())
+    }
+    LaunchedEffect(status.isRecording, status.startedAtMillis) {
+        while (status.isRecording) {
+            nowMillis = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val elapsed = status.startedAtMillis
+        ?.let { startedAt -> formatElapsed(nowMillis - startedAt) }
+        ?: "00:00:00"
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(15.dp),
@@ -239,21 +336,68 @@ private fun RecordingCard() {
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFB5CDB3)),
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(22.dp).clip(CircleShape).background(Green))
-            Column(Modifier.padding(start = 10.dp).weight(1f)) {
-                Text("正在记录", fontWeight = FontWeight.Bold, fontSize = 19.sp)
-                Text("06:42:17", color = InkSoft, fontSize = 12.sp)
-            }
-            Waveform(accent = Green, modifier = Modifier.width(50.dp))
-            Spacer(Modifier.width(8.dp))
-            Surface(shape = RoundedCornerShape(11.dp), color = AmberPale) {
-                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("★", color = Amber, fontSize = 18.sp)
-                    Text("标记刚才", color = Color(0xFF694E00), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { if (status.isRecording) onStop() else onStart() }
+                    .padding(vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Green),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        if (status.isRecording) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = if (status.isRecording) "停止记录" else "开始记录",
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp),
+                    )
                 }
+                Column(Modifier.padding(start = 10.dp)) {
+                    Text(
+                        if (status.isRecording) "正在记录" else "开始记录",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 19.sp,
+                    )
+                    Text(
+                        if (status.isRecording) elapsed else "点击后持续在后台录音",
+                        color = InkSoft,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            if (status.isRecording) {
+                Waveform(accent = Green, modifier = Modifier.width(42.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Row(
+                modifier = Modifier
+                    .alpha(if (status.isRecording) 1f else .45f)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(AmberPale)
+                    .clickable(enabled = status.isRecording, onClick = onMark)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("★", color = Amber, fontSize = 18.sp)
+                Text("标记刚才", color = Color(0xFF694E00), fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
     }
+}
+
+private fun formatElapsed(durationMillis: Long): String {
+    val totalSeconds = maxOf(0, durationMillis / 1_000)
+    val hours = totalSeconds / 3_600
+    val minutes = totalSeconds % 3_600 / 60
+    val seconds = totalSeconds % 60
+    return listOf(hours, minutes, seconds)
+        .joinToString(":") { value -> value.toString().padStart(2, '0') }
 }
 
 @Composable
