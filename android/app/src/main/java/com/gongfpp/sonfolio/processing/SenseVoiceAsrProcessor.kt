@@ -1,0 +1,74 @@
+package com.gongfpp.sonfolio.processing
+
+import android.content.Context
+import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
+import java.io.File
+
+/**
+ * A process-local SenseVoice recognizer. The model is deliberately created once per worker and
+ * reused for all speech windows in that chunk; creating one native model per segment would waste
+ * hundreds of megabytes and makes OOM much more likely on a phone.
+ */
+class SenseVoiceAsrProcessor(
+    context: Context,
+) : AutoCloseable {
+    private val recognizer = OfflineRecognizer(
+        context.assets,
+        OfflineRecognizerConfig(
+            featConfig = FeatureConfig(
+                sampleRate = SileroVadProcessor.SAMPLE_RATE_HZ,
+                featureDim = 80,
+            ),
+            modelConfig = OfflineModelConfig(
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = MODEL_ASSET,
+                    language = "",
+                    useInverseTextNormalization = true,
+                ),
+                tokens = TOKENS_ASSET,
+                numThreads = 1,
+                debug = false,
+                provider = "cpu",
+            ),
+            decodingMethod = "greedy_search",
+        ),
+    )
+
+    fun transcribe(
+        file: File,
+        startOffsetMillis: Long,
+        endOffsetMillis: Long,
+    ): String {
+        val samples = WavPcmReader.readWindow(
+            file = file,
+            expectedSampleRateHz = SileroVadProcessor.SAMPLE_RATE_HZ,
+            startOffsetMillis = startOffsetMillis,
+            endOffsetMillis = endOffsetMillis,
+        )
+        if (samples.size < MIN_SAMPLES) return ""
+
+        val stream = recognizer.createStream()
+        return try {
+            stream.acceptWaveform(samples, SileroVadProcessor.SAMPLE_RATE_HZ)
+            recognizer.decode(stream)
+            recognizer.getResult(stream).text.trim()
+        } finally {
+            stream.release()
+        }
+    }
+
+    override fun close() {
+        recognizer.release()
+    }
+
+    companion object {
+        const val MODEL_ASSET = "sense-voice-model.int8.onnx"
+        const val TOKENS_ASSET = "sense-voice-tokens.txt"
+        const val MODEL_VERSION = "sherpa-onnx-v1.13.7-sensevoice-int8"
+        private const val MIN_SAMPLES = 1_600 // 100 ms at 16 kHz
+    }
+}

@@ -1,6 +1,7 @@
 package com.gongfpp.sonfolio
 
 import android.Manifest
+import android.media.MediaPlayer
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -67,6 +68,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -74,6 +76,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +93,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
 import com.gongfpp.sonfolio.recording.RecordingFeedback
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.flow.collectLatest
@@ -111,7 +117,7 @@ internal sealed interface AppScreen {
     data object Search : AppScreen
     data object Settings : AppScreen
     data object Daily : AppScreen
-    data class Conversation(val type: ConversationType) : AppScreen
+    data class Conversation(val type: ConversationType, val id: String? = null) : AppScreen
 }
 
 internal fun AppScreen.toSavedRoute(): String = when (this) {
@@ -119,7 +125,7 @@ internal fun AppScreen.toSavedRoute(): String = when (this) {
     AppScreen.Search -> "search"
     AppScreen.Settings -> "settings"
     AppScreen.Daily -> "daily"
-    is AppScreen.Conversation -> "conversation:${type.name}"
+    is AppScreen.Conversation -> id?.let { "conversation-id:$it" } ?: "conversation:${type.name}"
 }
 
 internal fun appScreenFromSavedRoute(route: String): AppScreen = when (route) {
@@ -128,9 +134,16 @@ internal fun appScreenFromSavedRoute(route: String): AppScreen = when (route) {
     "settings" -> AppScreen.Settings
     "daily" -> AppScreen.Daily
     else -> {
-        val typeName = route.substringAfter("conversation:", missingDelimiterValue = "")
-        val type = ConversationType.entries.firstOrNull { it.name == typeName }
-        if (type == null) AppScreen.Today else AppScreen.Conversation(type)
+        if (route.startsWith("conversation-id:")) {
+            AppScreen.Conversation(
+                type = ConversationType.Unknown,
+                id = route.removePrefix("conversation-id:").takeIf { it.isNotBlank() },
+            )
+        } else {
+            val typeName = route.substringAfter("conversation:", missingDelimiterValue = "")
+            val type = ConversationType.entries.firstOrNull { it.name == typeName }
+            if (type == null) AppScreen.Today else AppScreen.Conversation(type)
+        }
     }
 }
 
@@ -253,19 +266,26 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (val current = screen) {
-                AppScreen.Today -> TodayScreen(
-                    conversations = conversations,
+        AppScreen.Today -> TodayScreen(
+            conversations = conversations,
                     recordingStatus = recordingStatus,
                     onStartRecording = requestRecordingStart,
                     onStopRecording = viewModel::stopRecording,
                     onMark = viewModel::markCurrentMoment,
                     onOpen = { screen = it },
                 )
-                AppScreen.Search -> SearchScreen(onOpen = { screen = it })
+                AppScreen.Search -> SearchScreen(viewModel = viewModel, onOpen = { screen = it })
                 AppScreen.Settings -> SettingsScreen()
-                AppScreen.Daily -> DailyScreen(onBack = { screen = AppScreen.Today })
+                AppScreen.Daily -> DailyScreen(viewModel = viewModel, onBack = { screen = AppScreen.Today })
                 is AppScreen.Conversation -> {
-                    if (current.type == ConversationType.Game) {
+                    if (current.id != null) {
+                        RealConversationScreen(
+                            conversation = conversations.firstOrNull { it.id == current.id },
+                            conversationId = current.id,
+                            viewModel = viewModel,
+                            onBack = { screen = AppScreen.Today },
+                        )
+                    } else if (current.type == ConversationType.Game) {
                         GameSummaryScreen(onBack = { screen = AppScreen.Today })
                     } else {
                         ConversationScreen(current.type, onBack = { screen = AppScreen.Today })
@@ -303,7 +323,9 @@ private fun TodayScreen(
         )
         SectionTitle("今天的对话")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            conversations.forEach { item -> TimelineCard(item) { onOpen(AppScreen.Conversation(item.type)) } }
+            conversations.forEach { item ->
+                TimelineCard(item) { onOpen(AppScreen.Conversation(type = item.type, id = item.id)) }
+            }
         }
         Spacer(Modifier.height(12.dp))
         Surface(
@@ -315,7 +337,7 @@ private fun TodayScreen(
                 Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Green, modifier = Modifier.size(28.dp))
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text("今日总结", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("已整理 4 场对话 · 查看一日回顾", color = InkSoft, fontSize = 12.sp)
+                    Text("已整理 ${conversations.size} 场对话 · 查看一日回顾", color = InkSoft, fontSize = 12.sp)
                 }
                 Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Green)
             }
@@ -453,6 +475,161 @@ private fun DetailTopBar(title: String, meta: String, onBack: () -> Unit) {
         IconButton(onClick = {}) { Icon(Icons.Default.MoreVert, contentDescription = "更多") }
     }
     Text(meta, modifier = Modifier.padding(start = 46.dp), color = InkSoft, fontSize = 14.sp)
+}
+
+@Composable
+private fun RealConversationScreen(
+    conversation: ConversationPreview?,
+    conversationId: String,
+    viewModel: SonfolioViewModel,
+    onBack: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    val lines by remember(conversationId) {
+        viewModel.observeTranscript(conversationId)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val structuredSummary by remember(conversationId) {
+        viewModel.observeConversationSummary(conversationId)
+    }.collectAsStateWithLifecycle(initialValue = null)
+    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(true) }
+    val title = conversation?.title ?: "语音对话"
+    val meta = conversation?.let { formatConversationMeta(it) } ?: "正在整理"
+    val summary = conversation?.summary ?: "正在从本地转写中生成本段小结。"
+    val detailFields = listOf(
+        "识别片段" to "${lines.size} 段",
+        "整理方式" to if (conversation?.summary?.contains("暂时没有") == true) "仅保留时间线" else "本地提取式小结",
+        "说话人" to "暂不区分",
+    )
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
+    ) {
+        DetailTopBar(title, meta, onBack)
+        Spacer(Modifier.height(15.dp))
+        SummaryCard(summary, detailFields)
+        if (conversation?.summaryLevel == "DETAILED") {
+            val detailText = structuredSummary?.keyPointsJson
+                ?.removePrefix("[")
+                ?.removeSuffix("]")
+                ?.replace("\",\"", "；")
+                ?.replace("\\\"", "\"")
+                ?.ifBlank { null }
+                ?: lines.take(5).joinToString("\n") { "• ${it.text}" }
+            if (detailText.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                StructuredCard("详细总结", detailText, Icons.AutoMirrored.Filled.List)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Surface(Modifier.fillMaxWidth().height(1.dp), color = Line) {}
+        Row(
+            Modifier.fillMaxWidth().clickable { transcriptOpen = !transcriptOpen }.padding(vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(19.dp))
+            Text("结构化转写", modifier = Modifier.padding(start = 9.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(if (lines.isEmpty()) "处理中" else "${lines.size}段", color = InkSoft, fontSize = 12.sp)
+            Icon(Icons.Default.ExpandMore, contentDescription = null, tint = Ink)
+        }
+        if (transcriptOpen) {
+            if (lines.isEmpty()) {
+                Text("本段还没有可显示的文字，后台处理完成后会自动刷新。", color = InkSoft, fontSize = 12.5.sp)
+            } else {
+                lines.forEach { line ->
+                    Row(Modifier.padding(vertical = 4.dp)) {
+                        Text(
+                            formatClock(line.startedAtMillis),
+                            modifier = Modifier.width(55.dp),
+                            color = InkSoft,
+                            fontSize = 12.sp,
+                        )
+                        Text(line.text, color = Color(0xFF3E4A42), fontSize = 12.5.sp, lineHeight = 18.sp)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        RealAudioPlayer(lines)
+    }
+}
+
+private fun formatConversationMeta(item: ConversationPreview): String =
+    "${formatClock(item.startedAtMillis)}–${formatClock(item.endedAtMillis)} · ${item.duration}"
+
+private fun formatClock(millis: Long): String =
+    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("HH:mm"))
+
+@Composable
+private fun RealAudioPlayer(lines: List<TranscriptLine>) {
+    val context = LocalContext.current
+    var playing by rememberSaveable(lines.firstOrNull()?.id) { mutableStateOf(false) }
+    var player by remember(lines.firstOrNull()?.id) { mutableStateOf<MediaPlayer?>(null) }
+    val latestPlayer = rememberUpdatedState(player)
+    DisposableEffect(lines.firstOrNull()?.id) {
+        onDispose {
+            latestPlayer.value?.release()
+            player = null
+        }
+    }
+
+    Surface(shape = RoundedCornerShape(14.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(9.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = {
+                    if (playing) {
+                        player?.pause()
+                        playing = false
+                    } else {
+                        val first = lines.firstOrNull()
+                        if (first == null) {
+                            Toast.makeText(context, "这场对话还没有可回听的录音", Toast.LENGTH_SHORT).show()
+                        } else {
+                            runCatching {
+                                player?.release()
+                                MediaPlayer().apply {
+                                    setDataSource(first.localPath)
+                                    setOnPreparedListener { mediaPlayer ->
+                                        val offset = (first.startedAtMillis - first.chunkStartedAtMillis)
+                                            .coerceAtLeast(0L)
+                                        mediaPlayer.seekTo(offset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                                        mediaPlayer.start()
+                                        playing = true
+                                    }
+                                    setOnCompletionListener {
+                                        playing = false
+                                        it.release()
+                                        player = null
+                                    }
+                                    prepareAsync()
+                                    player = this
+                                }
+                            }.onFailure {
+                                playing = false
+                                Toast.makeText(context, "原始录音暂时无法播放", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.size(36.dp).clip(CircleShape).background(Green),
+            ) {
+                Icon(
+                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (playing) "暂停" else "播放",
+                    tint = Color.White,
+                )
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                Waveform(accent = Color(0xFF53966C), modifier = Modifier.fillMaxWidth())
+                Text(
+                    if (lines.isEmpty()) "等待原始录音" else "从首段语音开始回听",
+                    color = InkSoft,
+                    fontSize = 10.sp,
+                )
+            }
+            Text("原音", color = InkSoft, fontSize = 11.sp)
+        }
+    }
 }
 
 @Composable
@@ -611,22 +788,34 @@ private fun StructuredCard(title: String, body: String, icon: androidx.compose.u
 }
 
 @Composable
-private fun DailyScreen(onBack: () -> Unit) {
+private fun DailyScreen(viewModel: SonfolioViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
+    val localDate = remember { java.time.LocalDate.now().toString() }
+    val journal by remember(localDate) {
+        viewModel.observeDailyJournal(localDate)
+    }.collectAsStateWithLifecycle(initialValue = null)
+    val narrative = journal?.narrative
+    val sourceCount = journal?.sourceConversationCount ?: 4
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp)) {
-        DetailTopBar("今日回顾", "9月8日", onBack)
+        DetailTopBar("今日回顾", todayTitle().removePrefix("今天 · "), onBack)
         Surface(Modifier.fillMaxWidth().padding(top = 15.dp), RoundedCornerShape(15.dp), color = PaleGreen) {
             Column(Modifier.padding(15.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(19.dp))
                     Text("今天发生了什么", modifier = Modifier.padding(start = 9.dp), fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
-                Text("今天上午主要在处理系统投产相关工作。九点半和同事确认了晚上十点的投产安排，先做数据库备份，再复核回滚方案。中午聊了一些日常话题。下午记录了一个关于游戏电梯断电机制的想法，重点是用声音让玩家先感知危险。晚上和家里简单聊了晚餐与回家时间。", modifier = Modifier.padding(top = 13.dp), color = Color(0xFF39483E), fontSize = 13.sp, lineHeight = 23.sp)
+                Text(
+                    narrative ?: "今天上午主要在处理系统投产相关工作。九点半和同事确认了晚上十点的投产安排，先做数据库备份，再复核回滚方案。中午聊了一些日常话题。下午记录了一个关于游戏电梯断电机制的想法，重点是用声音让玩家先感知危险。晚上和家里简单聊了晚餐与回家时间。",
+                    modifier = Modifier.padding(top = 13.dp),
+                    color = Color(0xFF39483E),
+                    fontSize = 13.sp,
+                    lineHeight = 23.sp,
+                )
             }
         }
-        AuxiliaryCard("值得记住", "电梯断电机制的第一版方向已确定", Icons.Default.Star, Amber)
-        AuxiliaryCard("可能需要处理", "上线前再检查一次回滚方案", Icons.Default.Warning, Color(0xFFC59016))
-        Text("基于 4 场对话整理 · 原始录音仍按你的保留策略保存", modifier = Modifier.padding(top = 20.dp), color = InkSoft, fontSize = 11.sp)
+        AuxiliaryCard("值得记住", if (journal == null) "电梯断电机制的第一版方向已确定" else "本地已完成分段整理，后续可继续补充更具体的重点", Icons.Default.Star, Amber)
+        AuxiliaryCard("可能需要处理", if (journal == null) "上线前再检查一次回滚方案" else "暂未从本地转写中提取明确待办", Icons.Default.Warning, Color(0xFFC59016))
+        Text("基于 $sourceCount 场对话整理 · 原始录音仍按你的保留策略保存", modifier = Modifier.padding(top = 20.dp), color = InkSoft, fontSize = 11.sp)
         TextButton(onClick = {}) { Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("重新生成") }
     }
 }
@@ -646,9 +835,16 @@ private fun AuxiliaryCard(title: String, body: String, icon: androidx.compose.ui
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SearchScreen(onOpen: (AppScreen) -> Unit) {
-    var query by rememberSaveable { mutableStateOf("电梯 断电") }
+private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf("全部") }
+    val realHits by remember(query) {
+        viewModel.observeSearch(query)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val recentHits by remember {
+        viewModel.observeSearch("")
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val displayedHits = if (query.isBlank()) recentHits else realHits
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("搜索记忆", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         OutlinedTextField(
@@ -665,9 +861,31 @@ private fun SearchScreen(onOpen: (AppScreen) -> Unit) {
                 FilterChip(selected = filter == value, onClick = { filter = value }, label = { Text(value, fontSize = 12.sp) })
             }
         }
-        Text("找到 2 条相关内容", color = InkSoft, fontSize = 13.sp)
-        SearchResult("14:40", "记录一个游戏想法", "如果电梯突然断电，可以让玩家先听见继电器断开的声音……", "今天") { onOpen(AppScreen.Conversation(ConversationType.Game)) }
-        SearchResult("上周三", "游戏机制讨论", "当电梯断电时，角色会被困在中间楼层，需要手动恢复电力……", "38分钟") { onOpen(AppScreen.Conversation(ConversationType.Game)) }
+        Text(
+            if (query.isBlank()) "最近 ${displayedHits.size} 条转写" else "找到 ${displayedHits.size} 条相关内容",
+            color = InkSoft,
+            fontSize = 13.sp,
+        )
+        if (displayedHits.isEmpty()) {
+            Text(
+                if (query.isBlank()) "完成第一段录音和本地转写后，内容会出现在这里。"
+                else "没有找到包含“$query”的转写。",
+                modifier = Modifier.padding(top = 20.dp),
+                color = InkSoft,
+                fontSize = 13.sp,
+            )
+        } else {
+            displayedHits.take(30).forEach { hit ->
+                SearchResult(
+                    time = formatClock(hit.startedAtMillis),
+                    title = hit.title,
+                    excerpt = hit.text,
+                    trailing = formatClock(hit.endedAtMillis),
+                ) {
+                    onOpen(AppScreen.Conversation(ConversationType.Unknown, hit.conversationId))
+                }
+            }
+        }
     }
 }
 

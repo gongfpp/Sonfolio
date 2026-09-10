@@ -15,6 +15,7 @@ class AppScreenStateTest {
             AppScreen.Conversation(ConversationType.Lunch),
             AppScreen.Conversation(ConversationType.Game),
             AppScreen.Conversation(ConversationType.Unknown),
+            AppScreen.Conversation(ConversationType.Unknown, "auto-test-conversation"),
         )
 
         screens.forEach { screen ->

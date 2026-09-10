@@ -4,6 +4,7 @@ import com.gongfpp.sonfolio.data.local.AudioChunkEntity
 import com.gongfpp.sonfolio.data.local.MarkerEntity
 import com.gongfpp.sonfolio.data.local.RecordingDao
 import com.gongfpp.sonfolio.data.local.RecordingGapEntity
+import com.gongfpp.sonfolio.processing.ProcessingScheduler
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,7 @@ import kotlinx.coroutines.withContext
 
 class RecordingRepository(
     private val recordingDao: RecordingDao,
+    private val processingScheduler: ProcessingScheduler? = null,
 ) {
     fun observeStatus(): Flow<RecordingStatus> =
         recordingDao.observeActiveChunk().map { chunk ->
@@ -59,6 +61,9 @@ class RecordingRepository(
             processingState = state,
             errorMessage = errorMessage,
         )
+        if (state == "RECORDED" || state == "RECOVERED") {
+            processingScheduler?.enqueueVad(id)
+        }
     }
 
     suspend fun markNow(markedAtMillis: Long = System.currentTimeMillis()) {
@@ -123,6 +128,23 @@ class RecordingRepository(
             )
         }
         chunks.size
+    }
+
+    suspend fun enqueuePendingVad() {
+        recordingDao.getChunksWaitingForVad().forEach { chunk ->
+            processingScheduler?.enqueueVad(chunk.id)
+        }
+    }
+
+    suspend fun resetInterruptedProcessing() {
+        recordingDao.resetInterruptedProcessing()
+        recordingDao.resetInterruptedSpeechSegments()
+    }
+
+    suspend fun enqueuePendingAsr() {
+        recordingDao.getChunksWaitingForAsr().forEach { chunk ->
+            processingScheduler?.enqueueAsr(chunk.id)
+        }
     }
 
     companion object {

@@ -1,6 +1,6 @@
 # Sonfolio 客户端原型
 
-这是根据 `design/prototypes/sonfolio-v0.1-summary-flow.png` 还原的纯本地客户端界面原型，不包含后端、录音、VAD、ASR 或外部 API。页面使用原生 HTML、CSS 和 JavaScript，所有数据与交互状态都在前端内存中。
+这是根据 `design/prototypes/sonfolio-v0.1-summary-flow.png` 还原的 Sonfolio 客户端原型与 Android V0.1 实现。Web 目录用于视觉对照，`android/` 是正式的本地优先客户端：录音、VAD、ASR、对话合并、搜索和原音回听都在手机端完成，不依赖后端或外部 API。
 
 ## 本地预览
 
@@ -27,14 +27,16 @@ python3 -m http.server 4174
 
 ## Android 客户端工程
 
-`android/` 是正式客户端的 Kotlin + Jetpack Compose 工程，包含 Today、Conversation、Search、Settings 和 Daily 页面。当前已经接入 Room 本地数据库：首页时间线通过 `Flow -> ViewModel -> Compose` 读取数据库中的演示 Conversation，数据库同时建立了 AudioChunk、SpeechSegment、Transcript、ConversationSummary、Marker、RecordingGap 和 DailyJournal 等 V0.1 基础表。
+`android/` 是正式客户端的 Kotlin + Jetpack Compose 工程，包含 Today、Conversation、Search、Settings 和 Daily 页面。Room 本地数据库保存 `AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal` 链路以及标记和录音缺口；首页、详情、搜索和每日回顾均从同一份数据库状态刷新。
 
-`0.1.2` 已加入第一版真实录音链路：用户在前台授权后启动 microphone Foreground Service，`AudioRecord` 以 16 kHz、单声道、PCM 16-bit 写入 WAV，每 30 分钟形成一个 `AudioChunk`；通知栏和首页均提供唯一的“★ 标记刚才”入口，标记成功会即时反馈并保存前后各 3 分钟窗口，停止或异常时会收尾 WAV 并更新 Room，异常退出遗留的切片会在下次启动时修复。已在 Redmi Note 8 Pro 真机验证前台、后台持续写入、标记落库和异常切片恢复。VAD、ASR 和全文搜索仍未接入。
+`0.1.3` 在真实录音链路上接入了 Silero VAD、sherpa-onnx SenseVoice int8 本地 ASR 和串行 WorkManager 队列：录音文件落盘后自动提取人声窗口、写入带时间戳转写，按相邻间隔不超过 2 分钟合并为 Conversation，并生成可阅读的小结；信息量较大的对话另外保存本地提取式要点，一日回顾也会写入 Room。搜索页支持转写全文关键词匹配，详情页可展开结构化转写并从首段时间点回听原始 WAV。VAD、ASR 和真实时间线已经在 Redmi Note 8 Pro 上跑通，APK 约 244 MB（本地模型占主要体积）。
 
 ```bash
 cd android
 ./gradlew :app:assembleDebug
 ```
+
+模型和 arm64 native 运行库由 Git LFS 管理；从全新工作区构建前先执行 `git lfs pull`。
 
 安装 Debug APK：
 

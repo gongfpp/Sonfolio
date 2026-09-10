@@ -2,6 +2,7 @@ package com.gongfpp.sonfolio
 
 import android.app.Application
 import com.gongfpp.sonfolio.data.local.SonfolioDatabase
+import com.gongfpp.sonfolio.processing.ProcessingScheduler
 import com.gongfpp.sonfolio.recording.RecordingRepository
 
 class SonfolioApplication : Application() {
@@ -9,7 +10,8 @@ class SonfolioApplication : Application() {
     val conversationRepository by lazy {
         ConversationRepository(database.conversationDao())
     }
+    val processingScheduler by lazy { ProcessingScheduler(this) }
     val recordingRepository by lazy {
-        RecordingRepository(database.recordingDao())
+        RecordingRepository(database.recordingDao(), processingScheduler)
     }
 }
