@@ -4,7 +4,7 @@
 
 Sonfolio 的正式客户端选择 Android 原生 Kotlin。界面使用 Jetpack Compose，数据使用 Room/SQLite，持续录音由 Foreground Service 持有，录音后的 VAD、ASR 和结构化整理进入本地可重试的处理队列。V0.1 的核心目标是“录音不被 AI 失败打断”，所以录音链路与理解链路必须是两个互相隔离的生命周期。
 
-当前仓库中的 `android/` 已经完成可编译的客户端基线，并接入 Room 2.7.2、KSP、Repository、ViewModel 和数据库 Schema 导出。首页时间线的数据链路已经是 `Room Flow -> Repository -> ViewModel -> Compose`，演示 Conversation 会在空数据库中一次性初始化。`0.1.2` 进一步加入 microphone Foreground Service、真实 `AudioRecord`、WAV 切片、Room 录音状态、标记动作和异常切片恢复；详情和搜索仍有部分固定演示内容，VAD 和 ASR 尚未接入。
+当前仓库中的 `android/` 已经完成可编译的客户端基线，并接入 Room 2.7.2、KSP、Repository、ViewModel 和数据库 Schema 导出。首页时间线的数据链路已经是 `Room Flow -> Repository -> ViewModel -> Compose`，演示 Conversation 会在空数据库中一次性初始化。`0.1.2` 进一步加入 microphone Foreground Service、真实 `AudioRecord`、WAV 切片、Room 录音状态、标记动作即时反馈和异常切片恢复；这些链路已在 Redmi Note 8 Pro 真机完成前台、后台、WAV 解析、标记落库和异常恢复验证。详情和搜索仍有部分固定演示内容，VAD 和 ASR 尚未接入。
 
 ## 为什么选择 Android 原生 Kotlin
 
@@ -48,7 +48,7 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 
 1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航状态已通过自定义 Saver 支持 Activity 重建。
 2. 已完成 Room 基础实体、Schema 版本 1、演示数据初始化和首页时间线读取；下一步把详情、转写和搜索也切换到同一数据库。
-3. 已完成 Foreground Service、真实 `AudioRecord`、30 分钟 WAV 切片、通知栏标记/停止、异常切片修复和 `RecordingGap` 写入；仍需在连接的真机上完成实际麦克风、锁屏和长时间运行验证，并在设置页展示录音健康与缺口。
+3. 已完成 Foreground Service、真实 `AudioRecord`、30 分钟 WAV 切片、通知栏标记/停止、标记即时反馈、异常切片修复和 `RecordingGap` 写入；已在 Redmi Note 8 Pro 真机验证短时前台/后台录音和异常恢复，仍需补充锁屏长时间运行验证，并在设置页展示录音健康与缺口。
 4. 接入 Silero VAD、SenseVoice/sherpa-onnx 和可重试处理队列，先跑通单个 chunk 的端侧流程。
 5. 加入基于间隔与环境连续性的 Conversation 合并、全文搜索和时间点回听。
 6. 最后实现结构化小结、大总结和一日总结，并用真实设备完成至少一整天的持续运行验证。

@@ -29,7 +29,7 @@ python3 -m http.server 4174
 
 `android/` 是正式客户端的 Kotlin + Jetpack Compose 工程，包含 Today、Conversation、Search、Settings 和 Daily 页面。当前已经接入 Room 本地数据库：首页时间线通过 `Flow -> ViewModel -> Compose` 读取数据库中的演示 Conversation，数据库同时建立了 AudioChunk、SpeechSegment、Transcript、ConversationSummary、Marker、RecordingGap 和 DailyJournal 等 V0.1 基础表。
 
-`0.1.2` 已加入第一版真实录音链路：用户在前台授权后启动 microphone Foreground Service，`AudioRecord` 以 16 kHz、单声道、PCM 16-bit 写入 WAV，每 30 分钟形成一个 `AudioChunk`；通知栏和首页均提供唯一的“★ 标记刚才”入口，停止或异常时会收尾 WAV 并更新 Room，异常退出遗留的切片会在下次启动时修复。VAD、ASR 和全文搜索仍未接入。
+`0.1.2` 已加入第一版真实录音链路：用户在前台授权后启动 microphone Foreground Service，`AudioRecord` 以 16 kHz、单声道、PCM 16-bit 写入 WAV，每 30 分钟形成一个 `AudioChunk`；通知栏和首页均提供唯一的“★ 标记刚才”入口，标记成功会即时反馈并保存前后各 3 分钟窗口，停止或异常时会收尾 WAV 并更新 Room，异常退出遗留的切片会在下次启动时修复。已在 Redmi Note 8 Pro 真机验证前台、后台持续写入、标记落库和异常切片恢复。VAD、ASR 和全文搜索仍未接入。
 
 ```bash
 cd android
