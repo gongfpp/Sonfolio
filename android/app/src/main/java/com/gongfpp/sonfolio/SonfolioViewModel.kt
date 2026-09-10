@@ -29,6 +29,8 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
             initialValue = RecordingStatus(),
         )
 
+    val recordingFeedback = RecordingController.feedback
+
     init {
         viewModelScope.launch {
             if (!RecordingService.isRunningInProcess) {

@@ -88,6 +88,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
+import com.gongfpp.sonfolio.recording.RecordingFeedback
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.flow.collectLatest
 import com.gongfpp.sonfolio.recording.RecordingStatus
 import kotlinx.coroutines.delay
 
@@ -168,6 +173,15 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
     val conversations by viewModel.conversations.collectAsStateWithLifecycle()
     val recordingStatus by viewModel.recordingStatus.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        viewModel.recordingFeedback.collectLatest { feedback ->
+            val message = when (feedback) {
+                is RecordingFeedback.Marked -> "已标记刚才，前后 3 分钟将重点保留"
+                is RecordingFeedback.Failed -> feedback.message
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { results ->
@@ -274,7 +288,7 @@ private fun TodayScreen(
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp),
     ) {
-        Text("今天 · 9月8日", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(todayTitle(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(
             "${conversations.size}场对话 · ${if (recordingStatus.isRecording) "录音服务运行中" else "今天尚未开始记录"}",
             color = InkSoft,
@@ -308,6 +322,9 @@ private fun TodayScreen(
         }
     }
 }
+
+private fun todayTitle(now: Date = Date()): String =
+    "今天 · ${SimpleDateFormat("M月d日", Locale.CHINA).format(now)}"
 
 @Composable
 private fun RecordingCard(

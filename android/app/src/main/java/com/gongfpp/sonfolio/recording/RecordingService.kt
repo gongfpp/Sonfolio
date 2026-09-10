@@ -225,13 +225,29 @@ class RecordingService : Service() {
     }
 
     private fun markCurrentMoment() {
-        if (recordingJob?.isActive != true) return
-        serviceScope.launch {
-            repository.markNow()
-            notificationManager.notify(
-                NOTIFICATION_ID,
-                buildNotification(notificationStartedAtMillis, "刚才的内容已标记"),
+        if (recordingJob?.isActive != true) {
+            RecordingController.publishFeedback(
+                RecordingFeedback.Failed("当前没有正在进行的录音"),
             )
+            return
+        }
+        serviceScope.launch {
+            try {
+                val markedAtMillis = System.currentTimeMillis()
+                repository.markNow(markedAtMillis)
+                RecordingController.publishFeedback(
+                    RecordingFeedback.Marked(markedAtMillis),
+                )
+                notificationManager.notify(
+                    NOTIFICATION_ID,
+                    buildNotification(notificationStartedAtMillis, "刚才的内容已标记"),
+                )
+            } catch (error: Throwable) {
+                Log.e(TAG, "Unable to save recording marker", error)
+                RecordingController.publishFeedback(
+                    RecordingFeedback.Failed(error.message ?: "标记保存失败"),
+                )
+            }
         }
     }
 
