@@ -25,18 +25,21 @@ object RecordingController {
     fun start(context: Context) {
         val intent = Intent(context, RecordingService::class.java)
             .setAction(ACTION_START)
-        ContextCompat.startForegroundService(context, intent)
+        runCatching { ContextCompat.startForegroundService(context, intent) }
+            .onFailure { publishFeedback(RecordingFeedback.Failed("无法开始录音：${it.message ?: "请检查麦克风权限"}")) }
     }
 
     fun stop(context: Context) {
-        context.startService(
+        runCatching { context.startService(
             Intent(context, RecordingService::class.java).setAction(ACTION_STOP),
-        )
+        ) }.onFailure { publishFeedback(RecordingFeedback.Failed("停止录音失败，请重试")) }
     }
 
-    fun mark(context: Context) {
-        context.startService(
-            Intent(context, RecordingService::class.java).setAction(ACTION_MARK),
-        )
+    fun mark(context: Context, windowMinutes: Int = 3) {
+        runCatching { context.startService(
+            Intent(context, RecordingService::class.java)
+                .setAction(ACTION_MARK)
+                .putExtra(RecordingService.EXTRA_MARK_WINDOW_MINUTES, windowMinutes),
+        ) }.onFailure { publishFeedback(RecordingFeedback.Failed("标记未保存，请重试")) }
     }
 }

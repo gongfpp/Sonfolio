@@ -9,6 +9,20 @@ import org.junit.Test
 
 class WavChunkWriterTest {
     @Test
+    fun checkpointProducesPlayableHeaderWithoutClosingRecording() {
+        val file = File.createTempFile("sonfolio-checkpoint-", ".wav")
+        try {
+            WavChunkWriter(file, 16_000, 1).use { writer ->
+                writer.write(ByteArray(32_000), 32_000)
+                assertEquals(32_044L, writer.checkpoint())
+                assertEquals(32_000, littleEndianInt(file.readBytes(), 40))
+                writer.write(ByteArray(32_000), 32_000)
+            }
+            assertEquals(2_000L, WavChunkWriter.durationMillis(file.length(), 16_000, 1))
+        } finally { file.delete() }
+    }
+
+    @Test
     fun writesPcmDataAndFinalizesWavHeader() {
         val file = File.createTempFile("sonfolio-wav-", ".wav")
         try {

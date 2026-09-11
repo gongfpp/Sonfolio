@@ -67,7 +67,7 @@ class SileroVadProcessor(
         val merged = mutableListOf<DetectedSpeechWindow>()
         segments.sortedBy { it.startOffsetMillis }.forEach { current ->
             val previous = merged.lastOrNull()
-            if (previous == null || current.startOffsetMillis > previous.endOffsetMillis + MERGE_GAP_MILLIS) {
+            if (previous == null || current.startOffsetMillis > previous.endOffsetMillis + MERGE_GAP_MILLIS || current.endOffsetMillis - previous.startOffsetMillis > 30_000L) {
                 merged += current
             } else {
                 merged[merged.lastIndex] = previous.copy(

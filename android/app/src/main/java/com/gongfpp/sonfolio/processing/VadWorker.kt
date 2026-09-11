@@ -7,6 +7,8 @@ import com.gongfpp.sonfolio.SonfolioApplication
 import com.gongfpp.sonfolio.data.local.SpeechSegmentEntity
 import java.io.File
 import java.util.UUID
+import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
 
 class VadWorker(
     appContext: Context,
@@ -18,6 +20,7 @@ class VadWorker(
         val app = applicationContext as SonfolioApplication
         val dao = app.database.recordingDao()
         val chunk = dao.getChunk(chunkId) ?: return Result.failure()
+        if (chunk.processingState in setOf("ASR_READY", "ASR_RUNNING", "VAD_READY")) return Result.success()
         val file = File(chunk.localPath)
         if (!file.exists() || file.length() <= 44L) {
             dao.updateProcessingState(chunkId, "VAD_FAILED", "录音文件不存在或为空")
@@ -26,7 +29,7 @@ class VadWorker(
 
         dao.updateProcessingState(chunkId, "VAD_RUNNING", null)
         return try {
-            val windows = SileroVadProcessor(applicationContext).detect(file)
+            val windows = InferenceClient(applicationContext).detect(file)
             val entities = windows.map { window ->
                 SpeechSegmentEntity(
                     id = UUID.randomUUID().toString(),
@@ -37,13 +40,16 @@ class VadWorker(
                     processingState = "VAD_READY",
                 )
             }
-            dao.deleteSpeechSegments(chunkId)
-            if (entities.isNotEmpty()) {
-                dao.insertSpeechSegments(entities)
+            app.database.withTransaction {
+                dao.deleteTranscriptsForChunk(chunkId)
+                dao.deleteSpeechSegments(chunkId)
+                if (entities.isNotEmpty()) dao.insertSpeechSegments(entities)
+                dao.updateProcessingState(chunkId, "VAD_READY", null)
             }
-            dao.updateProcessingState(chunkId, "VAD_READY", null)
             app.processingScheduler.enqueueAsr(chunkId)
             Result.success()
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: OutOfMemoryError) {
             dao.updateProcessingState(chunkId, "VAD_FAILED", "VAD 内存不足")
             Result.failure()

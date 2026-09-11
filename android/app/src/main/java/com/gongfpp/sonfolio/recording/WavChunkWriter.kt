@@ -30,6 +30,15 @@ internal class WavChunkWriter(
         dataByteCount += byteCount
     }
 
+    fun checkpoint(): Long {
+        val position = output.filePointer
+        output.seek(0)
+        output.write(createHeader(dataByteCount, sampleRateHz, channelCount, bitsPerSample))
+        output.seek(position)
+        output.fd.sync()
+        return WAV_HEADER_BYTES + dataByteCount
+    }
+
     fun finish(): Long {
         if (!finished) {
             output.seek(0)
@@ -56,14 +65,19 @@ internal class WavChunkWriter(
         ): Long {
             if (!file.exists() || file.length() < WAV_HEADER_BYTES) return 0
 
-            val dataLength = file.length() - WAV_HEADER_BYTES
+            val blockAlign = channelCount * bitsPerSample / 8
+            val dataLength = (file.length() - WAV_HEADER_BYTES) / blockAlign * blockAlign
             RandomAccessFile(file, "rw").use { output ->
+                output.setLength(WAV_HEADER_BYTES + dataLength)
                 output.seek(0)
                 output.write(createHeader(dataLength, sampleRateHz, channelCount, bitsPerSample))
                 output.fd.sync()
             }
             return file.length()
         }
+
+        fun durationMillis(byteSize: Long, sampleRateHz: Int, channelCount: Int): Long =
+            (byteSize - WAV_HEADER_BYTES).coerceAtLeast(0L) * 1_000L / (sampleRateHz * channelCount * 2L)
 
         private fun createHeader(
             dataLength: Long,

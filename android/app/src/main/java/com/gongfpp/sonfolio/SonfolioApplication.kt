@@ -7,11 +7,12 @@ import com.gongfpp.sonfolio.recording.RecordingRepository
 
 class SonfolioApplication : Application() {
     val database by lazy { SonfolioDatabase.getInstance(this) }
+    val preferences by lazy { SonfolioPreferences(this) }
     val conversationRepository by lazy {
-        ConversationRepository(database.conversationDao())
+        ConversationRepository(database, preferences)
     }
     val processingScheduler by lazy { ProcessingScheduler(this) }
     val recordingRepository by lazy {
-        RecordingRepository(database.recordingDao(), processingScheduler)
+        RecordingRepository(database.recordingDao(), processingScheduler, preferences)
     }
 }

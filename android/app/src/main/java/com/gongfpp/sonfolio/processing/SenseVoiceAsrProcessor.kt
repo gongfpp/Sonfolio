@@ -15,6 +15,7 @@ import java.io.File
  */
 class SenseVoiceAsrProcessor(
     context: Context,
+    preferredLanguage: String = "zh",
 ) : AutoCloseable {
     private val recognizer = OfflineRecognizer(
         context.assets,
@@ -26,7 +27,7 @@ class SenseVoiceAsrProcessor(
             modelConfig = OfflineModelConfig(
                 senseVoice = OfflineSenseVoiceModelConfig(
                     model = MODEL_ASSET,
-                    language = "",
+                    language = preferredLanguage.takeUnless { it == "auto" }.orEmpty(),
                     useInverseTextNormalization = true,
                 ),
                 tokens = TOKENS_ASSET,

@@ -17,6 +17,7 @@ data class ConversationPreview(
     val summaryLevel: String,
     val startedAtMillis: Long,
     val endedAtMillis: Long,
+    val isMarked: Boolean = false,
 )
 
 data class TranscriptLine(
@@ -26,6 +27,7 @@ data class TranscriptLine(
     val text: String,
     val localPath: String,
     val chunkStartedAtMillis: Long,
+    val isMarked: Boolean = false,
 )
 
 data class SearchHit(
@@ -35,4 +37,17 @@ data class SearchHit(
     val endedAtMillis: Long,
     val title: String,
     val text: String,
+    val isMarked: Boolean = false,
+)
+
+data class AudioChunkPreview(
+    val id: String,
+    val startedAtMillis: Long,
+    val endedAtMillis: Long?,
+    val localPath: String,
+    val byteSize: Long,
+    val processingState: String,
+    val errorMessage: String? = null,
+    val transcriptCount: Int = 0,
+    val visibleTranscriptCount: Int = 0,
 )

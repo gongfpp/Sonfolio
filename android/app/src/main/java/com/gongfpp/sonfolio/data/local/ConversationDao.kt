@@ -15,6 +15,7 @@ data class TranscriptAudioRow(
     @ColumnInfo(name = "text") val text: String,
     @ColumnInfo(name = "localPath") val localPath: String,
     @ColumnInfo(name = "chunkStartedAtMillis") val chunkStartedAtMillis: Long,
+    @ColumnInfo(name = "isMarked") val isMarked: Boolean,
 )
 
 data class TranscriptSearchRow(
@@ -24,12 +25,32 @@ data class TranscriptSearchRow(
     @ColumnInfo(name = "endedAtMillis") val endedAtMillis: Long,
     @ColumnInfo(name = "title") val title: String,
     @ColumnInfo(name = "text") val text: String,
+    @ColumnInfo(name = "isMarked") val isMarked: Boolean,
 )
 
 @Dao
 interface ConversationDao {
     @Query("SELECT * FROM conversations ORDER BY startedAtMillis ASC")
     fun observeTimeline(): Flow<List<ConversationEntity>>
+
+    @Query(
+        """
+        SELECT DISTINCT target.conversationId
+        FROM transcripts target
+        WHERE target.conversationId IS NOT NULL
+          AND EXISTS (
+              SELECT 1
+              FROM transcripts seed, markers m
+              WHERE seed.conversationId = target.conversationId
+                AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+                AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
+          )
+        """,
+    )
+    fun observeMarkedConversationIds(): Flow<List<String>>
+
+    @Query("SELECT * FROM markers ORDER BY markedAtMillis ASC")
+    suspend fun getMarkers(): List<MarkerEntity>
 
     @Query("SELECT COUNT(*) FROM conversations")
     suspend fun count(): Int
@@ -46,7 +67,8 @@ interface ConversationDao {
             t.endedAtMillis AS endedAtMillis,
             t.text AS text,
             a.localPath AS localPath,
-            a.startedAtMillis AS chunkStartedAtMillis
+            a.startedAtMillis AS chunkStartedAtMillis,
+            0 AS isMarked
         FROM transcripts t
         JOIN speech_segments s ON s.id = t.speechSegmentId
         JOIN audio_chunks a ON a.id = s.audioChunkId
@@ -66,7 +88,14 @@ interface ConversationDao {
             t.endedAtMillis AS endedAtMillis,
             t.text AS text,
             a.localPath AS localPath,
-            a.startedAtMillis AS chunkStartedAtMillis
+            a.startedAtMillis AS chunkStartedAtMillis,
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM transcripts seed, markers m
+                WHERE seed.conversationId = t.conversationId
+                  AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+                  AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
+            ) THEN 1 ELSE 0 END AS isMarked
         FROM transcripts t
         JOIN speech_segments s ON s.id = t.speechSegmentId
         JOIN audio_chunks a ON a.id = s.audioChunkId
@@ -87,8 +116,14 @@ interface ConversationDao {
     @Query("DELETE FROM conversations WHERE id LIKE 'demo-%'")
     suspend fun deleteDemoConversations()
 
+    @Query("DELETE FROM daily_journals WHERE id LIKE 'journal-%'")
+    suspend fun deleteGeneratedDailyJournals()
+
     @Query("UPDATE transcripts SET conversationId = :conversationId WHERE id = :transcriptId")
     suspend fun attachTranscript(transcriptId: String, conversationId: String)
+
+    @Query("UPDATE transcripts SET conversationId = :conversationId WHERE id IN (:transcriptIds)")
+    suspend fun attachTranscripts(transcriptIds: List<String>, conversationId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConversationSummaries(summaries: List<ConversationSummaryEntity>)
@@ -104,14 +139,30 @@ interface ConversationDao {
             t.startedAtMillis AS startedAtMillis,
             t.endedAtMillis AS endedAtMillis,
             c.title AS title,
-            t.text AS text
+            t.text AS text,
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM transcripts seed, markers m
+                WHERE seed.conversationId = t.conversationId
+                  AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+                  AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
+            ) THEN 1 ELSE 0 END AS isMarked
         FROM transcripts t
         JOIN conversations c ON c.id = t.conversationId
         WHERE t.processingState = 'ASR_READY'
-          AND (:term1 = '' OR t.text LIKE '%' || :term1 || '%')
-          AND (:term2 = '' OR t.text LIKE '%' || :term2 || '%')
-          AND (:term3 = '' OR t.text LIKE '%' || :term3 || '%')
-          AND (:term4 = '' OR t.text LIKE '%' || :term4 || '%')
+          AND (:term1 = '' OR t.text LIKE '%' || :term1 || '%' ESCAPE '\' OR c.title LIKE '%' || :term1 || '%' ESCAPE '\')
+          AND (:term2 = '' OR t.text LIKE '%' || :term2 || '%' ESCAPE '\' OR c.title LIKE '%' || :term2 || '%' ESCAPE '\')
+          AND (:term3 = '' OR t.text LIKE '%' || :term3 || '%' ESCAPE '\' OR c.title LIKE '%' || :term3 || '%' ESCAPE '\')
+          AND (:term4 = '' OR t.text LIKE '%' || :term4 || '%' ESCAPE '\' OR c.title LIKE '%' || :term4 || '%' ESCAPE '\')
+          AND (:fromMillis IS NULL OR t.startedAtMillis >= :fromMillis)
+          AND (:toMillis IS NULL OR t.startedAtMillis < :toMillis)
+          AND (:markedOnly = 0 OR EXISTS (
+              SELECT 1
+              FROM transcripts seed, markers m
+              WHERE seed.conversationId = t.conversationId
+                AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+                AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
+          ))
         ORDER BY t.startedAtMillis DESC
         LIMIT 100
         """,
@@ -121,6 +172,9 @@ interface ConversationDao {
         term2: String,
         term3: String,
         term4: String,
+        fromMillis: Long?,
+        toMillis: Long?,
+        markedOnly: Int,
     ): Flow<List<TranscriptSearchRow>>
 
     @Query("SELECT * FROM daily_journals WHERE localDate = :localDate LIMIT 1")

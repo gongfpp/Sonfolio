@@ -1,5 +1,6 @@
 package com.gongfpp.sonfolio.recording
 
+import com.gongfpp.sonfolio.SonfolioPreferences
 import com.gongfpp.sonfolio.data.local.AudioChunkEntity
 import com.gongfpp.sonfolio.data.local.MarkerEntity
 import com.gongfpp.sonfolio.data.local.RecordingDao
@@ -11,18 +12,42 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class RecordingRepository(
     private val recordingDao: RecordingDao,
     private val processingScheduler: ProcessingScheduler? = null,
+    private val preferences: SonfolioPreferences? = null,
 ) {
+    private val recoveryLock = Mutex()
     fun observeStatus(): Flow<RecordingStatus> =
         recordingDao.observeActiveChunk().map { chunk ->
             RecordingStatus(
                 isRecording = chunk != null,
-                startedAtMillis = chunk?.startedAtMillis,
+                startedAtMillis = chunk?.let {
+                    preferences?.recordingSessionStartedAtMillis ?: it.startedAtMillis
+                },
                 activeChunkId = chunk?.id,
             )
+        }
+
+    fun observeChunks(): Flow<List<com.gongfpp.sonfolio.AudioChunkPreview>> =
+        recordingDao.observeRecentChunks().map { chunks ->
+            chunks.map { row ->
+                val chunk = row.chunk
+                com.gongfpp.sonfolio.AudioChunkPreview(
+                    id = chunk.id,
+                    startedAtMillis = chunk.startedAtMillis,
+                    endedAtMillis = chunk.endedAtMillis,
+                    localPath = chunk.localPath,
+                    byteSize = chunk.byteSize,
+                    processingState = chunk.processingState,
+                    errorMessage = chunk.errorMessage,
+                    transcriptCount = row.transcriptCount,
+                    visibleTranscriptCount = row.visibleTranscriptCount,
+                )
+            }
         }
 
     suspend fun beginChunk(
@@ -66,13 +91,17 @@ class RecordingRepository(
         }
     }
 
-    suspend fun markNow(markedAtMillis: Long = System.currentTimeMillis()) {
+    suspend fun markNow(
+        markedAtMillis: Long = System.currentTimeMillis(),
+        windowMinutes: Int = DEFAULT_MARK_MINUTES,
+    ) {
+        val windowMillis = windowMinutes.coerceIn(1, MAX_MARK_MINUTES) * 60 * 1_000L
         recordingDao.insertMarker(
             MarkerEntity(
                 id = UUID.randomUUID().toString(),
                 markedAtMillis = markedAtMillis,
-                windowBeforeMillis = MARK_WINDOW_MILLIS,
-                windowAfterMillis = MARK_WINDOW_MILLIS,
+                windowBeforeMillis = windowMillis,
+                windowAfterMillis = 0L,
                 note = null,
             ),
         )
@@ -97,7 +126,9 @@ class RecordingRepository(
 
     suspend fun recoverDanglingChunks(
         recoveryStartedAtMillis: Long = System.currentTimeMillis(),
-    ): Int = withContext(Dispatchers.IO) {
+        skipWhenServiceRunning: Boolean = false,
+    ): Int = withContext(Dispatchers.IO) { recoveryLock.withLock {
+        if (skipWhenServiceRunning && RecordingService.isRunningInProcess) return@withLock 0
         val chunks = recordingDao.getDanglingChunks()
         chunks.forEach { chunk ->
             val file = File(chunk.localPath)
@@ -106,9 +137,10 @@ class RecordingRepository(
                 sampleRateHz = chunk.sampleRateHz,
                 channelCount = chunk.channelCount,
             )
-            val lastWriteAt = file.lastModified()
-                .takeIf { it >= chunk.startedAtMillis }
-                ?: chunk.startedAtMillis
+            // 修复文件头会改变修改时间；录到何时应由真实 PCM 样本数计算。
+            val lastWriteAt = chunk.startedAtMillis + WavChunkWriter.durationMillis(
+                byteSize, chunk.sampleRateHz, chunk.channelCount,
+            )
             finishChunk(
                 id = chunk.id,
                 endedAtMillis = lastWriteAt,
@@ -120,7 +152,7 @@ class RecordingRepository(
                 },
                 errorMessage = "录音服务异常退出，启动时已修复切片",
             )
-            recordGap(
+            if (recoveryStartedAtMillis > lastWriteAt) recordGap(
                 startedAtMillis = lastWriteAt,
                 endedAtMillis = recoveryStartedAtMillis,
                 reason = "录音服务异常退出后恢复",
@@ -128,11 +160,23 @@ class RecordingRepository(
             )
         }
         chunks.size
-    }
+    } }
 
     suspend fun enqueuePendingVad() {
         recordingDao.getChunksWaitingForVad().forEach { chunk ->
             processingScheduler?.enqueueVad(chunk.id)
+        }
+    }
+
+    suspend fun retryProcessing(chunkId: String) {
+        val chunk = recordingDao.getChunk(chunkId) ?: return
+        if (chunk.endedAtMillis == null || chunk.processingState.endsWith("RUNNING")) return
+        if (chunk.processingState == "ASR_FAILED") {
+            recordingDao.updateProcessingState(chunkId, "VAD_READY", null)
+            processingScheduler?.enqueueAsr(chunkId)
+        } else if (chunk.processingState in setOf("VAD_FAILED", "FAILED", "RECORDED", "RECOVERED")) {
+            recordingDao.updateProcessingState(chunkId, "RECORDED", null)
+            processingScheduler?.enqueueVad(chunkId)
         }
     }
 
@@ -148,6 +192,7 @@ class RecordingRepository(
     }
 
     companion object {
-        const val MARK_WINDOW_MILLIS = 3 * 60 * 1_000L
+        const val DEFAULT_MARK_MINUTES = 3
+        const val MAX_MARK_MINUTES = 20
     }
 }

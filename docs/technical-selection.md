@@ -26,17 +26,19 @@ Compose 只负责展示和交互，不负责录音、模型推理或文件清理
 AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal
 ```
 
-`AudioChunk` 是录音服务每 30 分钟创建的物理文件和时间范围；`SpeechSegment` 记录 VAD 命中的人声区间；`Transcript` 保存带时间戳的 ASR 文本；`Conversation` 按相邻间隔和环境连续性把多个语音段合并；`DailyJournal` 是一天级别的结构化回顾。每层都保存处理状态、错误信息和输入版本，任务重试采用幂等写入，避免重复转写或重复生成事件。
+`AudioChunk` 是录音服务每 5 分钟创建的物理文件和时间范围；`SpeechSegment` 记录 VAD 命中的人声区间；`Transcript` 保存带时间戳的 ASR 文本；`Conversation` 按相邻间隔和环境连续性把多个语音段合并，因此一场对话可以跨越多个物理切片；`DailyJournal` 是一天级别的结构化回顾。每层都保存处理状态、错误信息和输入版本，任务重试采用幂等写入，避免重复转写或重复生成事件。
 
 当前实现使用 Room 2.7.2/SQLite 保存元数据，并提交版本 1 的 Schema JSON，为后续迁移测试留下基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。音频文件保留在应用私有存储或用户指定的本地目录，数据库只保存路径、时间、大小、处理状态和摘要等元数据。搜索第一版先使用 SQLite `LIKE` 实现可用的全文关键词匹配并跳到对应 Conversation/时间点，下一步再引入 FTS5 索引；语义向量搜索留到后续版本。
 
 ## 录音链路与处理链路
 
-Foreground Service 是录音链路的所有者。当前实现要求用户在可见 Activity 中授予 `RECORD_AUDIO` 后启动服务，并在 Manifest 声明 `microphone` 类型和 `FOREGROUND_SERVICE_MICROPHONE`；这符合 Android 对 while-in-use 麦克风权限的限制。服务使用 `VOICE_RECOGNITION` 音源，以 16 kHz、单声道、PCM 16-bit 写入标准 WAV，30 分钟滚动生成一个 chunk，约占 57.6 MB。每个切片开始前先写入 `RECORDING` 状态，正常停止后补齐 WAV 头并更新为 `RECORDED`；进程异常退出时，下次打开应用或重新启动服务会按实际文件长度修复 WAV 头、把切片标记为 `RECOVERED`，并为最后写入时间至恢复时间创建 `RecordingGap`。
+Foreground Service 是录音链路的所有者。当前实现要求用户在可见 Activity 中授予 `RECORD_AUDIO` 后启动服务，并在 Manifest 声明 `microphone` 类型和 `FOREGROUND_SERVICE_MICROPHONE`；这符合 Android 对 while-in-use 麦克风权限的限制。服务使用 `VOICE_RECOGNITION` 音源，以 16 kHz、单声道、PCM 16-bit 写入标准 WAV，5 分钟滚动生成一个 chunk，约占 9.6 MB，便于录音仍在继续时及时启动 VAD/ASR；相邻切片仍由规则合并为完整 Conversation。每个切片开始前先写入 `RECORDING` 状态，正常停止后补齐 WAV 头并更新为 `RECORDED`；进程异常退出时，下次打开应用或重新启动服务会按实际文件长度修复 WAV 头、把切片标记为 `RECOVERED`，并为最后写入时间至恢复时间创建 `RecordingGap`。
 
-录音期间持有带 35 分钟硬超时的 Partial WakeLock，并在每个 30 分钟切片开始时续期，既覆盖完整切片，又避免异常路径无限持锁。通知栏使用低重要性常驻通知，只提供“★ 标记刚才”和“停止”；标记写入当前时间以及前后各 3 分钟的分析窗口。服务使用 `START_NOT_STICKY`，因为 Android 14 以后 microphone Foreground Service 不能在后台或开机广播中任意重建，自动拉起会与 while-in-use 权限约束冲突；恢复以用户重新进入应用并明确启动为边界。
+录音期间持有带 35 分钟硬超时的 Partial WakeLock，并在每个 5 分钟切片开始时续期。通知栏提供默认 3 分钟标记和停止，应用内还可选择回溯 10 或 20 分钟；新标记只记录向前窗口，命中后将整段连续 Conversation 高亮，不代表已经具备语义分段能力。服务使用 `START_STICKY`，每 5 秒刷新 WAV 头并同步文件；重启时按 PCM 样本数计算真正结束时间和缺口，不能使用修复文件之后的修改时间。系统强制停止或厂商禁止后台重启时，需要用户重新打开应用，不能保证服务一定自动恢复。
 
 WorkManager 或本地任务队列只处理已经落盘的 chunk。任务顺序为：读取 chunk → Silero VAD → 生成 SpeechSegment → SenseVoice ASR（通过 sherpa-onnx 运行）→ 写入 Transcript → 规则合并 Conversation → 更新搜索索引。每一步都可单独重试，模型内存异常只会将当前任务标记为失败并保留原始音频。网络 API 如果将来用于更高质量总结，也只能订阅已经完成的本地结构化输入，不能成为录音前置条件。
+
+`0.1.4` 将 VAD/ASR 原生计算放进非导出的 `:inference` 服务进程，用 Messenger 请求和返回时间窗/文字；数据库、队列和录音仍由主进程持有。选择系统绑定服务，是为了避免 native 崩溃直接退出录音进程，也避免将 Room 和偏好配置变成跨进程共享写入；实现依据 [Android 绑定服务说明](https://developer.android.com/develop/background-work/services/bound-services) 和 [进程与线程说明](https://developer.android.com/guide/components/processes-and-threads)。模型进程断开会把当前音频标为失败，主进程可继续录音；ASR 的业务失败写入数据库后结束当前队列项，后续音频仍继续处理。这个隔离机制不能替代整机低内存、锁屏和厂商省电策略的长时间验收。
 
 ## 模型选择
 
@@ -48,9 +50,9 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 
 1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航状态已通过自定义 Saver 支持 Activity 重建。
 2. 已完成 Room 基础实体、Schema 版本 1、演示数据初始化和首页时间线读取；真实 Conversation、详情转写、搜索和每日回顾已经切换到同一数据库。
-3. 已完成 Foreground Service、真实 `AudioRecord`、30 分钟 WAV 切片、通知栏标记/停止、标记即时反馈、异常切片修复和 `RecordingGap` 写入；已在 Redmi Note 8 Pro 真机验证前台/后台录音、WAV 解析、标记落库和异常恢复。
+3. 已实现 Foreground Service、真实 `AudioRecord`、5 分钟 WAV 切片、通知栏标记/停止、标记即时反馈、异常切片修复和 `RecordingGap` 写入；旧版本的前台/后台录音已在 Redmi Note 8 Pro 验证，新版本验证状态以开发验收记录为准。
 4. 已接入 Silero VAD、SenseVoice/sherpa-onnx 和串行 WorkManager 队列；现有真实录音在 Redmi Note 8 Pro 上生成 SpeechSegment 和 Transcript，模型 OOM/进程退出会保留原音并在下次启动重新排队。
-5. 已加入相邻间隔不超过 2 分钟的 Conversation 合并、每段提取式小结、长对话关键点、搜索结果进入详情，以及按首个语音时间点启动原 WAV 回听。
+5. 已加入相邻间隔不超过 2 分钟的 Conversation 合并、按文本生成短标题、每段提取式小结、长对话重点整理、搜索结果进入详情，以及跨切片按转写行跳转和连续回听原 WAV。
 6. 尚未完成的是锁屏一整天持续运行的长时验收、FTS5 索引、说话人识别和联网/本地生成式日记模型；这些不改变当前 V0.1 的录音与可读、可搜、可回听主链路。
 
 当前仓库不把“UI 壳构建成功”表述成“全天录音已完成”。V0.1 的验收必须同时看到：持续录音没有非预期缺口、处理失败不影响录音、事件可读可搜可回听、原始音频保留策略完全由用户控制。

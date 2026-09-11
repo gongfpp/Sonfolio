@@ -30,12 +30,23 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
             initialValue = RecordingStatus(),
         )
 
+    val recordingChunks = recordingRepository.observeChunks()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList(),
+        )
+
     val recordingFeedback = RecordingController.feedback
+
+    val recordingGaps = sonfolioApplication.database.recordingDao().observeGaps()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun observeTranscript(conversationId: String): Flow<List<TranscriptLine>> =
         repository.observeTranscript(conversationId)
 
-    fun observeSearch(query: String): Flow<List<SearchHit>> = repository.observeSearch(query)
+    fun observeSearch(query: String, filter: String = "全部"): Flow<List<SearchHit>> =
+        repository.observeSearch(query, filter)
 
     fun observeDailyJournal(localDate: String): Flow<com.gongfpp.sonfolio.data.local.DailyJournalEntity?> =
         repository.observeDailyJournal(localDate)
@@ -46,13 +57,14 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
     init {
         viewModelScope.launch {
             if (!RecordingService.isRunningInProcess) {
-                recordingRepository.recoverDanglingChunks()
+                recordingRepository.recoverDanglingChunks(skipWhenServiceRunning = true)
+                if (!RecordingService.isRunningInProcess) sonfolioApplication.preferences.clearRecordingSession()
             }
-            recordingRepository.resetInterruptedProcessing()
+            // WorkManager 自行恢复被中断任务，打开页面不能重置仍在执行的任务。
             recordingRepository.enqueuePendingVad()
             recordingRepository.enqueuePendingAsr()
             repository.rebuildFromTranscripts()
-            repository.seedDemoDataIfEmpty()
+            sonfolioApplication.database.conversationDao().deleteDemoConversations()
         }
     }
 
@@ -64,7 +76,15 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
         RecordingController.stop(getApplication())
     }
 
-    fun markCurrentMoment() {
-        RecordingController.mark(getApplication())
+    fun rebuildConversations() {
+        viewModelScope.launch { repository.rebuildFromTranscripts() }
+    }
+
+    fun retryProcessing(chunkId: String) {
+        viewModelScope.launch { recordingRepository.retryProcessing(chunkId) }
+    }
+
+    fun markCurrentMoment(windowMinutes: Int = 3) {
+        RecordingController.mark(getApplication(), windowMinutes)
     }
 }

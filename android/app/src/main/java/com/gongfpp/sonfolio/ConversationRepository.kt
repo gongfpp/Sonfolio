@@ -1,113 +1,133 @@
 package com.gongfpp.sonfolio
 
-import com.gongfpp.sonfolio.data.local.ConversationDao
 import com.gongfpp.sonfolio.data.local.ConversationEntity
 import com.gongfpp.sonfolio.data.local.ConversationSummaryEntity
 import com.gongfpp.sonfolio.data.local.DailyJournalEntity
 import com.gongfpp.sonfolio.data.local.TranscriptAudioRow
+import com.gongfpp.sonfolio.data.local.SonfolioDatabase
+import androidx.room.withTransaction
+import java.time.LocalDate
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
 class ConversationRepository(
-    private val conversationDao: ConversationDao,
+    private val database: SonfolioDatabase,
+    private val preferences: SonfolioPreferences,
 ) {
+    private val conversationDao = database.conversationDao()
     fun observeTimeline(): Flow<List<ConversationPreview>> =
-        conversationDao.observeTimeline().map { entities ->
-            entities.map(ConversationEntity::toPreview)
+        combine(
+            conversationDao.observeTimeline(),
+            conversationDao.observeMarkedConversationIds(),
+        ) { entities, markedIds ->
+            entities.map { it.toPreview(markedIds.contains(it.id)) }
         }
 
-    suspend fun seedDemoDataIfEmpty() {
-        if (conversationDao.count() == 0) {
-            conversationDao.insertAll(DemoConversations.entities)
-        }
-    }
 
     /**
      * Builds the first useful memory layer from completed ASR rows. This is intentionally
      * deterministic: V0.1 needs a readable, repeatable result even when no network model is
      * available. A later summarizer can replace the text without changing the timeline contract.
      */
-    suspend fun rebuildFromTranscripts() {
+    suspend fun rebuildFromTranscripts() = database.withTransaction {
         val rows = conversationDao.getReadyTranscriptRows()
-        if (rows.isEmpty()) return
 
         val groups = mutableListOf<MutableList<TranscriptAudioRow>>()
+        var groupEnd = Long.MIN_VALUE
         rows.forEach { row ->
             val current = groups.lastOrNull()
-            if (current == null || row.startedAtMillis - current.last().endedAtMillis > MERGE_GAP_MILLIS) {
+            if (current == null || row.startedAtMillis - groupEnd > MERGE_GAP_MILLIS) {
                 groups += mutableListOf(row)
+                groupEnd = row.endedAtMillis
             } else {
                 current += row
+                groupEnd = maxOf(groupEnd, row.endedAtMillis)
             }
         }
 
         conversationDao.clearGeneratedConversationLinks()
         conversationDao.deleteGeneratedConversations()
         conversationDao.deleteDemoConversations()
+        conversationDao.deleteGeneratedDailyJournals()
+
+        val markers = conversationDao.getMarkers()
+        val visibleGroups = groups.filter { group ->
+            !isShort(group, preferences) || groupIntersectsMarker(group, markers)
+        }
 
         val zone = ZoneId.systemDefault()
-        val entities = groups.map { group ->
+        val summaries = visibleGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
+        val entities = visibleGroups.map { group ->
             val start = group.first().startedAtMillis
-            val end = group.last().endedAtMillis
-            val id = "auto-${UUID.randomUUID()}"
+            val end = group.maxOf { it.endedAtMillis }
+            // 保留已有会话标识，边录边处理时不会让打开的详情失效。
+            val id = group.firstNotNullOfOrNull { it.conversationId?.takeIf { id -> id.startsWith("auto-") } }
+                ?: "auto-${group.first().transcriptId}"
+            val summary = summaries.getValue(group.first().transcriptId)
             ConversationEntity(
                 id = id,
                 kind = ConversationType.Unknown.name,
                 startedAtMillis = start,
                 endedAtMillis = end,
                 zoneId = zone.id,
-                title = "语音对话 · ${formatTime(start, zone)}",
-                briefSummary = summarize(group),
+                title = summary.title,
+                briefSummary = summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
                 processingState = "READY",
             )
         }
         conversationDao.insertAll(entities)
 
-        groups.zip(entities).forEach { (group, entity) ->
-            group.forEach { row -> conversationDao.attachTranscript(row.transcriptId, entity.id) }
+        visibleGroups.zip(entities).forEach { (group, entity) ->
+            group.map { it.transcriptId }.chunked(400).forEach { ids -> conversationDao.attachTranscripts(ids, entity.id) }
         }
 
         conversationDao.insertConversationSummaries(
-            groups.zip(entities)
+            visibleGroups.zip(entities)
                 .filter { (group, _) -> isDetailed(group) }
                 .map { (group, entity) ->
+                    val summary = summaries.getValue(group.first().transcriptId)
                     ConversationSummaryEntity(
                         id = "summary-${entity.id}",
                         conversationId = entity.id,
-                        keyPointsJson = group.take(MAX_KEY_POINTS).joinToString(",") { jsonQuote(it.text) }
-                            .let { "[$it]" },
-                        decisionsJson = "[]",
-                        followUpsJson = "[]",
-                        openQuestionsJson = "[]",
+                        keyPointsJson = jsonArray(summary.keyPoints),
+                        decisionsJson = jsonArray(summary.decisions),
+                        followUpsJson = jsonArray(summary.followUps),
+                        openQuestionsJson = jsonArray(summary.questions),
                         generatedLocally = true,
-                        modelVersion = "extractive-v0.1",
+                        modelVersion = "extractive-v0.2",
                         generatedAtMillis = System.currentTimeMillis(),
                     )
                 },
         )
 
-        val groupsByDate = groups.groupBy { group ->
-            Instant.ofEpochMilli(group.first().startedAtMillis).atZone(zone).toLocalDate()
-        }
+        val groupsByDate = visibleGroups.flatMap { group ->
+            group.groupBy { Instant.ofEpochMilli(it.startedAtMillis).atZone(zone).toLocalDate() }.toList()
+        }.groupBy({ it.first }, { it.second })
         groupsByDate.forEach { (date, dateGroups) ->
+            val daySummaries = dateGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
             conversationDao.insertDailyJournal(
                 DailyJournalEntity(
                     id = "journal-$date",
                     localDate = date.toString(),
                     zoneId = zone.id,
-                    narrative = dailyNarrative(dateGroups),
-                    memorableJson = "[]",
-                    possibleActionsJson = "[]",
+                    narrative = dateGroups.joinToString("\n\n") { group ->
+                        val time = Instant.ofEpochMilli(group.first().startedAtMillis).atZone(zone)
+                            .format(DateTimeFormatter.ofPattern("HH:mm"))
+                        "$time · ${daySummaries.getValue(group.first().transcriptId).brief}"
+                    },
+                    memorableJson = jsonArray(dateGroups.filter { groupIntersectsMarker(it, markers) }
+                        .map { daySummaries.getValue(it.first().transcriptId).brief }),
+                    possibleActionsJson = jsonArray(dateGroups.flatMap { daySummaries.getValue(it.first().transcriptId).followUps }.distinct().take(5)),
                     sourceConversationCount = dateGroups.size,
                     generatedAtMillis = System.currentTimeMillis(),
-                    modelVersion = "extractive-v0.1",
+                    modelVersion = "extractive-v0.2",
                     processingState = "READY",
                 ),
             )
@@ -124,16 +144,35 @@ class ConversationRepository(
                     text = row.text,
                     localPath = row.localPath,
                     chunkStartedAtMillis = row.chunkStartedAtMillis,
+                    isMarked = row.isMarked,
                 )
             }
         }
 
-    fun observeSearch(query: String): Flow<List<SearchHit>> {
+    fun observeSearch(query: String, filter: String = "全部"): Flow<List<SearchHit>> {
+        if (query.isBlank() && filter == "全部") return flowOf(emptyList())
         val terms = query.trim().split(Regex("\\s+"))
             .filter(String::isNotBlank)
+            .map { it.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") }
             .take(4)
             .let { it + List(4 - it.size) { "" } }
-        return conversationDao.observeSearch(terms[0], terms[1], terms[2], terms[3]).map { rows ->
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val from = when (filter) {
+            "今天" -> today.atStartOfDay(zone).toInstant().toEpochMilli()
+            "本周" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
+                .atStartOfDay(zone).toInstant().toEpochMilli()
+            else -> null
+        }
+        val to = when (filter) {
+            "今天" -> today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            "本周" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
+                .plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()
+            else -> null
+        }
+        return conversationDao.observeSearch(
+            terms[0], terms[1], terms[2], terms[3], from, to, if (filter == "仅标记") 1 else 0,
+        ).map { rows ->
             rows.map { row ->
                 SearchHit(
                     transcriptId = row.transcriptId,
@@ -142,6 +181,7 @@ class ConversationRepository(
                     endedAtMillis = row.endedAtMillis,
                     title = row.title,
                     text = row.text,
+                    isMarked = row.isMarked,
                 )
             }
         }
@@ -155,18 +195,7 @@ class ConversationRepository(
 }
 
 private const val MERGE_GAP_MILLIS = 2 * 60 * 1_000L
-private const val MAX_KEY_POINTS = 5
 
-private fun formatTime(millis: Long, zone: ZoneId): String =
-    Instant.ofEpochMilli(millis).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
-
-private fun summarize(group: List<TranscriptAudioRow>): String {
-    val text = group.joinToString(" ") { it.text.trim() }
-        .replace(Regex("\\s+"), " ")
-        .trim()
-    if (text.isEmpty()) return "已识别 ${group.size} 段语音，暂时没有可读文本"
-    return if (text.length <= 150) text else "${text.take(150)}…"
-}
 
 private fun isDetailed(group: List<TranscriptAudioRow>): Boolean {
     val duration = group.last().endedAtMillis - group.first().startedAtMillis
@@ -174,19 +203,26 @@ private fun isDetailed(group: List<TranscriptAudioRow>): Boolean {
     return group.size >= 8 || duration >= Duration.ofMinutes(10).toMillis() || characters >= 360
 }
 
-private fun dailyNarrative(groups: List<List<TranscriptAudioRow>>): String {
-    val lead = groups.take(3).joinToString("；") { summarize(it).trimEnd('…') }
-    return if (lead.isBlank()) {
-        "今天暂时没有识别出可阅读的语音内容。"
-    } else {
-        "今天共整理 ${groups.size} 场对话。$lead。"
+private fun isShort(group: List<TranscriptAudioRow>, preferences: SonfolioPreferences): Boolean {
+    val speechMillis = group.sumOf { (it.endedAtMillis - it.startedAtMillis).coerceAtLeast(0L) }
+    val characters = group.sumOf { row ->
+        row.text.count { it.isLetterOrDigit() || it in '\u4E00'..'\u9FFF' }
     }
+    return speechMillis < preferences.minimumSpeechSeconds * 1_000L &&
+        characters < preferences.minimumTextCharacters
 }
 
-private fun jsonQuote(text: String): String =
-    "\"${text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")}\""
+private fun groupIntersectsMarker(
+    group: List<TranscriptAudioRow>,
+    markers: List<com.gongfpp.sonfolio.data.local.MarkerEntity>,
+): Boolean = markers.any { marker ->
+    val start = marker.markedAtMillis - marker.windowBeforeMillis
+    val end = marker.markedAtMillis + marker.windowAfterMillis
+    group.any { row -> row.startedAtMillis <= end && row.endedAtMillis >= start }
+}
 
-private fun ConversationEntity.toPreview(): ConversationPreview {
+
+private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview {
     val zone = runCatching { ZoneId.of(zoneId) }.getOrDefault(ZoneId.systemDefault())
     val start = Instant.ofEpochMilli(startedAtMillis).atZone(zone)
     val durationMillis = endedAtMillis - startedAtMillis
@@ -198,83 +234,13 @@ private fun ConversationEntity.toPreview(): ConversationPreview {
     return ConversationPreview(
         id = id,
         type = type,
-        time = start.format(DateTimeFormatter.ofPattern("HH:mm")),
+        time = start.format(DateTimeFormatter.ofPattern("M月d日 HH:mm")),
         title = title,
         duration = durationLabel,
         summary = briefSummary,
         summaryLevel = summaryLevel,
         startedAtMillis = startedAtMillis,
         endedAtMillis = endedAtMillis,
+        isMarked = isMarked,
     )
-}
-
-private object DemoConversations {
-    private const val ZONE_ID = "Asia/Shanghai"
-    private val zone = ZoneId.of(ZONE_ID)
-
-    val entities = listOf(
-        conversation(
-            id = "demo-release",
-            type = ConversationType.Release,
-            hour = 9,
-            minute = 32,
-            durationMinutes = 12,
-            title = "与同事讨论系统投产",
-            summary = "确认十点投产窗口，先备份数据库并复核回滚方案",
-        ),
-        conversation(
-            id = "demo-lunch",
-            type = ConversationType.Lunch,
-            hour = 12,
-            minute = 11,
-            durationMinutes = 28,
-            title = "午饭多人聊天",
-            summary = "聊到最近的工作节奏和周末安排",
-        ),
-        conversation(
-            id = "demo-game",
-            type = ConversationType.Game,
-            hour = 14,
-            minute = 40,
-            durationMinutes = 3,
-            title = "记录一个游戏想法",
-            summary = "构思电梯断电时的声音提示和玩家反馈",
-        ),
-        conversation(
-            id = "demo-unknown",
-            type = ConversationType.Unknown,
-            hour = 18,
-            minute = 20,
-            durationMinutes = 7,
-            title = "与未知人物对话",
-            summary = "围绕晚餐和回家时间的简短交流",
-        ),
-    )
-
-    private fun conversation(
-        id: String,
-        type: ConversationType,
-        hour: Int,
-        minute: Int,
-        durationMinutes: Long,
-        title: String,
-        summary: String,
-    ): ConversationEntity {
-        val start = LocalDateTime.of(2026, 9, 8, hour, minute)
-            .atZone(zone)
-            .toInstant()
-            .toEpochMilli()
-
-        return ConversationEntity(
-            id = id,
-            kind = type.name,
-            startedAtMillis = start,
-            endedAtMillis = start + Duration.ofMinutes(durationMinutes).toMillis(),
-            zoneId = ZONE_ID,
-            title = title,
-            briefSummary = summary,
-            summaryLevel = if (type == ConversationType.Game) "DETAILED" else "BRIEF",
-            processingState = "READY",
-        )
-    }
 }

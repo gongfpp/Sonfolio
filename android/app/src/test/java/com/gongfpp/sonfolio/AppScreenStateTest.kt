@@ -11,11 +11,13 @@ class AppScreenStateTest {
             AppScreen.Search,
             AppScreen.Settings,
             AppScreen.Daily,
+            AppScreen.RawRecordings,
             AppScreen.Conversation(ConversationType.Release),
             AppScreen.Conversation(ConversationType.Lunch),
             AppScreen.Conversation(ConversationType.Game),
             AppScreen.Conversation(ConversationType.Unknown),
             AppScreen.Conversation(ConversationType.Unknown, "auto-test-conversation"),
+            AppScreen.Conversation(ConversationType.Unknown, "auto-test-conversation", "transcript-search-hit"),
         )
 
         screens.forEach { screen ->

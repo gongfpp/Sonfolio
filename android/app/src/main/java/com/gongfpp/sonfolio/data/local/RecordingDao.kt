@@ -4,7 +4,14 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Embedded
 import kotlinx.coroutines.flow.Flow
+
+data class AudioChunkRow(
+    @Embedded val chunk: AudioChunkEntity,
+    val transcriptCount: Int,
+    val visibleTranscriptCount: Int,
+)
 
 @Dao
 interface RecordingDao {
@@ -29,6 +36,23 @@ interface RecordingDao {
 
     @Query("SELECT * FROM audio_chunks WHERE id = :id LIMIT 1")
     suspend fun getChunk(id: String): AudioChunkEntity?
+
+    @Query("""
+        SELECT a.*, COUNT(t.id) AS transcriptCount,
+            COUNT(c.id) AS visibleTranscriptCount
+        FROM audio_chunks a
+        LEFT JOIN speech_segments s ON s.audioChunkId = a.id
+        LEFT JOIN transcripts t ON t.speechSegmentId = s.id
+        LEFT JOIN conversations c ON c.id = t.conversationId
+        GROUP BY a.id ORDER BY a.startedAtMillis DESC
+    """)
+    fun observeRecentChunks(): Flow<List<AudioChunkRow>>
+
+    @Query("SELECT * FROM recording_gaps ORDER BY startedAtMillis DESC LIMIT 20")
+    fun observeGaps(): Flow<List<RecordingGapEntity>>
+
+    @Query("UPDATE audio_chunks SET byteSize = :byteSize WHERE id = :id AND endedAtMillis IS NULL")
+    suspend fun checkpoint(id: String, byteSize: Long)
 
     @Query(
         """

@@ -60,10 +60,13 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: RecordingController.ACTION_START) {
             RecordingController.ACTION_STOP -> requestStop()
-            RecordingController.ACTION_MARK -> markCurrentMoment()
+            RecordingController.ACTION_MARK -> markCurrentMoment(intent)
             RecordingController.ACTION_START -> startRecordingIfNeeded()
         }
-        return START_NOT_STICKY
+        // A foreground service may be recreated after the process is reclaimed. The unfinished
+        // WAV is repaired on the next start, so returning START_STICKY preserves the recording
+        // boundary instead of silently losing the active chunk.
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -81,11 +84,16 @@ class RecordingService : Service() {
 
         stopRequested = false
         val serviceStartedAt = System.currentTimeMillis()
-        notificationStartedAtMillis = serviceStartedAt
+        val app = application as SonfolioApplication
+        app.preferences.beginRecordingSession(
+            app.preferences.recordingSessionStartedAtMillis ?: serviceStartedAt,
+        )
+        notificationStartedAtMillis = app.preferences.recordingSessionStartedAtMillis ?: serviceStartedAt
         try {
-            promoteToForeground(serviceStartedAt)
+            promoteToForeground(notificationStartedAtMillis)
         } catch (error: Throwable) {
             Log.e(TAG, "Unable to promote microphone service", error)
+            app.preferences.clearRecordingSession()
             serviceScope.launch {
                 repository.recordGap(
                     startedAtMillis = serviceStartedAt,
@@ -187,6 +195,7 @@ class RecordingService : Service() {
 
         var state = "RECORDED"
         var errorMessage: String? = null
+        var lastCheckpoint = startedAtElapsed
         try {
             while (
                 currentCoroutineContext().isActive &&
@@ -197,7 +206,17 @@ class RecordingService : Service() {
                     AudioRecord.ERROR_INVALID_OPERATION -> error("AudioRecord 当前状态不可读取")
                     AudioRecord.ERROR_BAD_VALUE -> error("录音缓冲区参数无效")
                     AudioRecord.ERROR -> error("录音设备返回未知错误")
-                    else -> if (bytesRead > 0) writer.write(buffer, bytesRead)
+                    else -> if (bytesRead > 0) {
+                        writer.write(buffer, bytesRead)
+                        if (SystemClock.elapsedRealtime() - lastCheckpoint >= 5_000L) {
+                            val byteSize = writer.checkpoint()
+                            serviceScope.launch {
+                                runCatching { (application as SonfolioApplication).database.recordingDao().checkpoint(chunkId, byteSize) }
+                                    .onFailure { Log.w(TAG, "录音状态更新延迟，音频已经落盘", it) }
+                            }
+                            lastCheckpoint = SystemClock.elapsedRealtime()
+                        }
+                    }
                 }
             }
         } catch (error: CancellationException) {
@@ -215,7 +234,7 @@ class RecordingService : Service() {
             withContext(NonCancellable) {
                 repository.finishChunk(
                     id = chunkId,
-                    endedAtMillis = System.currentTimeMillis(),
+                    endedAtMillis = startedAtMillis + WavChunkWriter.durationMillis(byteSize, SAMPLE_RATE_HZ, CHANNEL_COUNT),
                     byteSize = byteSize,
                     state = state,
                     errorMessage = errorMessage,
@@ -224,7 +243,7 @@ class RecordingService : Service() {
         }
     }
 
-    private fun markCurrentMoment() {
+    private fun markCurrentMoment(intent: Intent?) {
         if (recordingJob?.isActive != true) {
             RecordingController.publishFeedback(
                 RecordingFeedback.Failed("当前没有正在进行的录音"),
@@ -234,14 +253,19 @@ class RecordingService : Service() {
         serviceScope.launch {
             try {
                 val markedAtMillis = System.currentTimeMillis()
-                repository.markNow(markedAtMillis)
+                val windowMinutes = intent
+                    ?.getIntExtra(EXTRA_MARK_WINDOW_MINUTES, RecordingRepository.DEFAULT_MARK_MINUTES)
+                    ?.coerceIn(1, RecordingRepository.MAX_MARK_MINUTES)
+                    ?: RecordingRepository.DEFAULT_MARK_MINUTES
+                repository.markNow(markedAtMillis, windowMinutes)
                 RecordingController.publishFeedback(
-                    RecordingFeedback.Marked(markedAtMillis),
+                    RecordingFeedback.Marked(markedAtMillis, windowMinutes),
                 )
                 notificationManager.notify(
                     NOTIFICATION_ID,
-                    buildNotification(notificationStartedAtMillis, "刚才的内容已标记"),
+                    buildNotification(notificationStartedAtMillis, "已标记前 ${windowMinutes} 分钟涉及的对话"),
                 )
+                (application as SonfolioApplication).conversationRepository.rebuildFromTranscripts()
             } catch (error: Throwable) {
                 Log.e(TAG, "Unable to save recording marker", error)
                 RecordingController.publishFeedback(
@@ -266,6 +290,7 @@ class RecordingService : Service() {
     }
 
     private fun shutdownService() {
+        (application as SonfolioApplication).preferences.clearRecordingSession()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -369,8 +394,12 @@ class RecordingService : Service() {
         private const val SAMPLE_RATE_HZ = 16_000
         private const val CHANNEL_COUNT = 1
         private const val MIN_BUFFER_BYTES = 4_096
-        private const val CHUNK_DURATION_MILLIS = 30 * 60 * 1_000L
+        // Five-minute storage units let VAD/ASR start while the user is still recording. The
+        // conversation merger can still join adjacent units into one readable conversation.
+        private const val CHUNK_DURATION_MILLIS = 5 * 60 * 1_000L
         private const val WAKE_LOCK_TIMEOUT_MILLIS = 35 * 60 * 1_000L
+
+        const val EXTRA_MARK_WINDOW_MINUTES = "mark_window_minutes"
 
         @Volatile
         var isRunningInProcess: Boolean = false
