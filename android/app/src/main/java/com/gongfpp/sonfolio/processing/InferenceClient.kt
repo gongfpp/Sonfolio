@@ -11,14 +11,16 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import java.io.File
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
-internal class InferenceClient(private val context: Context) {
+internal class InferenceClient(
+    private val context: Context,
+    private val connectionTimeoutMillis: Long = 30_000L,
+    private val processingTimeoutMillis: Long = 8 * 60_000L,
+) {
     suspend fun detect(file: File): List<DetectedSpeechWindow> {
         val response = call(InferenceService.DETECT, Bundle().apply { putString("path", file.path) })
         val starts = requireNotNull(response.getLongArray("starts"))
@@ -39,41 +41,41 @@ internal class InferenceClient(private val context: Context) {
     }
 
     private suspend fun call(operation: Int, input: Bundle): Bundle = withContext(Dispatchers.Main) {
-        withTimeout(8 * 60_000L) {
-            var connection: ServiceConnection? = null
-            var bound = false
-            try {
-                suspendCancellableCoroutine { continuation ->
-                    fun fail(message: String) {
-                        if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message))
-                    }
-                    val reply = Messenger(Handler(Looper.getMainLooper()) { response ->
-                        if (continuation.isActive) {
-                            val error = response.data.getString("error")
-                            if (error == null) continuation.resume(response.data) else fail(error)
-                        }
-                        true
-                    })
-                    connection = object : ServiceConnection {
-                        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-                            if (!continuation.isActive) return
-                            runCatching {
-                                Messenger(binder).send(Message.obtain(null, operation).apply {
-                                    data = input
-                                    replyTo = reply
-                                })
-                            }.onFailure { fail("本地模型连接失败，原音仍保留") }
-                        }
-                        override fun onServiceDisconnected(name: ComponentName) = fail("模型进程已退出，录音不受影响，请重试")
-                        override fun onBindingDied(name: ComponentName) = fail("模型连接中断，请重试")
-                        override fun onNullBinding(name: ComponentName) = fail("无法启动本地模型")
-                    }
-                    bound = context.bindService(Intent(context, InferenceService::class.java), requireNotNull(connection), Context.BIND_AUTO_CREATE or Context.BIND_NOT_FOREGROUND)
-                    if (!bound) fail("无法连接本地模型")
-                }
-            } finally {
-                if (bound) connection?.let { runCatching { context.unbindService(it) } }
+        val connected = CompletableDeferred<Messenger>()
+        val result = CompletableDeferred<Bundle>()
+        fun fail(message: String) {
+            val error = IllegalStateException(message)
+            connected.completeExceptionally(error)
+            result.completeExceptionally(error)
+        }
+        val reply = Messenger(Handler(Looper.getMainLooper()) { response ->
+            val error = response.data.getString("error")
+            if (error == null) result.complete(response.data) else fail(error)
+            true
+        })
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                connected.complete(Messenger(binder))
             }
+            override fun onServiceDisconnected(name: ComponentName) = fail("模型进程已退出，录音不受影响，请重试")
+            override fun onBindingDied(name: ComponentName) = fail("模型连接中断，请重试")
+            override fun onNullBinding(name: ComponentName) = fail("无法启动本地模型")
+        }
+        var bound = false
+        try {
+            bound = context.bindService(Intent(context, InferenceService::class.java), connection, Context.BIND_AUTO_CREATE or Context.BIND_NOT_FOREGROUND)
+            check(bound) { "无法连接本地模型" }
+            // 冷启动即退出可能没有断开回调，连接等待必须单独限时。
+            val remote = withTimeoutOrNull(connectionTimeoutMillis) { connected.await() }
+                ?: error("本地模型启动超时，原音仍保留，请重试")
+            remote.send(Message.obtain(null, operation).apply { data = input; replyTo = reply })
+            // 自身超时是可重试的处理失败；外部取消仍正常向上传递。
+            withTimeoutOrNull(processingTimeoutMillis) { result.await() }
+                ?: error("本地模型处理超时，原音仍保留，请重试")
+        } finally {
+            if (bound) runCatching { context.unbindService(connection) }
+            connected.cancel()
+            result.cancel()
         }
     }
 }

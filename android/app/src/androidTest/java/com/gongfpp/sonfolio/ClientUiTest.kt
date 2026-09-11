@@ -15,7 +15,7 @@ class ClientUiTest {
 
     @Test fun searchSettingsAndRawAudioRoutesWork() {
         // 使用应用自身的可访问性动作验证交互，不依赖厂商限制的跨应用注入。
-        ui.onNodeWithContentDescription("搜索").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        ui.onNodeWithText("搜索").performClick()
         ui.onNodeWithText("搜索记忆").assertIsDisplayed()
         ui.onNodeWithText("输入文字后搜索本地转写").assertIsDisplayed()
         ui.onNode(hasSetTextAction()).performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("qa-no-such-text-491708")) }
@@ -23,7 +23,7 @@ class ClientUiTest {
         ui.onNodeWithText("找到 0 条相关内容").assertIsDisplayed()
         ui.onNodeWithContentDescription("清空搜索").performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.onNodeWithText("输入文字后搜索本地转写").assertIsDisplayed()
-        ui.onNodeWithContentDescription("设置").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        ui.onNodeWithText("设置").performClick()
         ui.onNodeWithText("录音与存储").assertIsDisplayed()
         ui.onNodeWithText("原始录音").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.onNodeWithText("原始录音").assertIsDisplayed()

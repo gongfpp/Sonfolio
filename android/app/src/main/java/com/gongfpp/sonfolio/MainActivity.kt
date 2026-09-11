@@ -189,6 +189,8 @@ private fun SonfolioTheme(content: @Composable () -> Unit) {
         colorScheme = lightColorScheme(
             primary = Green,
             onPrimary = Color.White,
+            secondaryContainer = PaleGreen,
+            onSecondaryContainer = Ink,
             background = Paper,
             surface = Color(0xFFFFFEFA),
             onBackground = Ink,
@@ -1116,10 +1118,10 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
         } else {
             displayedHits.forEach { hit ->
                 SearchResult(
-                    time = formatDateTime(hit.startedAtMillis),
+                    date = formatDateTime(hit.startedAtMillis).substringBefore(' '),
                     title = if (hit.isMarked) "★ ${hit.title}" else hit.title,
                     excerpt = hit.text,
-                    trailing = formatClock(hit.endedAtMillis),
+                    trailing = formatClock(hit.startedAtMillis),
                 ) {
                     onOpen(AppScreen.Conversation(ConversationType.Unknown, hit.conversationId, hit.transcriptId))
                 }
@@ -1129,11 +1131,11 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
 }
 
 @Composable
-private fun SearchResult(time: String, title: String, excerpt: String, trailing: String, onClick: () -> Unit) {
+private fun SearchResult(date: String, title: String, excerpt: String, trailing: String, onClick: () -> Unit) {
     Surface(Modifier.fillMaxWidth().padding(top = 10.dp).clickable(onClick = onClick), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
         Column(Modifier.padding(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(time, color = InkSoft, fontSize = 13.sp)
+                Text(date, color = InkSoft, fontSize = 13.sp)
                 Text(title, modifier = Modifier.padding(start = 8.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Text(trailing, color = InkSoft, fontSize = 11.sp)
             }

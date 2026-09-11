@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import org.json.JSONArray
 import org.junit.Assert.*
 import org.junit.Test
@@ -133,6 +134,23 @@ class PipelineIntegrationTest {
             val result = client.transcribe(file, listOf(DetectedSpeechWindow(0, 2_000)), "zh")
             assertEquals(1, result.size)
             assertArrayEquals(before, file.readBytes())
+        } finally { file.delete() }
+    }
+
+    @Test fun modelTimeoutIsFailureButExternalCancellationIsPreserved() = runBlocking {
+        val file = File(context.filesDir, "qa-timeout-${System.nanoTime()}.wav")
+        try {
+            WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(64_000), 64_000) }
+            val windows = listOf(DetectedSpeechWindow(0, 2_000))
+            val timeout = runCatching {
+                InferenceClient(context, processingTimeoutMillis = 1L).transcribe(file, windows, "zh")
+            }.exceptionOrNull()
+            assertTrue(timeout is IllegalStateException)
+            assertTrue(timeout!!.message!!.contains("处理超时"))
+            val cancellation = runCatching {
+                withTimeout(1L) { InferenceClient(context).transcribe(file, windows, "zh") }
+            }.exceptionOrNull()
+            assertTrue(cancellation is TimeoutCancellationException)
         } finally { file.delete() }
     }
 }
