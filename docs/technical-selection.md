@@ -4,7 +4,7 @@
 
 Sonfolio 的正式客户端选择 Android 原生 Kotlin。界面使用 Jetpack Compose，数据使用 Room/SQLite，持续录音由 Foreground Service 持有，录音后的 VAD、ASR 和结构化整理进入本地可重试的处理队列。V0.1 的核心目标是“录音不被 AI 失败打断”，所以录音链路与理解链路必须是两个互相隔离的生命周期。
 
-当前仓库中的 `android/` 已经完成可编译的客户端基线，并接入 Room 2.7.2、KSP、Repository、ViewModel 和数据库 Schema 导出。首页时间线的数据链路是 `Room Flow -> Repository -> ViewModel -> Compose`，空数据库仍会初始化演示 Conversation，出现真实转写后则自动替换为本地生成的 Conversation。`0.1.3` 已把 microphone Foreground Service、真实 `AudioRecord`、WAV 切片、标记即时反馈、异常切片恢复、Silero VAD、SenseVoice/sherpa-onnx ASR、规则合并、搜索、详情转写和首段原音回听接到同一条本地链路；VAD、ASR 和真实时间线已在 Redmi Note 8 Pro 真机验证。
+当前仓库中的 `android/` 已经完成可编译的客户端基线，并接入 Room 2.7.2、KSP、Repository、ViewModel 和数据库 Schema 导出。首页时间线的数据链路是 `Room Flow -> Repository -> ViewModel -> Compose`，首装为空列表，不再初始化演示 Conversation。`0.1.4` 的前后台录音、5 分钟切片、独立进程 VAD/ASR、标记、异常恢复、搜索、回放和导出已在 Redmi Note 8 Pro 真机验证；`0.1.5` 增加日期浏览及页面状态保存，验证边界分别以对应开发验收记录为准。
 
 ## 为什么选择 Android 原生 Kotlin
 
@@ -17,6 +17,8 @@ Sonfolio 的正式客户端选择 Android 原生 Kotlin。界面使用 Jetpack C
 Compose 用声明式状态描述页面，适合时间线、对话详情、搜索筛选、设置开关这类状态密集型界面。页面已经拆成 `RecordingCard`、`TimelineCard`、`SummaryCard`、`AudioPlayer` 和 `RetentionRow` 等组件，当前首页已经订阅 Room 的 `Flow`，数据库插入或处理状态变化会自动刷新时间线，不需要手动通知页面。Material 3 提供可访问的基础控件，但颜色、间距、圆角和信息层级仍由 Sonfolio 自己的设计令牌控制，以保持原型的暖白、墨色、森林绿和琥珀色视觉语言。
 
 Compose 只负责展示和交互，不负责录音、模型推理或文件清理。这样可以通过 ViewModel/Repository 将 UI 与设备服务隔开，也能让静态演示数据在真实数据接入前继续用于视觉回归。
+
+`0.1.5` 将长列表改为 `LazyColumn`，使屏幕外的对话、搜索结果和转写行不必同时参与布局；这只优化界面层，不等于数据库分页或全文索引。导航用可保存的路由栈记录打开来源，`SaveableStateHolder` 分别保留主页日期、搜索输入、筛选和列表位置，避免返回详情时重置搜索。日期范围由本地时区的相邻零点生成，不按固定 24 小时计算；跨午夜原音与对话在相交日期都可找到，统计按 PCM 数据长度与当日范围的交集去重求和，回听仍使用完整原文件。
 
 ## 本地数据模型与可靠性边界
 
@@ -48,8 +50,8 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 
 ## 版本推进顺序
 
-1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航状态已通过自定义 Saver 支持 Activity 重建。
-2. 已完成 Room 基础实体、Schema 版本 1、演示数据初始化和首页时间线读取；真实 Conversation、详情转写、搜索和每日回顾已经切换到同一数据库。
+1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航栈与页面状态支持保存，0.1.5 新增日期及返回场景尚需真机验收。
+2. 已完成 Room 基础实体、Schema 版本 1 和首页时间线读取；真实 Conversation、详情转写、搜索和每日回顾使用同一数据库，首装不注入演示内容。
 3. 已实现 Foreground Service、真实 `AudioRecord`、5 分钟 WAV 切片、通知栏标记/停止、标记即时反馈、异常切片修复和 `RecordingGap` 写入；旧版本的前台/后台录音已在 Redmi Note 8 Pro 验证，新版本验证状态以开发验收记录为准。
 4. 已接入 Silero VAD、SenseVoice/sherpa-onnx 和串行 WorkManager 队列；现有真实录音在 Redmi Note 8 Pro 上生成 SpeechSegment 和 Transcript，模型 OOM/进程退出会保留原音并在下次启动重新排队。
 5. 已加入相邻间隔不超过 2 分钟的 Conversation 合并、按文本生成短标题、每段提取式小结、长对话重点整理、搜索结果进入详情，以及跨切片按转写行跳转和连续回听原 WAV。

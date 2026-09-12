@@ -46,6 +46,8 @@ class RecordingRepository(
                     errorMessage = chunk.errorMessage,
                     transcriptCount = row.transcriptCount,
                     visibleTranscriptCount = row.visibleTranscriptCount,
+                    sampleRateHz = chunk.sampleRateHz,
+                    channelCount = chunk.channelCount,
                 )
             }
         }

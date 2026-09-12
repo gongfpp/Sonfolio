@@ -50,4 +50,6 @@ data class AudioChunkPreview(
     val errorMessage: String? = null,
     val transcriptCount: Int = 0,
     val visibleTranscriptCount: Int = 0,
+    val sampleRateHz: Int = 16_000,
+    val channelCount: Int = 1,
 )

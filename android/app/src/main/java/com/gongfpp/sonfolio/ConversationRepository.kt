@@ -107,10 +107,9 @@ class ConversationRepository(
                 },
         )
 
-        val groupsByDate = visibleGroups.flatMap { group ->
-            group.groupBy { Instant.ofEpochMilli(it.startedAtMillis).atZone(zone).toLocalDate() }.toList()
-        }.groupBy({ it.first }, { it.second })
+        val groupsByDate = transcriptGroupsByDate(visibleGroups, zone)
         groupsByDate.forEach { (date, dateGroups) ->
+            val dayWindow = DayWindow.of(date, zone)
             val daySummaries = dateGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
             conversationDao.insertDailyJournal(
                 DailyJournalEntity(
@@ -118,9 +117,10 @@ class ConversationRepository(
                     localDate = date.toString(),
                     zoneId = zone.id,
                     narrative = dateGroups.joinToString("\n\n") { group ->
-                        val time = Instant.ofEpochMilli(group.first().startedAtMillis).atZone(zone)
+                        val time = Instant.ofEpochMilli(maxOf(group.first().startedAtMillis, dayWindow.start)).atZone(zone)
                             .format(DateTimeFormatter.ofPattern("HH:mm"))
-                        "$time · ${daySummaries.getValue(group.first().transcriptId).brief}"
+                        val crossDay = if (group.any { it.startedAtMillis < dayWindow.start || it.endedAtMillis > dayWindow.end }) "跨日内容 · " else ""
+                        "$time · $crossDay${daySummaries.getValue(group.first().transcriptId).brief}"
                     },
                     memorableJson = jsonArray(dateGroups.filter { groupIntersectsMarker(it, markers) }
                         .map { daySummaries.getValue(it.first().transcriptId).brief }),

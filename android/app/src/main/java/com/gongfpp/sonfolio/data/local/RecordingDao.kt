@@ -48,7 +48,7 @@ interface RecordingDao {
     """)
     fun observeRecentChunks(): Flow<List<AudioChunkRow>>
 
-    @Query("SELECT * FROM recording_gaps ORDER BY startedAtMillis DESC LIMIT 20")
+    @Query("SELECT * FROM recording_gaps ORDER BY startedAtMillis DESC")
     fun observeGaps(): Flow<List<RecordingGapEntity>>
 
     @Query("UPDATE audio_chunks SET byteSize = :byteSize WHERE id = :id AND endedAtMillis IS NULL")

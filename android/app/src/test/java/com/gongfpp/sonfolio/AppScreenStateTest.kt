@@ -10,8 +10,9 @@ class AppScreenStateTest {
             AppScreen.Today,
             AppScreen.Search,
             AppScreen.Settings,
-            AppScreen.Daily,
-            AppScreen.RawRecordings,
+            AppScreen.Daily("2026-09-12"),
+            AppScreen.RawRecordings(),
+            AppScreen.RawRecordings("2026-09-11"),
             AppScreen.Conversation(ConversationType.Release),
             AppScreen.Conversation(ConversationType.Lunch),
             AppScreen.Conversation(ConversationType.Game),
@@ -29,5 +30,32 @@ class AppScreenStateTest {
     fun unknownRouteFallsBackToToday() {
         assertEquals(AppScreen.Today, appScreenFromSavedRoute("unknown"))
         assertEquals(AppScreen.Today, appScreenFromSavedRoute("conversation:Missing"))
+    }
+
+    @Test
+    fun oldAndInvalidDateRoutesRemainSafe() {
+        assertEquals(AppScreen.Daily(), appScreenFromSavedRoute("daily"))
+        assertEquals(AppScreen.Daily(), appScreenFromSavedRoute("daily:bad-date"))
+        assertEquals(AppScreen.RawRecordings(), appScreenFromSavedRoute("raw-recordings"))
+        assertEquals(AppScreen.RawRecordings(), appScreenFromSavedRoute("raw-recordings:bad-date"))
+    }
+
+    @Test
+    fun searchDetailReturnsToSearchAndKeepsHitRoute() {
+        val search = AppNavigation().selectTab(AppScreen.Search)
+        val detail = search.open(AppScreen.Conversation(ConversationType.Unknown, "conversation-1", "hit-2"))
+        assertEquals(search, detail.back())
+        assertEquals(detail, AppNavigation(detail.stack.map { appScreenFromSavedRoute(it.toSavedRoute()) }))
+        assertEquals(AppScreen.Today, detail.back().back().current)
+    }
+
+    @Test
+    fun rawAudioReturnsToItsActualOriginAndDoesNotDuplicateCurrentScreen() {
+        val raw = AppScreen.RawRecordings("2026-09-11")
+        val fromHome = AppNavigation().open(raw)
+        val fromSettings = AppNavigation().selectTab(AppScreen.Settings).open(raw)
+        assertEquals(AppScreen.Today, fromHome.back().current)
+        assertEquals(AppScreen.Settings, fromSettings.back().current)
+        assertEquals(fromSettings, fromSettings.open(raw))
     }
 }
