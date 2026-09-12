@@ -59,6 +59,8 @@ class AsrWorker(
                 dao.updateProcessingState(chunkId, "ASR_READY", null)
                 app.conversationRepository.rebuildFromTranscripts()
             }
+            // AI 总结排队失败不能把已经成功的 ASR 标记为失败。
+            try { app.summaryCoordinator.enqueueForNewChunk(chunkId) } catch (error: CancellationException) { throw error } catch (_: Exception) { }
             Result.success()
         } catch (error: CancellationException) {
             throw error

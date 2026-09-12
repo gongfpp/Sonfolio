@@ -6,6 +6,9 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 object RecordingController {
     const val ACTION_START = "com.gongfpp.sonfolio.action.START_RECORDING"
@@ -17,6 +20,10 @@ object RecordingController {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val feedback = _feedback.asSharedFlow()
+    private val _health = MutableStateFlow(CaptureHealth())
+    val health = _health.asStateFlow()
+    internal fun publishHealth(value: CaptureHealth) { _health.value = value }
+    internal fun updateHealth(change: (CaptureHealth) -> CaptureHealth) { _health.update(change) }
 
     fun publishFeedback(feedback: RecordingFeedback) {
         _feedback.tryEmit(feedback)

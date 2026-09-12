@@ -9,13 +9,20 @@ plugins {
 android {
     namespace = "com.gongfpp.sonfolio"
     compileSdk = 35
+    ndkVersion = "29.0.14206865"
+    providers.gradleProperty("sonfolioNdkPath").orNull?.let { ndkPath = it }
 
     defaultConfig {
         applicationId = "com.gongfpp.sonfolio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.1.6"
+        versionCode = 9
+        versionName = "0.1.8"
+        ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild { cmake {
+            arguments += "-DANDROID_STL=c++_shared"
+            providers.gradleProperty("sonfolioLlamaSource").orNull?.let { arguments += "-DFETCHCONTENT_SOURCE_DIR_LLAMA=$it" }
+        } }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -41,6 +48,8 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets.getByName("androidTest").assets.srcDir("schemas")
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6" } }
 }
 
 room {

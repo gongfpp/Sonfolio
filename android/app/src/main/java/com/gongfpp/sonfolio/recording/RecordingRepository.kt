@@ -11,6 +11,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,13 +23,15 @@ class RecordingRepository(
 ) {
     private val recoveryLock = Mutex()
     fun observeStatus(): Flow<RecordingStatus> =
-        recordingDao.observeActiveChunk().map { chunk ->
+        combine(recordingDao.observeActiveChunk(), RecordingController.health, recordingDao.observeGaps()) { chunk, health, gaps ->
             RecordingStatus(
-                isRecording = chunk != null,
+                isRecording = health.serviceActive,
                 startedAtMillis = chunk?.let {
                     preferences?.recordingSessionStartedAtMillis ?: it.startedAtMillis
                 },
                 activeChunkId = chunk?.id,
+                health = health,
+                interruptionPending = gaps.any { it.endedAtMillis == null },
             )
         }
 
@@ -154,12 +157,7 @@ class RecordingRepository(
                 },
                 errorMessage = "录音服务异常退出，启动时已修复切片",
             )
-            if (recoveryStartedAtMillis > lastWriteAt) recordGap(
-                startedAtMillis = lastWriteAt,
-                endedAtMillis = recoveryStartedAtMillis,
-                reason = "录音服务异常退出后恢复",
-                recoveredAutomatically = true,
-            )
+            if (recoveryStartedAtMillis > lastWriteAt) recordingDao.openGap(lastWriteAt, "录音服务异常退出，等待恢复采集")
         }
         chunks.size
     } }

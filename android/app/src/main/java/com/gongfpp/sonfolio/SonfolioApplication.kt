@@ -6,6 +6,8 @@ import com.gongfpp.sonfolio.processing.ProcessingScheduler
 import com.gongfpp.sonfolio.recording.RecordingRepository
 
 class SonfolioApplication : Application() {
+    val summarySettings by lazy { com.gongfpp.sonfolio.summary.SummarySettingsStore(this) }
+    val summaryCoordinator by lazy { com.gongfpp.sonfolio.summary.SummaryCoordinator(this) }
     val database by lazy { SonfolioDatabase.getInstance(this) }
     val preferences by lazy { SonfolioPreferences(this) }
     val conversationRepository by lazy {

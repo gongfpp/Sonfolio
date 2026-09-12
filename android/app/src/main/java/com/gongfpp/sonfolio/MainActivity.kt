@@ -332,7 +332,11 @@ private fun TodayScreen(
     val today = rememberCurrentDay()
     var selectedDate by rememberSaveable { mutableStateOf<String?>(null) }
     val date = selectedDate?.let(LocalDate::parse) ?: today
-    val day = remember(date, conversations, recordingChunks, gaps) { DayTimeline.build(date, conversations, recordingChunks, gaps) }
+    var gapClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(gaps.any { it.endedAtMillis == null }) {
+        while (gaps.any { it.endedAtMillis == null }) { gapClock = System.currentTimeMillis(); delay(1_000) }
+    }
+    val day = remember(date, conversations, recordingChunks, gaps, gapClock) { DayTimeline.build(date, conversations, recordingChunks, gaps, nowMillis = gapClock) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val window = remember(date) { DayWindow.of(date) }
@@ -344,7 +348,7 @@ private fun TodayScreen(
         item(key = "header") {
             Text("声迹", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                if (recordingStatus.isRecording) "正在记录 · 原音持续保存在本机" else "本地保存 · 按日期回看",
+                if (recordingStatus.isRecording) "采集状态见下方 · 原音保存在本机" else "本地保存 · 按日期回看",
                 color = InkSoft, fontSize = 14.sp,
             )
         }
@@ -444,10 +448,10 @@ private fun DayRecordingCard(day: DayTimeline, onOpenRaw: () -> Unit) {
                     Text("${day.gaps.size} 次中断 · 缺口 ${formatPlaybackTime(day.gapMillis)} · ${if (gapsOpen) "收起" else "查看"}", color = Color(0xFF805900))
                 }
                 if (gapsOpen) day.gaps.forEach { gap ->
-                    Text("${formatDateTime(gap.startedAtMillis)} — ${formatDateTime(gap.endedAtMillis)}\n${gap.reason}", Modifier.padding(vertical = 5.dp), color = InkSoft, fontSize = 11.sp)
+                    Text("${formatDateTime(gap.startedAtMillis)} — ${gap.endedAtMillis?.let(::formatDateTime) ?: "等待恢复"}\n${gap.reason}", Modifier.padding(vertical = 5.dp), color = InkSoft, fontSize = 11.sp)
                 }
             } else Text("未记录到异常中断", color = InkSoft, fontSize = 11.sp)
-            Text("按实际保存的音频计时；未开启录音的时段不计为缺口。", Modifier.padding(top = 5.dp), color = InkSoft, fontSize = 10.sp)
+            Text("保存时长按文件计算，不保证每秒都有有效声音；未主动开启的时段不计缺口，异常中断持续计至恢复。", Modifier.padding(top = 5.dp), color = InkSoft, fontSize = 10.sp)
         }
     }
 }
@@ -478,6 +482,7 @@ private fun RecordingCard(
         color = Color(0xFFF0F7EE),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFB5CDB3)),
     ) {
+        Column {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(
                 modifier = Modifier
@@ -503,7 +508,9 @@ private fun RecordingCard(
                 }
                 Column(Modifier.padding(start = 10.dp)) {
                     Text(
-                        if (status.isRecording) "正在记录" else "开始记录",
+                        if (status.isRecording) {
+                            if (status.health.clientSilenced == true) "输入被静音" else if (status.health.lastBufferAtMillis == null) "正在启动" else "正在记录"
+                        } else if (status.interruptionPending) "恢复记录" else "开始记录",
                         fontWeight = FontWeight.Bold,
                         fontSize = 19.sp,
                     )
@@ -515,7 +522,7 @@ private fun RecordingCard(
                 }
             }
             if (status.isRecording) {
-                AnimatedWaveform(accent = Green, modifier = Modifier.width(42.dp))
+                InputWaveform(levels = status.health.levels, accent = if (status.health.clientSilenced == true) Amber else Green, modifier = Modifier.width(42.dp))
             }
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -535,17 +542,22 @@ private fun RecordingCard(
                     listOf(10, 20).forEach { minutes ->
                         Box(
                             Modifier
-                                .size(23.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .background(if (status.isRecording) AmberPale else Color(0xFFE8E8E3))
                                 .clickable(enabled = status.isRecording) { onMark(minutes) },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(minutes.toString(), color = Color(0xFF694E00), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text("${minutes}分", color = Color(0xFF694E00), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
+        }
+        if (status.isRecording || status.interruptionPending || status.health.failure != null) Text(
+            if (!status.isRecording && status.interruptionPending) "录音已中断，缺口将计至重新采集到音频。" else status.health.message(nowMillis),
+            modifier = Modifier.padding(start = 13.dp, end = 13.dp, bottom = 12.dp), color = InkSoft, fontSize = 11.sp,
+        )
         }
     }
 }
@@ -643,24 +655,10 @@ private fun formatBytes(bytes: Long): String = when {
 }
 
 @Composable
-private fun AnimatedWaveform(accent: Color, modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "recording-waveform")
+private fun InputWaveform(levels: List<Float>, accent: Color, modifier: Modifier = Modifier) {
     Row(modifier.height(28.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
         repeat(12) { index ->
-            val scale by transition.animateFloat(
-                initialValue = .35f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(
-                        durationMillis = 430 + index * 32,
-                        easing = FastOutSlowInEasing,
-                        delayMillis = index * 27,
-                    ),
-                    repeatMode = RepeatMode.Reverse,
-                    initialStartOffset = StartOffset(index * 21),
-                ),
-                label = "recording-wave-$index",
-            )
+            val scale = levels.getOrElse(index) { 0f }.coerceIn(.06f, 1f)
             Box(
                 Modifier
                     .width(2.dp)
@@ -736,7 +734,11 @@ private fun RealConversationScreen(
     val summary = conversation?.summary ?: "正在从本地转写中生成本段小结。"
     val detailFields = listOf(
         "识别片段" to "${lines.size} 段",
-        "整理方式" to if (conversation?.summary?.contains("暂时没有") == true) "仅保留时间线" else "本地提取式小结",
+        "整理方式" to when {
+            structuredSummary?.modelVersion?.startsWith("REMOTE:") == true -> "外部 AI 总结"
+            structuredSummary?.modelVersion?.startsWith("LOCAL:") == true -> "手机本地 AI"
+            else -> "本地提取式小结"
+        },
         "说话人" to "暂不区分",
     )
 
@@ -769,8 +771,9 @@ private fun RealConversationScreen(
                             )
                         }
                     }
-                    SummaryCard(summary, detailFields)
-                    if (conversation?.summaryLevel == "DETAILED") {
+                    SummaryCard(summary, detailFields, detailFields.first { it.first == "整理方式" }.second)
+                    com.gongfpp.sonfolio.summary.SummaryAction("conversation:$conversationId")
+                    if (structuredSummary != null) {
                         val detailText = structuredSummary?.let { summary ->
                             listOf("讨论要点" to summary.keyPointsJson, "提到的决定" to summary.decisionsJson,
                                 "提到的安排" to summary.followUpsJson, "提出的问题" to summary.openQuestionsJson)
@@ -851,7 +854,9 @@ private fun RealAudioPlayer(
     requestedLineId: String?,
     onRequestConsumed: () -> Unit,
 ) {
-    val timeline = remember(lines, chunks) { PlaybackTimeline.forConversation(lines, chunks) }
+    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as SonfolioApplication
+    val gaps by remember(app) { app.database.recordingDao().observeGaps() }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val timeline = remember(lines, chunks, gaps) { PlaybackTimeline.forConversation(lines, chunks, gaps) }
     TimelineAudioPlayer(timeline, requestedLineId?.let { id -> lines.firstOrNull { it.id == id }?.startedAtMillis }, onRequestConsumed)
 }
 
@@ -884,6 +889,11 @@ private fun TimelineAudioPlayer(
     val duration = timeline.duration.coerceAtLeast(1L)
     Surface(shape = RoundedCornerShape(14.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
         Column(Modifier.padding(horizontal = 9.dp, vertical = 7.dp)) {
+            if (timeline.gaps.isNotEmpty()) Text(
+                if (timeline.gaps.any { timeline.start + controller.position >= it.startedAtMillis && timeline.start + controller.position < (it.endedAtMillis ?: Long.MAX_VALUE) })
+                    "当前进度位于已知录音缺口，原文件可能只有静音。" else "这段原音含已知缺口，缺失内容无法回听。",
+                color = Color(0xFF805900), fontSize = 11.sp,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = controller::toggle,
@@ -954,7 +964,7 @@ private fun ConversationScreen(type: ConversationType, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SummaryCard(summary: String, fields: List<Pair<String, String>>) {
+private fun SummaryCard(summary: String, fields: List<Pair<String, String>>, origin: String = "本地基础整理") {
     Surface(shape = RoundedCornerShape(15.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -971,7 +981,7 @@ private fun SummaryCard(summary: String, fields: List<Pair<String, String>>) {
                 }
             }
             Surface(modifier = Modifier.padding(top = 10.dp), shape = CircleShape, color = Color.White.copy(alpha = .55f)) {
-                Text("⌁  本地生成", modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = Green, fontSize = 11.sp)
+                Text("⌁  $origin", modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = Green, fontSize = 11.sp)
             }
         }
     }
@@ -1109,7 +1119,7 @@ private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBac
         AuxiliaryCard("值得记住", parseJsonLines(journal?.memorableJson).ifBlank { "这一天还没有标记重点对话" }, Icons.Default.Star, Amber)
         AuxiliaryCard("可能需要处理", parseJsonLines(journal?.possibleActionsJson).ifBlank { "暂未从转写中提取明确安排" }, Icons.Default.Warning, Color(0xFFC59016))
         Text("基于 $sourceCount 场对话整理 · 原始录音仍按你的保留策略保存", modifier = Modifier.padding(top = 20.dp), color = InkSoft, fontSize = 11.sp)
-        Text("当前为本地提取式回顾，内容来自转写原句。", color = InkSoft, fontSize = 11.sp)
+        com.gongfpp.sonfolio.summary.SummaryAction("day:$localDate")
         TextButton(onClick = viewModel::rebuildConversations) { Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("重新整理") }
     }
 }
@@ -1263,6 +1273,7 @@ private fun SettingsScreen(
     var minimumTextCharacters by remember { mutableStateOf(preferences.minimumTextCharacters.toFloat()) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("录音与存储", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        com.gongfpp.sonfolio.summary.SummarySettingsCard()
         Surface(Modifier.fillMaxWidth().padding(top = 17.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("录音服务", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -1368,7 +1379,7 @@ private fun SettingsScreen(
             Column {
                 ToggleRow("仅充电时处理新录音", chargeOnly) { chargeOnly = it; preferences.setChargeOnly(it) }
                 Text("此设置用于新加入的处理任务，已经开始的任务会继续。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp))
-                Text("原始音频仅保存在本机，当前版本没有上传功能。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(13.dp))
+                Text("原始音频仅保存在本机，不上传；外部总结仅按你保存的设置发送转写文字。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(13.dp))
             }
         }
         Row(Modifier.padding(top = 17.dp), verticalAlignment = Alignment.CenterVertically) {

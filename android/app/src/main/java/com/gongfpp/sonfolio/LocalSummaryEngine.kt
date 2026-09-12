@@ -40,12 +40,18 @@ internal object LocalSummaryEngine {
         }
         val selected = ranked.take(2).sortedBy { it.index }.map { it.value.take(110) }
         val brief = (if (topic != null) "围绕$title 进行了交流。" else "本段主要提到：") + selected.joinToString(" ")
+        // 摘录不能把询问、否定或尚有条件的表达升级成已经确定的承诺。
+        fun question(s: String) = s.endsWith("？") || s.endsWith("?") ||
+            Regex("是否|能否|可否|要不要|是不是|有没有|[吗么嘛][。！!；;]?$|^(谁|什么|何时|什么时候|为什么|怎么|如何)").containsMatchIn(s)
+        fun uncertain(s: String) = question(s) || Regex(
+            "还没|没有|尚未|未曾|暂未|未[决定确同安]|并未|并不|不[需要会想应打再能必赞同可决定安]|不能|不要|别[安再]|取消|拒绝|否决|撤回|如果|假如|倘若|只要|只有|除非|取决于|可能|也许|或许|考虑|待确认|再议|是否|不确定"
+        ).containsMatchIn(s)
         return Summary(
             title, brief,
             ranked.take(5).sortedBy { it.index }.map { it.value },
-            sentences.filter { s -> listOf("决定", "确定", "达成一致", "同意").any(s::contains) }.take(4),
-            sentences.filter { s -> listOf("记得", "需要", "待办", "下一步", "明天", "安排").any(s::contains) }.take(4),
-            sentences.filter { it.endsWith("？") || it.endsWith("?") }.take(4),
+            sentences.filter { s -> !uncertain(s) && listOf("决定", "确定", "达成一致", "同意").any(s::contains) }.take(4),
+            sentences.filter { s -> !uncertain(s) && listOf("记得", "需要", "待办", "下一步", "明天", "安排").any(s::contains) }.take(4),
+            sentences.filter(::question).take(4),
         )
     }
 }

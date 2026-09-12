@@ -30,7 +30,7 @@ AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal
 
 `AudioChunk` 是录音服务每 5 分钟创建的物理文件和时间范围；`SpeechSegment` 记录 VAD 命中的人声区间；`Transcript` 保存带时间戳的 ASR 文本；`Conversation` 按相邻间隔和环境连续性把多个语音段合并，因此一场对话可以跨越多个物理切片；`DailyJournal` 是一天级别的结构化回顾。每层都保存处理状态、错误信息和输入版本，任务重试采用幂等写入，避免重复转写或重复生成事件。
 
-当前实现使用 Room 2.7.2/SQLite 保存元数据，并提交版本 1 的 Schema JSON，为后续迁移测试留下基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。音频文件保留在应用私有存储或用户指定的本地目录，数据库只保存路径、时间、大小、处理状态和摘要等元数据。搜索第一版先使用 SQLite `LIKE` 实现可用的全文关键词匹配并跳到对应 Conversation/时间点，下一步再引入 FTS5 索引；语义向量搜索留到后续版本。
+当前实现使用 Room 2.7.2/SQLite 保存元数据，Schema 已推进到版本 3，并保留版本 1/2 的 JSON 作为迁移测试基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。录音写入应用私有目录，用户导出时选择副本的保存位置；数据库只保存路径、时间、大小、处理状态和摘要等元数据。搜索第一版先使用 SQLite `LIKE` 实现可用的全文关键词匹配并跳到对应 Conversation/时间点，后续再评估中文全文索引；语义向量搜索留到后续版本。
 
 搜索在 `0.1.6` 改用由代码构造条件、参数绑定的 Room `@RawQuery`，用于处理可变数量的关键词，并显式观察转写、对话和标记三个表；官方说明这种可观察查询需要声明 `observedEntities`，不能依赖固定 SQL 的编译期验证，因此另外用 SQLite 内存库执行生产查询，并已在 Android 真机的 Room 集成测试中验证映射与变更通知。[Room RawQuery 文档](https://developer.android.com/reference/androidx/room/RawQuery)。关键词只作为参数值传入，`%`、`_` 和反斜杠先转义为字面匹配，排序增加转写 ID 作为同一时间戳的稳定次序。每次比当前展示范围多读取一条判断是否还有内容，用户点击“加载更多”时扩大范围；这避免原先 100 条后的内容无入口，但尚未实现游标分页、全文索引或跨转写行的语义匹配，也不需要迁移数据库。桌面测试用的 SQLite JDBC 只加入测试依赖，不进入 APK。
 
@@ -50,6 +50,10 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 
 第一版不做说话人识别，不把“未知人物”误判为具体联系人；也不把摘要按钮扩展成 Todo 管理器。每段对话保留一份小总结，信息量高的对话再生成结构化大总结，一日总结以日记式回顾为主，辅助列出少量值得记住和可能需要处理的事项。
 
+0.1.7 在用户确认两条路线均可且由用户选择后，增加本地生成式总结和外部文本 API，并保留基础整理作为默认模式。选择 llama.cpp 是因为它可通过固定 C++ 源码和 JNI 在 arm64 Android 上运行 GGUF，不要求同步升级当前 Kotlin/Room 工具链，模型文件和运行时仍可独立管理；实现参考 [官方 Android 构建说明](https://github.com/ggml-org/llama.cpp/blob/master/docs/android.md)。本地模型置于独立 `:summary` 进程，外部服务使用用户配置的 HTTPS Chat Completions / JSON 协议，密钥以 [Android Keystore](https://developer.android.com/privacy-and-security/keystore) 加密，默认不发送文字、不自动下载权重，也不上传原音。真实模型质量、速度、长内容成本和内存尚待验收，当前自动重算与反复加载模型的效率问题仍未解决。
+
+0.1.8 将系统输入监测、持续缺口和总结的不完整信息提示接入主链路，Schema 3 将缺口结束时间改为可空，并从旧版本显式迁移数据。音量仅代表实际样本能量，系统静音与环境安静分开判断；VAD/ASR 超时解绑后销毁独立进程，等待 Binder 死亡再执行下一项，不能依赖 `quitSafely()` 取消已经执行的 native 代码。会话与日回顾目前依然全量重建，采集切片仍可能等待数据库事务，因此下一阶段优先做增量更新及采集/元数据写入隔离，不能凭本轮异常提示和单元测试就宣称解决了长期积压导致的漏音风险。
+
 ## 版本推进顺序
 
 1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航栈与页面状态支持保存，0.1.5 新增日期及返回场景已在 0.1.6 真机验收中通过，加载更多、长转写固定播放器及搜索返回位置也已检查，证据见对应开发验收记录。
@@ -57,6 +61,6 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 3. 已实现 Foreground Service、真实 `AudioRecord`、5 分钟 WAV 切片、通知栏标记/停止、标记即时反馈、异常切片修复和 `RecordingGap` 写入；旧版本的前台/后台录音已在 Redmi Note 8 Pro 验证，新版本验证状态以开发验收记录为准。
 4. 已接入 Silero VAD、SenseVoice/sherpa-onnx 和串行 WorkManager 队列；现有真实录音在 Redmi Note 8 Pro 上生成 SpeechSegment 和 Transcript，模型 OOM/进程退出会保留原音并在下次启动重新排队。
 5. 已加入相邻间隔不超过 2 分钟的 Conversation 合并、按文本生成短标题、每段提取式小结、长对话重点整理、搜索结果进入详情，以及跨切片按转写行跳转和连续回听原 WAV。
-6. 尚未完成的是锁屏一整天持续运行的长时验收、FTS5 索引、说话人识别和联网/本地生成式日记模型；这些不改变当前 V0.1 的录音与可读、可搜、可回听主链路。
+6. 已接入可选择的本地/外部生成式总结框架，但真实本地模型与服务端到端尚待验收；未完成项还包括全天锁屏、增量整理与采集数据库隔离、合并 ID 重定向、完整备份恢复、FTS/中文检索方案和说话人识别，具体状态以 0.1.8 记录为准。
 
 当前仓库不把“UI 壳构建成功”表述成“全天录音已完成”。V0.1 的验收必须同时看到：持续录音没有非预期缺口、处理失败不影响录音、事件可读可搜可回听、原始音频保留策略完全由用户控制。

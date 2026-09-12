@@ -48,15 +48,16 @@ internal data class DayTimeline(
             chunks: List<AudioChunkPreview>,
             gaps: List<RecordingGapEntity>,
             zone: ZoneId = ZoneId.systemDefault(),
+            nowMillis: Long = System.currentTimeMillis(),
         ): DayTimeline {
             val window = DayWindow.of(date, zone)
             val dayChunks = chunks.filter { window.overlaps(it.startedAtMillis, it.savedEndMillis()) }.sortedBy { it.startedAtMillis }
-            val dayGaps = gaps.filter { window.overlaps(it.startedAtMillis, it.endedAtMillis) }.sortedBy { it.startedAtMillis }
+            val dayGaps = gaps.filter { window.overlaps(it.startedAtMillis, it.endedAtMillis ?: nowMillis) }.sortedBy { it.startedAtMillis }
             return DayTimeline(
                 conversations.filter { window.overlaps(it.startedAtMillis, it.endedAtMillis) }.sortedBy { it.startedAtMillis },
                 dayChunks, dayGaps,
                 unionDuration(dayChunks.mapNotNull { window.clip(it.startedAtMillis, it.savedEndMillis()) }),
-                unionDuration(dayGaps.mapNotNull { window.clip(it.startedAtMillis, it.endedAtMillis) }),
+                unionDuration(dayGaps.mapNotNull { window.clip(it.startedAtMillis, it.endedAtMillis ?: nowMillis) }),
             )
         }
     }

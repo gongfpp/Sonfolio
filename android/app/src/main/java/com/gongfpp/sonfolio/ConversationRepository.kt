@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import com.gongfpp.sonfolio.summary.AiSummary
+import com.gongfpp.sonfolio.summary.summaryInput
 
 class ConversationRepository(
     private val database: SonfolioDatabase,
@@ -36,12 +38,16 @@ class ConversationRepository(
      */
     suspend fun rebuildFromTranscripts() = database.withTransaction {
         val rows = conversationDao.getReadyTranscriptRows()
+        val gaps = database.recordingDao().getGaps()
+        val aiRuns = conversationDao.getSummaryRuns().associateBy { it.sourceKey }
 
         val groups = mutableListOf<MutableList<TranscriptAudioRow>>()
         var groupEnd = Long.MIN_VALUE
         rows.forEach { row ->
             val current = groups.lastOrNull()
-            if (current == null || row.startedAtMillis - groupEnd > MERGE_GAP_MILLIS) {
+            if (current == null || row.startedAtMillis - groupEnd > MERGE_GAP_MILLIS || gaps.any {
+                    it.startedAtMillis < row.startedAtMillis && (it.endedAtMillis ?: Long.MAX_VALUE) > groupEnd
+                }) {
                 groups += mutableListOf(row)
                 groupEnd = row.endedAtMillis
             } else {
@@ -56,27 +62,35 @@ class ConversationRepository(
         conversationDao.deleteGeneratedDailyJournals()
 
         val markers = conversationDao.getMarkers()
+        fun cached(key: String, sourceRows: List<TranscriptAudioRow>): AiSummary? {
+            val run = aiRuns[key] ?: return null
+            if (run.outputJson == null || run.sourceHash != summaryInput(key, sourceRows, markers, gaps).fingerprint) return null
+            return runCatching { AiSummary.parse(run.outputJson) }.getOrNull()
+        }
         val visibleGroups = groups.filter { group ->
             !isShort(group, preferences) || groupIntersectsMarker(group, markers)
         }
 
         val zone = ZoneId.systemDefault()
         val summaries = visibleGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
+        val usedIds = mutableSetOf<String>()
         val entities = visibleGroups.map { group ->
             val start = group.first().startedAtMillis
             val end = group.maxOf { it.endedAtMillis }
             // 保留已有会话标识，边录边处理时不会让打开的详情失效。
-            val id = group.firstNotNullOfOrNull { it.conversationId?.takeIf { id -> id.startsWith("auto-") } }
-                ?: "auto-${group.first().transcriptId}"
+            val id = group.firstNotNullOfOrNull { it.conversationId?.takeIf { id -> id.startsWith("auto-") && id !in usedIds } }
+                ?: generateSequence("auto-${group.first().transcriptId}") { "$it-split" }.first { it !in usedIds }
+            usedIds += id
             val summary = summaries.getValue(group.first().transcriptId)
+            val ai = cached("conversation:$id", group.map { it.copy(conversationId = id) })
             ConversationEntity(
                 id = id,
                 kind = ConversationType.Unknown.name,
                 startedAtMillis = start,
                 endedAtMillis = end,
                 zoneId = zone.id,
-                title = summary.title,
-                briefSummary = summary.brief,
+                title = ai?.title ?: summary.title,
+                briefSummary = ai?.brief ?: summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
                 processingState = "READY",
             )
@@ -89,18 +103,20 @@ class ConversationRepository(
 
         conversationDao.insertConversationSummaries(
             visibleGroups.zip(entities)
-                .filter { (group, _) -> isDetailed(group) }
+                .filter { (group, entity) -> isDetailed(group) || cached("conversation:${entity.id}", group.map { it.copy(conversationId = entity.id) }) != null }
                 .map { (group, entity) ->
                     val summary = summaries.getValue(group.first().transcriptId)
+                    val ai = cached("conversation:${entity.id}", group.map { it.copy(conversationId = entity.id) })
+                    val run = aiRuns["conversation:${entity.id}"]
                     ConversationSummaryEntity(
                         id = "summary-${entity.id}",
                         conversationId = entity.id,
-                        keyPointsJson = jsonArray(summary.keyPoints),
-                        decisionsJson = jsonArray(summary.decisions),
-                        followUpsJson = jsonArray(summary.followUps),
-                        openQuestionsJson = jsonArray(summary.questions),
-                        generatedLocally = true,
-                        modelVersion = "extractive-v0.2",
+                        keyPointsJson = jsonArray(ai?.keyPoints ?: summary.keyPoints),
+                        decisionsJson = jsonArray(ai?.decisions ?: summary.decisions),
+                        followUpsJson = jsonArray(ai?.followUps ?: summary.followUps),
+                        openQuestionsJson = jsonArray(ai?.questions ?: summary.questions),
+                        generatedLocally = ai == null || run?.provider != "REMOTE",
+                        modelVersion = if (ai == null) "extractive-v0.2" else "${run?.provider}:${run?.model}",
                         generatedAtMillis = System.currentTimeMillis(),
                     )
                 },
@@ -110,23 +126,27 @@ class ConversationRepository(
         groupsByDate.forEach { (date, dateGroups) ->
             val dayWindow = DayWindow.of(date, zone)
             val daySummaries = dateGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
+            val linkedRows = visibleGroups.zip(entities).flatMap { (group, entity) -> group.map { it.copy(conversationId = entity.id) } }
+            val ai = cached("day:$date", linkedRows)
+            val run = aiRuns["day:$date"]
             conversationDao.insertDailyJournal(
                 DailyJournalEntity(
                     id = "journal-$date",
                     localDate = date.toString(),
                     zoneId = zone.id,
-                    narrative = dateGroups.joinToString("\n\n") { group ->
+                    narrative = ai?.brief ?: (if (gaps.any { dayWindow.overlaps(it.startedAtMillis, it.endedAtMillis ?: Long.MAX_VALUE) })
+                        "本日存在录音缺口，以下仅根据已保存的内容整理，不代表完整经历。\n\n" else "") + dateGroups.joinToString("\n\n") { group ->
                         val time = Instant.ofEpochMilli(maxOf(group.first().startedAtMillis, dayWindow.start)).atZone(zone)
                             .format(DateTimeFormatter.ofPattern("HH:mm"))
                         val crossDay = if (group.any { it.startedAtMillis < dayWindow.start || it.endedAtMillis > dayWindow.end }) "跨日内容 · " else ""
                         "$time · $crossDay${daySummaries.getValue(group.first().transcriptId).brief}"
                     },
-                    memorableJson = jsonArray(dateGroups.filter { groupIntersectsMarker(it, markers) }
+                    memorableJson = jsonArray(ai?.keyPoints ?: dateGroups.filter { groupIntersectsMarker(it, markers) }
                         .map { daySummaries.getValue(it.first().transcriptId).brief }),
-                    possibleActionsJson = jsonArray(dateGroups.flatMap { daySummaries.getValue(it.first().transcriptId).followUps }.distinct().take(5)),
+                    possibleActionsJson = jsonArray(ai?.followUps ?: dateGroups.flatMap { daySummaries.getValue(it.first().transcriptId).followUps }.distinct().take(5)),
                     sourceConversationCount = dateGroups.size,
                     generatedAtMillis = System.currentTimeMillis(),
-                    modelVersion = "extractive-v0.2",
+                    modelVersion = if (ai == null) "extractive-v0.2" else "${run?.provider}:${run?.model}",
                     processingState = "READY",
                 ),
             )

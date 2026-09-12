@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Embedded
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 data class AudioChunkRow(
@@ -15,6 +16,8 @@ data class AudioChunkRow(
 
 @Dao
 interface RecordingDao {
+    @Query("SELECT t.id FROM transcripts t JOIN speech_segments s ON t.speechSegmentId = s.id WHERE s.audioChunkId = :chunkId")
+    suspend fun getTranscriptsForSummaryChunk(chunkId: String): List<String>
     @Query(
         """
         SELECT * FROM audio_chunks
@@ -50,6 +53,25 @@ interface RecordingDao {
 
     @Query("SELECT * FROM recording_gaps ORDER BY startedAtMillis DESC")
     fun observeGaps(): Flow<List<RecordingGapEntity>>
+
+    @Query("SELECT * FROM recording_gaps ORDER BY startedAtMillis ASC")
+    suspend fun getGaps(): List<RecordingGapEntity>
+
+    @Query("SELECT * FROM recording_gaps WHERE endedAtMillis IS NULL AND kind = :kind ORDER BY startedAtMillis ASC LIMIT 1")
+    suspend fun getOpenGap(kind: String): RecordingGapEntity?
+
+    @Query("UPDATE recording_gaps SET endedAtMillis = MAX(startedAtMillis + 1, :endedAtMillis), recoveredAutomatically = :automatic WHERE endedAtMillis IS NULL AND kind = :kind AND startedAtMillis <= :endedAtMillis")
+    suspend fun closeOpenGaps(kind: String, endedAtMillis: Long, automatic: Boolean)
+
+    @Query("UPDATE recording_gaps SET startedAtMillis = MIN(startedAtMillis, :startedAtMillis) WHERE id = :id")
+    suspend fun extendGapStart(id: String, startedAtMillis: Long)
+
+    @Transaction
+    suspend fun openGap(startedAtMillis: Long, reason: String, kind: String = "INTERRUPTION") {
+        val existing = getOpenGap(kind)
+        if (existing == null) insertGap(RecordingGapEntity(java.util.UUID.randomUUID().toString(), startedAtMillis, null, reason, false, kind))
+        else extendGapStart(existing.id, startedAtMillis)
+    }
 
     @Query("UPDATE audio_chunks SET byteSize = :byteSize WHERE id = :id AND endedAtMillis IS NULL")
     suspend fun checkpoint(id: String, byteSize: Long)

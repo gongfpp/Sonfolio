@@ -32,6 +32,21 @@ data class TranscriptSearchRow(
 
 @Dao
 interface ConversationDao {
+    @Query("SELECT * FROM summary_runs")
+    suspend fun getSummaryRuns(): List<SummaryRunEntity>
+
+    @Query("SELECT * FROM summary_runs WHERE sourceKey = :key")
+    fun observeSummaryRun(key: String): Flow<SummaryRunEntity?>
+
+    @Query("SELECT * FROM summary_runs WHERE sourceKey = :key")
+    suspend fun getSummaryRun(key: String): SummaryRunEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveSummaryRun(value: SummaryRunEntity)
+
+    @Query("UPDATE summary_runs SET state = :state, message = :message, updatedAtMillis = :now WHERE sourceKey = :key")
+    suspend fun updateSummaryRun(key: String, state: String, message: String?, now: Long)
+
     @Query("SELECT * FROM conversations ORDER BY startedAtMillis ASC")
     fun observeTimeline(): Flow<List<ConversationEntity>>
 
@@ -76,7 +91,7 @@ interface ConversationDao {
         JOIN audio_chunks a ON a.id = s.audioChunkId
         WHERE t.processingState = 'ASR_READY'
           AND t.text <> ''
-        ORDER BY t.startedAtMillis ASC
+        ORDER BY t.startedAtMillis ASC, t.id ASC
         """,
     )
     suspend fun getReadyTranscriptRows(): List<TranscriptAudioRow>

@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.22)
+project(sonfolio_summary LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_C_FLAGS_DEBUG "-O2 -g")
+set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+include(FetchContent)
+FetchContent_Declare(llama
+    URL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/c069aa7f5f2beeead1a3a8e9f71510f1b64d0725
+    URL_HASH SHA256=564e8c29c01dc370cc19fa306c64da44a97a92b137cc0a62d5c28818ddeebdcb
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(llama)
+add_library(sonfolio_summary SHARED summary_jni.cpp)
+target_link_libraries(sonfolio_summary PRIVATE llama android log)
+target_link_options(sonfolio_summary PRIVATE "-Wl,-z,max-page-size=16384")

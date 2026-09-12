@@ -77,7 +77,10 @@ class PipelineIntegrationTest {
             assertEquals(started + 2_000L, chunk.endedAtMillis)
             val gap = database.recordingDao().observeGaps().first().single()
             assertEquals(started + 2_000L, gap.startedAtMillis)
-            assertEquals(recovered, gap.endedAtMillis)
+            assertNull(gap.endedAtMillis)
+            val actualResume = recovered + 600_000
+            database.recordingDao().closeOpenGaps("INTERRUPTION", actualResume, false)
+            assertEquals(actualResume, database.recordingDao().getGaps().single().endedAtMillis)
             assertTrue(file.exists())
         } finally { database.close(); file.delete() }
     }

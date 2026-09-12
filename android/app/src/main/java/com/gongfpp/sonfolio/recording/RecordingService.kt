@@ -11,6 +11,9 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
+import android.media.AudioDeviceInfo
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
@@ -39,6 +42,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.channels.Channel
 
 class RecordingService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -48,6 +52,15 @@ class RecordingService : Service() {
     private var recordingJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var notificationStartedAtMillis = 0L
+    private val gapEvents = Channel<GapEvent>(Channel.UNLIMITED)
+    private var gapJob: Job? = null
+    private var lastCapturedAtMillis: Long? = null
+    private var lastMeterAtMillis = 0L
+    private var resumedInput = false
+    private var inputSilenced = false
+    private var inputDeviceId: Int? = null
+    private var automaticRestart = false
+    private data class GapEvent(val kind: String, val at: Long, val reason: String? = null)
     @Volatile
     private var stopRequested = false
 
@@ -55,13 +68,23 @@ class RecordingService : Service() {
         super.onCreate()
         isRunningInProcess = true
         createNotificationChannel()
+        gapJob = serviceScope.launch {
+            for (event in gapEvents) {
+                val app = application as SonfolioApplication
+                runCatching {
+                    if (event.reason != null) app.database.recordingDao().openGap(event.at, event.reason, event.kind)
+                    else app.database.recordingDao().closeOpenGaps(event.kind, event.at, automaticRestart)
+                    app.conversationRepository.rebuildFromTranscripts()
+                }.onFailure { Log.e(TAG, "无法更新录音缺口", it) }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: RecordingController.ACTION_START) {
             RecordingController.ACTION_STOP -> requestStop()
             RecordingController.ACTION_MARK -> markCurrentMoment(intent)
-            RecordingController.ACTION_START -> startRecordingIfNeeded()
+            RecordingController.ACTION_START -> { automaticRestart = intent == null; startRecordingIfNeeded() }
         }
         // A foreground service may be recreated after the process is reclaimed. The unfinished
         // WAV is repaired on the next start, so returning START_STICKY preserves the recording
@@ -76,6 +99,7 @@ class RecordingService : Service() {
         releaseWakeLock()
         serviceScope.cancel()
         isRunningInProcess = false
+        RecordingController.updateHealth { it.copy(serviceActive = false, levels = List(12) { 0f }) }
         super.onDestroy()
     }
 
@@ -83,6 +107,10 @@ class RecordingService : Service() {
         if (recordingJob?.isActive == true) return
 
         stopRequested = false
+        resumedInput = false
+        inputSilenced = false
+        notificationManager.cancel(FAILURE_NOTIFICATION_ID)
+        RecordingController.publishHealth(CaptureHealth(serviceActive = true))
         val serviceStartedAt = System.currentTimeMillis()
         val app = application as SonfolioApplication
         app.preferences.beginRecordingSession(
@@ -95,13 +123,9 @@ class RecordingService : Service() {
             Log.e(TAG, "Unable to promote microphone service", error)
             app.preferences.clearRecordingSession()
             serviceScope.launch {
-                repository.recordGap(
-                    startedAtMillis = serviceStartedAt,
-                    endedAtMillis = System.currentTimeMillis(),
-                    reason = error.message ?: error.javaClass.simpleName,
-                    recoveredAutomatically = false,
-                )
-                stopSelf()
+                app.database.recordingDao().openGap(serviceStartedAt, "无法启动麦克风服务，等待重新开始")
+                RecordingController.updateHealth { it.copy(failure = "录音未启动 · 请检查麦克风权限") }
+                shutdownService()
             }
             return
         }
@@ -110,20 +134,19 @@ class RecordingService : Service() {
                 repository.recoverDanglingChunks(serviceStartedAt)
                 recordContinuously()
             } catch (_: CancellationException) {
-                // Normal stop path; the active chunk is finalized in writeChunk().
+                if (!stopRequested) withContext(NonCancellable) {
+                    app.database.recordingDao().openGap(lastCapturedAtMillis ?: serviceStartedAt, "录音服务被终止，等待恢复采集")
+                }
             } catch (error: Throwable) {
                 Log.e(TAG, "Continuous recording stopped unexpectedly", error)
-                val failedAt = System.currentTimeMillis()
-                repository.recordGap(
-                    startedAtMillis = failedAt,
-                    endedAtMillis = failedAt + 1_000,
-                    reason = error.message ?: error.javaClass.simpleName,
-                    recoveredAutomatically = false,
-                )
+                val reason = error.message ?: "录音设备异常"
+                RecordingController.updateHealth { it.copy(failure = "录音中断 · $reason") }
+                RecordingController.publishFeedback(RecordingFeedback.Failed("录音已中断：$reason"))
+                app.database.recordingDao().openGap(lastCapturedAtMillis ?: serviceStartedAt, "$reason，等待恢复采集")
             } finally {
                 recordingJob = null
                 releaseWakeLock()
-                if (!stopRequested) shutdownService()
+                if (!stopRequested) withContext(NonCancellable) { shutdownService() }
             }
         }
     }
@@ -153,23 +176,33 @@ class RecordingService : Service() {
         check(recorder.state == AudioRecord.STATE_INITIALIZED) {
             "AudioRecord 初始化失败"
         }
-
+        val callback = object : AudioManager.AudioRecordingCallback() {
+            override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+                configs.firstOrNull { it.clientAudioSessionId == recorder.audioSessionId }?.let(::updateInputConfiguration)
+            }
+        }
         try {
+            runCatching { recorder.registerAudioRecordingCallback(mainExecutor, callback) }
+                .onFailure { Log.w(TAG, "系统音频状态监测不可用，继续保存原音", it) }
             recorder.startRecording()
             check(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 "麦克风未进入录音状态"
             }
+            runCatching { recorder.activeRecordingConfiguration?.let(::updateInputConfiguration) }
+                .onFailure { Log.w(TAG, "暂未获取系统音频状态", it) }
             val buffer = ByteArray(bufferSize)
             while (currentCoroutineContext().isActive) {
                 writeChunk(recorder, buffer)
             }
         } finally {
+            runCatching { recorder.unregisterAudioRecordingCallback(callback) }
             runCatching { recorder.stop() }
             recorder.release()
         }
     }
 
     private suspend fun writeChunk(recorder: AudioRecord, buffer: ByteArray) {
+        requireRecordingSpace(filesDir.usableSpace)
         refreshWakeLock()
         val chunkId = UUID.randomUUID().toString()
         val startedAtMillis = System.currentTimeMillis()
@@ -208,6 +241,24 @@ class RecordingService : Service() {
                     AudioRecord.ERROR -> error("录音设备返回未知错误")
                     else -> if (bytesRead > 0) {
                         writer.write(buffer, bytesRead)
+                        val now = System.currentTimeMillis()
+                        lastCapturedAtMillis = now
+                        val frameStart = now - bytesRead * 1_000L / (SAMPLE_RATE_HZ * CHANNEL_COUNT * 2)
+                        val health = RecordingController.health.value
+                        val level = pcmLevel(buffer, bytesRead)
+                        val silenced = health.clientSilenced == true
+                        if (silenced && !inputSilenced) gapEvents.trySend(GapEvent("SYSTEM_SILENCED", frameStart, "系统将音频输入静音，原文件中的这段声音可能缺失"))
+                        if (!silenced && inputSilenced) gapEvents.trySend(GapEvent("SYSTEM_SILENCED", frameStart))
+                        inputSilenced = silenced
+                        if (!resumedInput && !silenced && (health.clientSilenced == false || level > 0)) {
+                            resumedInput = true
+                            gapEvents.trySend(GapEvent("INTERRUPTION", frameStart))
+                            gapEvents.trySend(GapEvent("SYSTEM_SILENCED", frameStart))
+                        }
+                        if (now - lastMeterAtMillis >= 100) {
+                            RecordingController.updateHealth { it.copy(lastBufferAtMillis = now, levels = it.levels.drop(1) + if (silenced) 0f else level) }
+                            lastMeterAtMillis = now
+                        }
                         if (SystemClock.elapsedRealtime() - lastCheckpoint >= 5_000L) {
                             val byteSize = writer.checkpoint()
                             serviceScope.launch {
@@ -215,6 +266,9 @@ class RecordingService : Service() {
                                     .onFailure { Log.w(TAG, "录音状态更新延迟，音频已经落盘", it) }
                             }
                             lastCheckpoint = SystemClock.elapsedRealtime()
+                            val available = filesDir.usableSpace
+                            RecordingController.updateHealth { it.copy(storageLow = available < RECORDING_SPACE_WARNING) }
+                            requireRecordingSpace(available)
                         }
                     }
                 }
@@ -240,6 +294,27 @@ class RecordingService : Service() {
                     errorMessage = errorMessage,
                 )
             }
+        }
+    }
+
+    private fun updateInputConfiguration(config: AudioRecordingConfiguration) {
+        runCatching {
+        val device = config.audioDevice
+        val changed = inputDeviceId != null && inputDeviceId != device?.id
+        inputDeviceId = device?.id
+        val label = when (device?.type) {
+            AudioDeviceInfo.TYPE_BUILTIN_MIC -> "内置麦克风"
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "蓝牙麦克风"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "有线耳机麦克风"
+            AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB 麦克风"
+            else -> "系统音频输入"
+        }
+        RecordingController.updateHealth { it.copy(clientSilenced = config.isClientSilenced, inputDevice = label, deviceChanged = it.deviceChanged || changed) }
+        runCatching { notificationManager.notify(NOTIFICATION_ID, buildNotification(notificationStartedAtMillis,
+            if (config.isClientSilenced) "系统已将输入静音，正在记录缺口" else "$label · 按实际输入显示音量")) }
+        }.onFailure {
+            RecordingController.updateHealth { value -> value.copy(clientSilenced = null) }
+            Log.w(TAG, "系统音频状态读取失败，不能确认静音状态", it)
         }
     }
 
@@ -279,7 +354,7 @@ class RecordingService : Service() {
         stopRequested = true
         val job = recordingJob
         if (job == null) {
-            shutdownService()
+            serviceScope.launch { shutdownService() }
             return
         }
         job.cancel()
@@ -289,9 +364,20 @@ class RecordingService : Service() {
         }
     }
 
-    private fun shutdownService() {
+    private suspend fun shutdownService() {
+        if (stopRequested && inputSilenced) gapEvents.trySend(GapEvent("SYSTEM_SILENCED", lastCapturedAtMillis ?: System.currentTimeMillis()))
+        gapEvents.close()
+        gapJob?.join()
+        RecordingController.updateHealth { it.copy(serviceActive = false, levels = List(12) { 0f }) }
         (application as SonfolioApplication).preferences.clearRecordingSession()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        RecordingController.health.value.failure?.let { message ->
+            notificationManager.notify(FAILURE_NOTIFICATION_ID, NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification_wave).setContentTitle("声迹录音已中断")
+                .setContentText(message).setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setAutoCancel(true).setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build())
+        }
         stopSelf()
     }
 
@@ -331,7 +417,7 @@ class RecordingService : Service() {
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_wave)
-            .setContentTitle("声迹正在记录")
+            .setContentTitle(if (RecordingController.health.value.clientSilenced == true) "声迹 · 输入被静音" else "声迹正在记录")
             .setContentText(message)
             .setContentIntent(openApp)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -391,6 +477,7 @@ class RecordingService : Service() {
         private const val TAG = "RecordingService"
         private const val NOTIFICATION_CHANNEL_ID = "continuous_recording"
         private const val NOTIFICATION_ID = 1001
+        private const val FAILURE_NOTIFICATION_ID = 1002
         private const val SAMPLE_RATE_HZ = 16_000
         private const val CHANNEL_COUNT = 1
         private const val MIN_BUFFER_BYTES = 4_096

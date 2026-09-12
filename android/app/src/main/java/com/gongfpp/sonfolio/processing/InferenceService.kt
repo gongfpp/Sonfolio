@@ -55,9 +55,15 @@ class InferenceService : Service() {
 
     override fun onBind(intent: Intent): IBinder = messenger.binder
 
+    override fun onUnbind(intent: Intent): Boolean { stopSelf(); return false }
+
     override fun onDestroy() {
         thread.quitSafely()
         super.onDestroy()
+        // quitSafely 不能中止已执行的 native 推理；只终止独立模型进程。
+        if (android.app.Application.getProcessName() == "$packageName:inference") {
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
     }
 
     companion object {

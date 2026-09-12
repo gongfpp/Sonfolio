@@ -10,11 +10,15 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Message
 import android.os.Messenger
+import android.util.Log
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal class InferenceClient(
     private val context: Context,
@@ -40,9 +44,20 @@ internal class InferenceClient(
         return requireNotNull(response.getStringArrayList("texts")).also { require(it.size == windows.size) }
     }
 
-    private suspend fun call(operation: Int, input: Bundle): Bundle = withContext(Dispatchers.Main) {
+    private suspend fun call(operation: Int, input: Bundle): Bundle = inferenceMutex.withLock { withContext(Dispatchers.Main) {
+        // If a prior teardown could not be confirmed, do not bind another service or overlap
+        // native work. Keep the death signal until the old process has actually exited.
+        awaitingProcessExit?.let { previous ->
+            check(withTimeoutOrNull(5_000) { previous.await(); true } == true) {
+                "上一项模型进程尚未退出，请稍后重试"
+            }
+            awaitingProcessExit = null
+        }
         val connected = CompletableDeferred<Messenger>()
         val result = CompletableDeferred<Bundle>()
+        val processEnded = CompletableDeferred<Unit>()
+        var binder: IBinder? = null
+        val death = IBinder.DeathRecipient { processEnded.complete(Unit) }
         fun fail(message: String) {
             val error = IllegalStateException(message)
             connected.completeExceptionally(error)
@@ -54,8 +69,10 @@ internal class InferenceClient(
             true
         })
         val connection = object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-                connected.complete(Messenger(binder))
+            override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                binder = service
+                try { service.linkToDeath(death, 0); connected.complete(Messenger(service)) }
+                catch (_: android.os.RemoteException) { processEnded.complete(Unit); fail("模型进程已退出，请重试") }
             }
             override fun onServiceDisconnected(name: ComponentName) = fail("模型进程已退出，录音不受影响，请重试")
             override fun onBindingDied(name: ComponentName) = fail("模型连接中断，请重试")
@@ -74,8 +91,23 @@ internal class InferenceClient(
                 ?: error("本地模型处理超时，原音仍保留，请重试")
         } finally {
             if (bound) runCatching { context.unbindService(connection) }
+            if (binder != null) withContext(NonCancellable) {
+                awaitingProcessExit = processEnded
+                if (withTimeoutOrNull(5_000) { processEnded.await(); true } == true) {
+                    awaitingProcessExit = null
+                    runCatching { binder?.unlinkToDeath(death, 0) }
+                } else {
+                    // Preserve the original timeout/cancellation; the gate above stops the
+                    // next request until this process dies, even after the mutex is released.
+                    Log.w("InferenceClient", "模型进程尚未确认退出，后续推理暂停连接")
+                }
+            }
             connected.cancel()
             result.cancel()
         }
+    } }
+    companion object {
+        private val inferenceMutex = Mutex()
+        private var awaitingProcessExit: CompletableDeferred<Unit>? = null
     }
 }

@@ -20,4 +20,17 @@ class LocalSummaryEngineTest {
     @Test fun summaryJsonEscapesControlCharacters() {
         assertEquals("[\"a\\tb\\n\\\"c\\\"\"]", jsonArray(listOf("a\tb\n\"c\"")))
     }
+
+    @Test fun negativeQuestionsAndConditionsNeverBecomeCommitments() {
+        val examples = listOf("我们还没有决定是否上线。", "你同意明天上线吗？", "不需要安排明天的会议。",
+            "如果测试通过，我们决定明天上线。", "我们尚未确定会议安排。", "我们不同意这个决定。", "可能需要安排明天的会议。",
+            "是否需要安排明天的会议", "我们决定取消明天的会议。", "我们未决定上线日期。")
+        examples.forEach { text ->
+            val result = LocalSummaryEngine.summarize(listOf(text))
+            assertTrue(text, result.decisions.isEmpty())
+            assertTrue(text, result.followUps.isEmpty())
+            assertTrue(text, result.keyPoints.contains(text))
+        }
+        assertEquals(listOf("你同意明天上线吗？"), LocalSummaryEngine.summarize(listOf("你同意明天上线吗？")).questions)
+    }
 }

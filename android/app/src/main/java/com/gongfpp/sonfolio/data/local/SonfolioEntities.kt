@@ -127,9 +127,10 @@ data class MarkerEntity(
 data class RecordingGapEntity(
     @PrimaryKey val id: String,
     val startedAtMillis: Long,
-    val endedAtMillis: Long,
+    val endedAtMillis: Long?,
     val reason: String,
     val recoveredAutomatically: Boolean,
+    @androidx.room.ColumnInfo(defaultValue = "'INTERRUPTION'") val kind: String = "INTERRUPTION",
 )
 
 @Entity(
