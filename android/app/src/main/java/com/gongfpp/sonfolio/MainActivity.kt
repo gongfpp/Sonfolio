@@ -20,6 +20,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
@@ -89,6 +90,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
@@ -1139,8 +1141,9 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
     val scope = rememberCoroutineScope()
     fun resetScroll() { scope.launch { listState.scrollToItem(0) } }
     val today = rememberCurrentDay()
-    val displayedHits by key(query, filter, today) {
-        remember(query, filter, today) { viewModel.observeSearch(query, filter) }.collectAsStateWithLifecycle(initialValue = null)
+    var visibleLimit by rememberSaveable(query, filter, today.toString()) { mutableIntStateOf(SEARCH_BATCH_SIZE) }
+    val results by key(query, filter, today) {
+        remember(query, filter, today, visibleLimit) { viewModel.observeSearch(query, filter, visibleLimit) }.collectAsStateWithLifecycle(initialValue = null)
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("搜索记忆", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -1159,13 +1162,38 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
                 FilterChip(selected = filter == value, onClick = { filter = value; resetScroll() }, label = { Text(value, fontSize = 12.sp) })
             }
         }
-        Text(
-            if (query.isBlank() && filter == "全部") "输入文字后搜索本地转写"
-            else displayedHits?.let { "找到 ${it.size} 条相关内容" } ?: "正在搜索…",
-            color = InkSoft,
-            fontSize = 13.sp,
+        SearchResultsPanel(
+            query, filter, results, visibleLimit, listState,
+            onLoadMore = { visibleLimit = (visibleLimit.toLong() + SEARCH_BATCH_SIZE).coerceAtMost(Int.MAX_VALUE - 1L).toInt() },
+            onOpen = onOpen,
+            modifier = Modifier.weight(1f),
         )
-        val hits = displayedHits
+    }
+}
+
+@Composable
+internal fun SearchResultsPanel(
+    query: String,
+    filter: String,
+    results: SearchResults?,
+    visibleLimit: Int,
+    listState: LazyListState,
+    onLoadMore: () -> Unit,
+    onOpen: (AppScreen) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth()) {
+        Text(
+            when {
+                results?.errorMessage != null -> results.errorMessage
+                query.isBlank() && filter == "全部" -> "输入文字后搜索本地转写"
+                results == null -> "正在搜索…"
+                results.hasMore -> "已显示 ${results.hits.size} 条相关内容 · 还有更多"
+                else -> "找到 ${results.hits.size} 条相关内容"
+            }, color = InkSoft, fontSize = 13.sp,
+        )
+        val hits = results?.hits
+        if (results?.errorMessage != null) return@Column
         if (hits != null && hits.isEmpty()) {
             Text(
                 if (query.isBlank() && filter == "全部") "搜索不会自动列出全部记录；你可以输入主题、关键词或人名。"
@@ -1175,8 +1203,8 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
                 fontSize = 13.sp,
             )
         } else if (hits != null) {
-            LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(bottom = 12.dp)) {
-                items(hits, key = { it.transcriptId }) { hit ->
+            LazyColumn(Modifier.weight(1f).testTag("search-results"), state = listState, contentPadding = PaddingValues(bottom = 12.dp)) {
+                items(hits, key = { "hit:${it.transcriptId}" }) { hit ->
                     SearchResult(
                         date = formatDateTime(hit.startedAtMillis).substringBefore(' '),
                         title = if (hit.isMarked) "★ ${hit.title}" else hit.title,
@@ -1184,6 +1212,17 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
                         trailing = formatClock(hit.startedAtMillis),
                     ) {
                         onOpen(AppScreen.Conversation(ConversationType.Unknown, hit.conversationId, hit.transcriptId))
+                    }
+                }
+                if (results.hasMore) {
+                    item(key = "load-more") {
+                        TextButton(
+                            onClick = onLoadMore,
+                            enabled = results.requestedLimit >= visibleLimit,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        ) {
+                            Text(if (results.requestedLimit < visibleLimit) "正在加载…" else "加载更多")
+                        }
                     }
                 }
             }

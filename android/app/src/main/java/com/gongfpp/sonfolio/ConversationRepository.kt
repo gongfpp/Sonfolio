@@ -6,7 +6,6 @@ import com.gongfpp.sonfolio.data.local.DailyJournalEntity
 import com.gongfpp.sonfolio.data.local.TranscriptAudioRow
 import com.gongfpp.sonfolio.data.local.SonfolioDatabase
 import androidx.room.withTransaction
-import java.time.LocalDate
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -149,31 +148,13 @@ class ConversationRepository(
             }
         }
 
-    fun observeSearch(query: String, filter: String = "全部"): Flow<List<SearchHit>> {
-        if (query.isBlank() && filter == "全部") return flowOf(emptyList())
-        val terms = query.trim().split(Regex("\\s+"))
-            .filter(String::isNotBlank)
-            .map { it.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") }
-            .take(4)
-            .let { it + List(4 - it.size) { "" } }
-        val zone = ZoneId.systemDefault()
-        val today = LocalDate.now(zone)
-        val from = when (filter) {
-            "今天" -> today.atStartOfDay(zone).toInstant().toEpochMilli()
-            "本周" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
-                .atStartOfDay(zone).toInstant().toEpochMilli()
-            else -> null
+    fun observeSearch(query: String, filter: String = "全部", visibleLimit: Int = SEARCH_BATCH_SIZE): Flow<SearchResults> {
+        val request = SearchQuery.build(query, filter, visibleLimit)
+        if (request.errorMessage != null || (query.isBlank() && filter == "全部")) {
+            return flowOf(SearchResults(emptyList(), requestedLimit = request.visibleLimit, errorMessage = request.errorMessage))
         }
-        val to = when (filter) {
-            "今天" -> today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            "本周" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
-                .plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()
-            else -> null
-        }
-        return conversationDao.observeSearch(
-            terms[0], terms[1], terms[2], terms[3], from, to, if (filter == "仅标记") 1 else 0,
-        ).map { rows ->
-            rows.map { row ->
+        return conversationDao.observeSearch(androidx.sqlite.db.SimpleSQLiteQuery(request.sql, request.arguments.toTypedArray())).map { rows ->
+            val hits = rows.take(request.visibleLimit).map { row ->
                 SearchHit(
                     transcriptId = row.transcriptId,
                     conversationId = row.conversationId,
@@ -184,6 +165,7 @@ class ConversationRepository(
                     isMarked = row.isMarked,
                 )
             }
+            SearchResults(hits, hasMore = rows.size > request.visibleLimit, requestedLimit = request.visibleLimit)
         }
     }
 

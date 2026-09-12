@@ -5,6 +5,8 @@ import androidx.room.ColumnInfo
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.RawQuery
+import androidx.sqlite.db.SupportSQLiteQuery
 import kotlinx.coroutines.flow.Flow
 
 data class TranscriptAudioRow(
@@ -131,51 +133,8 @@ interface ConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDailyJournal(journal: DailyJournalEntity)
 
-    @Query(
-        """
-        SELECT
-            t.id AS transcriptId,
-            c.id AS conversationId,
-            t.startedAtMillis AS startedAtMillis,
-            t.endedAtMillis AS endedAtMillis,
-            c.title AS title,
-            t.text AS text,
-            CASE WHEN EXISTS (
-                SELECT 1
-                FROM transcripts seed, markers m
-                WHERE seed.conversationId = t.conversationId
-                  AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-                  AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
-            ) THEN 1 ELSE 0 END AS isMarked
-        FROM transcripts t
-        JOIN conversations c ON c.id = t.conversationId
-        WHERE t.processingState = 'ASR_READY'
-          AND (:term1 = '' OR t.text LIKE '%' || :term1 || '%' ESCAPE '\' OR c.title LIKE '%' || :term1 || '%' ESCAPE '\')
-          AND (:term2 = '' OR t.text LIKE '%' || :term2 || '%' ESCAPE '\' OR c.title LIKE '%' || :term2 || '%' ESCAPE '\')
-          AND (:term3 = '' OR t.text LIKE '%' || :term3 || '%' ESCAPE '\' OR c.title LIKE '%' || :term3 || '%' ESCAPE '\')
-          AND (:term4 = '' OR t.text LIKE '%' || :term4 || '%' ESCAPE '\' OR c.title LIKE '%' || :term4 || '%' ESCAPE '\')
-          AND (:fromMillis IS NULL OR t.startedAtMillis >= :fromMillis)
-          AND (:toMillis IS NULL OR t.startedAtMillis < :toMillis)
-          AND (:markedOnly = 0 OR EXISTS (
-              SELECT 1
-              FROM transcripts seed, markers m
-              WHERE seed.conversationId = t.conversationId
-                AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-                AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
-          ))
-        ORDER BY t.startedAtMillis DESC
-        LIMIT 100
-        """,
-    )
-    fun observeSearch(
-        term1: String,
-        term2: String,
-        term3: String,
-        term4: String,
-        fromMillis: Long?,
-        toMillis: Long?,
-        markedOnly: Int,
-    ): Flow<List<TranscriptSearchRow>>
+    @RawQuery(observedEntities = [TranscriptEntity::class, ConversationEntity::class, MarkerEntity::class])
+    fun observeSearch(query: SupportSQLiteQuery): Flow<List<TranscriptSearchRow>>
 
     @Query("SELECT * FROM daily_journals WHERE localDate = :localDate LIMIT 1")
     fun observeDailyJournal(localDate: String): Flow<DailyJournalEntity?>

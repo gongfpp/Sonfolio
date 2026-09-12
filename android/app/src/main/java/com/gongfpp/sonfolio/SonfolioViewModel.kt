@@ -45,8 +45,8 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
     fun observeTranscript(conversationId: String): Flow<List<TranscriptLine>> =
         repository.observeTranscript(conversationId)
 
-    fun observeSearch(query: String, filter: String = "全部"): Flow<List<SearchHit>> =
-        repository.observeSearch(query, filter)
+    fun observeSearch(query: String, filter: String = "全部", visibleLimit: Int = SEARCH_BATCH_SIZE): Flow<SearchResults> =
+        repository.observeSearch(query, filter, visibleLimit)
 
     fun observeDailyJournal(localDate: String): Flow<com.gongfpp.sonfolio.data.local.DailyJournalEntity?> =
         repository.observeDailyJournal(localDate)

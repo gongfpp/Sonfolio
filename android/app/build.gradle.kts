@@ -14,8 +14,8 @@ android {
         applicationId = "com.gongfpp.sonfolio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -68,6 +68,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.xerial:sqlite-jdbc:3.41.2.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

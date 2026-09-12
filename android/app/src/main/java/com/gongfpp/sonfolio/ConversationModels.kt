@@ -40,6 +40,13 @@ data class SearchHit(
     val isMarked: Boolean = false,
 )
 
+data class SearchResults(
+    val hits: List<SearchHit>,
+    val hasMore: Boolean = false,
+    val requestedLimit: Int = 100,
+    val errorMessage: String? = null,
+)
+
 data class AudioChunkPreview(
     val id: String,
     val startedAtMillis: Long,

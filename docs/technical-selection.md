@@ -32,6 +32,8 @@ AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal
 
 当前实现使用 Room 2.7.2/SQLite 保存元数据，并提交版本 1 的 Schema JSON，为后续迁移测试留下基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。音频文件保留在应用私有存储或用户指定的本地目录，数据库只保存路径、时间、大小、处理状态和摘要等元数据。搜索第一版先使用 SQLite `LIKE` 实现可用的全文关键词匹配并跳到对应 Conversation/时间点，下一步再引入 FTS5 索引；语义向量搜索留到后续版本。
 
+搜索在 `0.1.6` 改用由代码构造条件、参数绑定的 Room `@RawQuery`，用于处理可变数量的关键词，并显式观察转写、对话和标记三个表；官方说明这种可观察查询需要声明 `observedEntities`，不能依赖固定 SQL 的编译期验证，因此另外用 SQLite 内存库执行生产查询，并准备 Android Room 集成测试验证映射与变更通知。[Room RawQuery 文档](https://developer.android.com/reference/androidx/room/RawQuery)。关键词只作为参数值传入，`%`、`_` 和反斜杠先转义为字面匹配，排序增加转写 ID 作为同一时间戳的稳定次序。每次比当前展示范围多读取一条判断是否还有内容，用户点击“加载更多”时扩大范围；这避免原先 100 条后的内容无入口，但尚未实现游标分页、全文索引或跨转写行的语义匹配，也不需要迁移数据库。桌面测试用的 SQLite JDBC 只加入测试依赖，不进入 APK。
+
 ## 录音链路与处理链路
 
 Foreground Service 是录音链路的所有者。当前实现要求用户在可见 Activity 中授予 `RECORD_AUDIO` 后启动服务，并在 Manifest 声明 `microphone` 类型和 `FOREGROUND_SERVICE_MICROPHONE`；这符合 Android 对 while-in-use 麦克风权限的限制。服务使用 `VOICE_RECOGNITION` 音源，以 16 kHz、单声道、PCM 16-bit 写入标准 WAV，5 分钟滚动生成一个 chunk，约占 9.6 MB，便于录音仍在继续时及时启动 VAD/ASR；相邻切片仍由规则合并为完整 Conversation。每个切片开始前先写入 `RECORDING` 状态，正常停止后补齐 WAV 头并更新为 `RECORDED`；进程异常退出时，下次打开应用或重新启动服务会按实际文件长度修复 WAV 头、把切片标记为 `RECOVERED`，并为最后写入时间至恢复时间创建 `RecordingGap`。
