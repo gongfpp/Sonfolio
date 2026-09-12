@@ -32,7 +32,7 @@ AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal
 
 当前实现使用 Room 2.7.2/SQLite 保存元数据，并提交版本 1 的 Schema JSON，为后续迁移测试留下基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。音频文件保留在应用私有存储或用户指定的本地目录，数据库只保存路径、时间、大小、处理状态和摘要等元数据。搜索第一版先使用 SQLite `LIKE` 实现可用的全文关键词匹配并跳到对应 Conversation/时间点，下一步再引入 FTS5 索引；语义向量搜索留到后续版本。
 
-搜索在 `0.1.6` 改用由代码构造条件、参数绑定的 Room `@RawQuery`，用于处理可变数量的关键词，并显式观察转写、对话和标记三个表；官方说明这种可观察查询需要声明 `observedEntities`，不能依赖固定 SQL 的编译期验证，因此另外用 SQLite 内存库执行生产查询，并准备 Android Room 集成测试验证映射与变更通知。[Room RawQuery 文档](https://developer.android.com/reference/androidx/room/RawQuery)。关键词只作为参数值传入，`%`、`_` 和反斜杠先转义为字面匹配，排序增加转写 ID 作为同一时间戳的稳定次序。每次比当前展示范围多读取一条判断是否还有内容，用户点击“加载更多”时扩大范围；这避免原先 100 条后的内容无入口，但尚未实现游标分页、全文索引或跨转写行的语义匹配，也不需要迁移数据库。桌面测试用的 SQLite JDBC 只加入测试依赖，不进入 APK。
+搜索在 `0.1.6` 改用由代码构造条件、参数绑定的 Room `@RawQuery`，用于处理可变数量的关键词，并显式观察转写、对话和标记三个表；官方说明这种可观察查询需要声明 `observedEntities`，不能依赖固定 SQL 的编译期验证，因此另外用 SQLite 内存库执行生产查询，并已在 Android 真机的 Room 集成测试中验证映射与变更通知。[Room RawQuery 文档](https://developer.android.com/reference/androidx/room/RawQuery)。关键词只作为参数值传入，`%`、`_` 和反斜杠先转义为字面匹配，排序增加转写 ID 作为同一时间戳的稳定次序。每次比当前展示范围多读取一条判断是否还有内容，用户点击“加载更多”时扩大范围；这避免原先 100 条后的内容无入口，但尚未实现游标分页、全文索引或跨转写行的语义匹配，也不需要迁移数据库。桌面测试用的 SQLite JDBC 只加入测试依赖，不进入 APK。
 
 ## 录音链路与处理链路
 
@@ -52,7 +52,7 @@ V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 A
 
 ## 版本推进顺序
 
-1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航栈与页面状态支持保存，0.1.5 新增日期及返回场景尚需真机验收。
+1. 已完成 Compose 信息架构、交互状态和静态 Web 视觉对照；导航栈与页面状态支持保存，0.1.5 新增日期及返回场景已在 0.1.6 真机验收中通过，加载更多、长转写固定播放器及搜索返回位置也已检查，证据见对应开发验收记录。
 2. 已完成 Room 基础实体、Schema 版本 1 和首页时间线读取；真实 Conversation、详情转写、搜索和每日回顾使用同一数据库，首装不注入演示内容。
 3. 已实现 Foreground Service、真实 `AudioRecord`、5 分钟 WAV 切片、通知栏标记/停止、标记即时反馈、异常切片修复和 `RecordingGap` 写入；旧版本的前台/后台录音已在 Redmi Note 8 Pro 验证，新版本验证状态以开发验收记录为准。
 4. 已接入 Silero VAD、SenseVoice/sherpa-onnx 和串行 WorkManager 队列；现有真实录音在 Redmi Note 8 Pro 上生成 SpeechSegment 和 Transcript，模型 OOM/进程退出会保留原音并在下次启动重新排队。
