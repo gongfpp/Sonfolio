@@ -13,3 +13,6 @@ android/.kotlin/
 android/local.properties
 android/**/build/
 android/**/.cxx/
+
+# 本地工作数据（含本机路径与网络信息，勿提交）
+.workbuddy/
