@@ -18,6 +18,7 @@ data class ConversationPreview(
     val startedAtMillis: Long,
     val endedAtMillis: Long,
     val isMarked: Boolean = false,
+    val note: String? = null,
 )
 
 data class TranscriptLine(
@@ -28,6 +29,8 @@ data class TranscriptLine(
     val localPath: String,
     val chunkStartedAtMillis: Long,
     val isMarked: Boolean = false,
+    /** 用户修正前的原始识别文字；为空表示未修正过。 */
+    val originalText: String? = null,
 )
 
 data class SearchHit(

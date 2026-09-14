@@ -35,7 +35,12 @@ class SearchQueryTest {
         }
     }
 
-    private fun request(query: String, filter: String = "全部", limit: Int = 100) = SearchQuery.build(query, filter, limit, date, zone)
+    private fun request(
+        query: String,
+        dateRange: SearchDateRange = SearchDateRange.All,
+        marked: Boolean = false,
+        limit: Int = 100,
+    ) = SearchQuery.build(query, dateRange, marked, limit, date, zone)
 
     private fun ids(query: SearchQuery): List<String> = database.prepareStatement(query.sql).use { statement ->
         query.arguments.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
@@ -82,7 +87,7 @@ class SearchQueryTest {
         insert("end", "内容", midnight + 86_400_000L - 1)
         insert("next", "内容", midnight + 86_400_000L)
         assertTrue(ids(request(" ")).isEmpty())
-        assertEquals(listOf("end", "start"), ids(request("", "今天")))
+        assertEquals(listOf("end", "start"), ids(request("", SearchDateRange.Today)))
     }
 
     @Test fun weekMeansMondayThroughNextMondayNotRollingSevenDays() {
@@ -91,7 +96,7 @@ class SearchQueryTest {
         insert("monday", "内容", monday)
         insert("sunday", "内容", monday + 7 * 86_400_000L - 1)
         insert("next-monday", "内容", monday + 7 * 86_400_000L)
-        assertEquals(listOf("sunday", "monday"), ids(request("", "本周")))
+        assertEquals(listOf("sunday", "monday"), ids(request("", SearchDateRange.Week)))
     }
 
     @Test fun markerFindsEntireConversationButDoesNotMultiplyHits() {
@@ -99,7 +104,27 @@ class SearchQueryTest {
         insert("seed", "内容", midnight + 60_000)
         insert("other", "内容", midnight + 300_000, conversation = "other")
         execute("INSERT INTO markers VALUES (${midnight + 60_500}, 1000, 0), (${midnight + 60_800}, 1000, 0)")
-        assertEquals(listOf("seed", "early"), ids(request("", "仅标记")))
+        assertEquals(listOf("seed", "early"), ids(request("", marked = true)))
+    }
+
+    @Test fun dateRangeAndMarkedAreIndependentAndCombine() {
+        // 标记只覆盖它触及的那场对话；用两场对话让时间范围与标记条件真正相互独立。
+        val yesterday = midnight - 86_400_000L
+        insert("marked-yesterday", "内容", yesterday, conversation = "c")
+        execute("INSERT INTO markers VALUES (${yesterday + 500}, 1000, 0)")
+        insert("today", "内容", midnight, conversation = "other")
+        assertEquals(listOf("marked-yesterday"), ids(request("", marked = true)))
+        // 叠加“今天”后，被标记的对话落在昨天，应被时间条件排除。
+        assertTrue(ids(request("", SearchDateRange.Today, marked = true)).isEmpty())
+        assertEquals(listOf("today"), ids(request("", SearchDateRange.Today)))
+    }
+
+    @Test fun markedOnlyStillRequiresQueryTermsWhenGiven() {
+        insert("hit", "会议 纪要", midnight)
+        insert("miss", "其他内容", midnight)
+        execute("INSERT INTO markers VALUES (${midnight + 500}, 1000, 0)")
+        assertEquals(listOf("hit"), ids(request("会议", marked = true)))
+        assertTrue(ids(request("不存在", marked = true)).isEmpty())
     }
 
     @Test fun titleMatchesAndEmptyOrUnprocessedTranscriptsAreExcluded() {

@@ -24,7 +24,7 @@ class SearchResultsUiTest {
         var opened: AppScreen? = null
         ui.setContent {
             MaterialTheme {
-                SearchResultsPanel("测试", "全部", results.value, limit.value, rememberLazyListState(),
+                SearchResultsPanel("测试", SearchDateRange.All, false, results.value, limit.value, rememberLazyListState(),
                     onLoadMore = { limit.value = 200 }, onOpen = { opened = it }, modifier = Modifier.fillMaxSize())
             }
         }

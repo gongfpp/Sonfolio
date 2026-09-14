@@ -5,6 +5,13 @@ import java.time.ZoneId
 
 internal const val SEARCH_BATCH_SIZE = 100
 
+/** 搜索的时间范围，与「仅标记」相互独立，两类条件可同时生效。 */
+enum class SearchDateRange(val label: String) {
+    All("全部"),
+    Today("今天"),
+    Week("本周"),
+}
+
 /** SQL 结构只来自代码，用户输入始终通过参数绑定，并按字面匹配 LIKE 通配字符。 */
 internal data class SearchQuery(
     val sql: String,
@@ -15,7 +22,8 @@ internal data class SearchQuery(
     companion object {
         fun build(
             query: String,
-            filter: String = "全部",
+            dateRange: SearchDateRange = SearchDateRange.All,
+            markedOnly: Boolean = false,
             visibleLimit: Int = SEARCH_BATCH_SIZE,
             today: LocalDate = LocalDate.now(),
             zone: ZoneId = ZoneId.systemDefault(),
@@ -29,24 +37,26 @@ internal data class SearchQuery(
             }
             val args = mutableListOf<Any>()
             val conditions = mutableListOf("t.processingState = 'ASR_READY'", "t.text <> ''")
-            if (error != null || (terms.isEmpty() && filter == "全部")) conditions += "0 = 1"
+            // 没有任何条件（无关键词、不限时间、不筛标记）时不应列出全部记录。
+            val noCriteria = terms.isEmpty() && dateRange == SearchDateRange.All && !markedOnly
+            if (error != null || noCriteria) conditions += "0 = 1"
             else terms.forEach { term ->
                 val literal = "%${term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%"
                 conditions += "(t.text LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\')"
                 args += literal
                 args += literal
             }
-            val startDate = when (filter) {
-                "今天" -> today
-                "本周" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
-                else -> null
+            val startDate = when (dateRange) {
+                SearchDateRange.Today -> today
+                SearchDateRange.Week -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
+                SearchDateRange.All -> null
             }
             if (startDate != null) {
                 conditions += "t.startedAtMillis >= ? AND t.startedAtMillis < ?"
                 args += startDate.atStartOfDay(zone).toInstant().toEpochMilli()
-                args += startDate.plusDays(if (filter == "本周") 7 else 1).atStartOfDay(zone).toInstant().toEpochMilli()
+                args += startDate.plusDays(if (dateRange == SearchDateRange.Week) 7 else 1).atStartOfDay(zone).toInstant().toEpochMilli()
             }
-            if (filter == "仅标记") conditions += MARKED_SQL
+            if (markedOnly) conditions += MARKED_SQL
             // 多读一条只用于确认后面还有内容，不把首批数量冒充总数。
             args += limit + 1
             return SearchQuery(

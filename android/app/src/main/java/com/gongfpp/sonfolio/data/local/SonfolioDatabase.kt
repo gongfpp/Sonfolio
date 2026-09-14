@@ -18,7 +18,7 @@ import androidx.room.RoomDatabase
         SummaryRunEntity::class,
         ConversationAliasEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -26,6 +26,12 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun recordingDao(): RecordingDao
 
     companion object {
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN note TEXT")
+                db.execSQL("ALTER TABLE transcripts ADD COLUMN originalText TEXT")
+            }
+        }
         val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS conversation_aliases (oldId TEXT NOT NULL PRIMARY KEY, canonicalId TEXT NOT NULL)")
@@ -55,7 +61,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { database -> instance = database }
             }
     }
 }
