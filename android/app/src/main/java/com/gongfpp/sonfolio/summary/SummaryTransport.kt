@@ -36,6 +36,11 @@ internal class RemoteSummaryTransport(
                     .put("messages", JSONArray().put(JSONObject().put("role", "system").put("content", system))
                         .put(JSONObject().put("role", "user").put("content", user)))
                     .put("response_format", JSONObject().put("type", "json_object"))
+                when (SummaryProvider.fromEndpoint(endpoint)) {
+                    SummaryProvider.DEEPSEEK -> request.put("thinking", JSONObject().put("type", "disabled"))
+                    SummaryProvider.QWEN -> request.put("enable_thinking", false)
+                    SummaryProvider.CUSTOM -> Unit
+                }
                 val conn = open(endpoint).also { connection.set(it) }
                 conn.instanceFollowRedirects = false
                 conn.connectTimeout = 15_000; conn.readTimeout = 90_000
@@ -99,7 +104,8 @@ class LocalSummaryService : Service() {
             val reply = Message.obtain(null, 1)
             reply.data = try {
                 val model = File(requireNotNull(request.data.getString("model"))).canonicalFile
-                require(model.parentFile == File(filesDir, "summary-models").canonicalFile && model.extension == "gguf" && model.isFile)
+                val catalogModel = com.gongfpp.sonfolio.models.ModelCatalog.file(filesDir, com.gongfpp.sonfolio.models.ModelCatalog.summary).canonicalFile
+                require((model.parentFile == File(filesDir, "summary-models").canonicalFile || model == catalogModel) && model.extension == "gguf" && model.isFile)
                 val system = requireNotNull(request.data.getString("system"))
                 val user = requireNotNull(request.data.getString("user"))
                 require(system.length + user.length <= 24_000)
@@ -123,20 +129,37 @@ class LocalSummaryService : Service() {
 }
 
 internal class LocalSummaryTransport(private val context: Context) {
-    suspend fun generate(model: File, system: String, user: String): String = withContext(Dispatchers.Main) {
+    suspend fun generate(model: File, system: String, user: String): String = withSession(model) { send -> send(system, user) }
+
+    /** A single task holds the connection across all parts. Unbinding releases native memory. */
+    suspend fun <T> withSession(model: File, block: suspend (suspend (String, String) -> String) -> T): T = withContext(Dispatchers.Main) {
+        awaitingProcessExit?.let { previous ->
+            check(withTimeoutOrNull(5_000) { previous.await(); true } == true) { "上一项总结模型尚未退出，请稍后重试" }
+            awaitingProcessExit = null
+        }
         val connected = CompletableDeferred<Messenger>()
-        val result = CompletableDeferred<String>()
+        var result: CompletableDeferred<String>? = null
+        val processEnded = CompletableDeferred<Unit>()
+        var serviceBinder: IBinder? = null
+        val death = IBinder.DeathRecipient { processEnded.complete(Unit) }
         fun fail() {
             val error = IllegalStateException("本地总结进程退出，录音仍可继续，原有小结保留")
-            connected.completeExceptionally(error); result.completeExceptionally(error)
+            connected.completeExceptionally(error); result?.completeExceptionally(error)
         }
         val reply = Messenger(Handler(Looper.getMainLooper()) {
-            it.data.getString("error")?.let { error -> result.completeExceptionally(IllegalStateException(error)) }
-                ?: result.complete(it.data.getString("text").orEmpty())
+            val current = result
+            if (current != null) {
+                it.data.getString("error")?.let { error -> current.completeExceptionally(IllegalStateException(error)) }
+                    ?: current.complete(it.data.getString("text").orEmpty())
+            }
             true
         })
         val connection = object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName, binder: IBinder) { connected.complete(Messenger(binder)) }
+            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                serviceBinder = binder
+                try { binder.linkToDeath(death, 0); connected.complete(Messenger(binder)) }
+                catch (_: RemoteException) { processEnded.complete(Unit); fail() }
+            }
             override fun onServiceDisconnected(name: ComponentName) = fail()
             override fun onBindingDied(name: ComponentName) = fail()
             override fun onNullBinding(name: ComponentName) = fail()
@@ -146,14 +169,30 @@ internal class LocalSummaryTransport(private val context: Context) {
             bound = context.bindService(Intent(context, LocalSummaryService::class.java), connection, Context.BIND_AUTO_CREATE or Context.BIND_NOT_FOREGROUND)
             check(bound) { "无法启动本地总结模型" }
             val remote = withTimeoutOrNull(30_000) { connected.await() } ?: error("本地模型启动超时")
-            remote.send(Message.obtain(null, 1).apply {
-                replyTo = reply
-                data = Bundle().apply { putString("model", model.path); putString("system", system); putString("user", user) }
-            })
-            withTimeoutOrNull(180_000) { result.await() } ?: error("本地总结超时，原有小结保留")
+            block { system, user ->
+                check(result == null) { "本地模型不能并发生成" }
+                val pending = CompletableDeferred<String>()
+                result = pending
+                try {
+                    check(remote.binder.isBinderAlive) { "本地总结进程已退出" }
+                    remote.send(Message.obtain(null, 1).apply {
+                        replyTo = reply
+                        data = Bundle().apply { putString("model", model.path); putString("system", system); putString("user", user) }
+                    })
+                    withTimeoutOrNull(180_000) { pending.await() } ?: error("本地总结超时，原有小结保留")
+                } finally { pending.cancel(); result = null }
+            }
         } finally {
             if (bound) runCatching { context.unbindService(connection) }
-            connected.cancel(); result.cancel()
+            if (serviceBinder != null) withContext(NonCancellable) {
+                awaitingProcessExit = processEnded
+                if (withTimeoutOrNull(5_000) { processEnded.await(); true } == true) {
+                    awaitingProcessExit = null
+                    runCatching { serviceBinder?.unlinkToDeath(death, 0) }
+                }
+            }
+            connected.cancel(); result?.cancel()
         }
     }
+    companion object { private var awaitingProcessExit: CompletableDeferred<Unit>? = null }
 }

@@ -20,8 +20,16 @@ Java_com_gongfpp_sonfolio_summary_LocalSummaryNative_generate(JNIEnv *env, jobje
         std::call_once(init, [] { llama_log_set([](ggml_log_level, const char *, void *) {}, nullptr); llama_backend_init(); });
         const char *raw = env->GetStringUTFChars(path, nullptr);
         std::string model_path(raw); env->ReleaseStringUTFChars(path, raw);
-        auto mp = llama_model_default_params(); mp.n_gpu_layers = 0;
-        std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(model_path.c_str(), mp), llama_model_free);
+        // Service requests are serial; retain weights only for the lifetime of this bound task.
+        // Each part gets a fresh context so its full prompt is not appended twice.
+        static std::unique_ptr<llama_model, decltype(&llama_model_free)> model(nullptr, llama_model_free);
+        static std::string loaded_path;
+        if (!model || loaded_path != model_path) {
+            model.reset();
+            auto mp = llama_model_default_params(); mp.n_gpu_layers = 0;
+            model.reset(llama_model_load_from_file(model_path.c_str(), mp));
+            loaded_path = model_path;
+        }
         if (!model) throw std::runtime_error("model");
         const auto *vocab = llama_model_get_vocab(model.get());
         auto cp = llama_context_default_params();

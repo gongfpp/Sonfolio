@@ -72,9 +72,10 @@ class RecordingService : Service() {
             for (event in gapEvents) {
                 val app = application as SonfolioApplication
                 runCatching {
+                    val affectedStart = minOf(event.at, app.database.recordingDao().getOpenGap(event.kind)?.startedAtMillis ?: event.at)
                     if (event.reason != null) app.database.recordingDao().openGap(event.at, event.reason, event.kind)
                     else app.database.recordingDao().closeOpenGaps(event.kind, event.at, automaticRestart)
-                    app.conversationRepository.rebuildFromTranscripts()
+                    app.conversationRepository.rebuildFromTranscripts(affectedStart, event.at)
                 }.onFailure { Log.e(TAG, "无法更新录音缺口", it) }
             }
         }
@@ -208,24 +209,13 @@ class RecordingService : Service() {
         val startedAtMillis = System.currentTimeMillis()
         val startedAtElapsed = SystemClock.elapsedRealtime()
         val file = createChunkFile(startedAtMillis)
+        val fact = CapturedChunk(chunkId, startedAtMillis, file.absolutePath, SAMPLE_RATE_HZ, CHANNEL_COUNT)
+        repository.saveCaptureFact(fact)
         val writer = WavChunkWriter(
             file = file,
             sampleRateHz = SAMPLE_RATE_HZ,
             channelCount = CHANNEL_COUNT,
         )
-        try {
-            repository.beginChunk(
-                id = chunkId,
-                startedAtMillis = startedAtMillis,
-                file = file,
-                sampleRateHz = SAMPLE_RATE_HZ,
-                channelCount = CHANNEL_COUNT,
-            )
-        } catch (error: Throwable) {
-            runCatching { writer.finish() }
-            throw error
-        }
-
         var state = "RECORDED"
         var errorMessage: String? = null
         var lastCheckpoint = startedAtElapsed
@@ -260,11 +250,8 @@ class RecordingService : Service() {
                             lastMeterAtMillis = now
                         }
                         if (SystemClock.elapsedRealtime() - lastCheckpoint >= 5_000L) {
-                            val byteSize = writer.checkpoint()
-                            serviceScope.launch {
-                                runCatching { (application as SonfolioApplication).database.recordingDao().checkpoint(chunkId, byteSize) }
-                                    .onFailure { Log.w(TAG, "录音状态更新延迟，音频已经落盘", it) }
-                            }
+                            writer.checkpoint()
+                            repository.checkpointCaptureMetadata()
                             lastCheckpoint = SystemClock.elapsedRealtime()
                             val available = filesDir.usableSpace
                             RecordingController.updateHealth { it.copy(storageLow = available < RECORDING_SPACE_WARNING) }
@@ -285,15 +272,10 @@ class RecordingService : Service() {
                 errorMessage = it.message ?: it.javaClass.simpleName
                 file.length()
             }
-            withContext(NonCancellable) {
-                repository.finishChunk(
-                    id = chunkId,
-                    endedAtMillis = startedAtMillis + WavChunkWriter.durationMillis(byteSize, SAMPLE_RATE_HZ, CHANNEL_COUNT),
-                    byteSize = byteSize,
-                    state = state,
-                    errorMessage = errorMessage,
-                )
-            }
+            repository.saveCaptureFact(fact.copy(
+                endedAt = startedAtMillis + WavChunkWriter.durationMillis(byteSize, SAMPLE_RATE_HZ, CHANNEL_COUNT),
+                bytes = byteSize, state = state, error = errorMessage,
+            ))
         }
     }
 
@@ -328,10 +310,11 @@ class RecordingService : Service() {
         serviceScope.launch {
             try {
                 val markedAtMillis = System.currentTimeMillis()
+                val defaultWindow = (application as SonfolioApplication).preferences.markerWindows.first()
                 val windowMinutes = intent
-                    ?.getIntExtra(EXTRA_MARK_WINDOW_MINUTES, RecordingRepository.DEFAULT_MARK_MINUTES)
+                    ?.getIntExtra(EXTRA_MARK_WINDOW_MINUTES, defaultWindow)
                     ?.coerceIn(1, RecordingRepository.MAX_MARK_MINUTES)
-                    ?: RecordingRepository.DEFAULT_MARK_MINUTES
+                    ?: defaultWindow
                 repository.markNow(markedAtMillis, windowMinutes)
                 RecordingController.publishFeedback(
                     RecordingFeedback.Marked(markedAtMillis, windowMinutes),
@@ -340,7 +323,7 @@ class RecordingService : Service() {
                     NOTIFICATION_ID,
                     buildNotification(notificationStartedAtMillis, "已标记前 ${windowMinutes} 分钟涉及的对话"),
                 )
-                (application as SonfolioApplication).conversationRepository.rebuildFromTranscripts()
+                (application as SonfolioApplication).conversationRepository.rebuildFromTranscripts(markedAtMillis - windowMinutes * 60_000L, markedAtMillis)
             } catch (error: Throwable) {
                 Log.e(TAG, "Unable to save recording marker", error)
                 RecordingController.publishFeedback(

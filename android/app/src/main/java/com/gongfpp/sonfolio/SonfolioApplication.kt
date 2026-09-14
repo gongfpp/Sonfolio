@@ -6,6 +6,7 @@ import com.gongfpp.sonfolio.processing.ProcessingScheduler
 import com.gongfpp.sonfolio.recording.RecordingRepository
 
 class SonfolioApplication : Application() {
+    val transcriptionSettings by lazy { com.gongfpp.sonfolio.processing.TranscriptionSettingsStore(this) }
     val summarySettings by lazy { com.gongfpp.sonfolio.summary.SummarySettingsStore(this) }
     val summaryCoordinator by lazy { com.gongfpp.sonfolio.summary.SummaryCoordinator(this) }
     val database by lazy { SonfolioDatabase.getInstance(this) }
@@ -15,6 +16,6 @@ class SonfolioApplication : Application() {
     }
     val processingScheduler by lazy { ProcessingScheduler(this) }
     val recordingRepository by lazy {
-        RecordingRepository(database.recordingDao(), processingScheduler, preferences)
+        RecordingRepository(database.recordingDao(), processingScheduler, preferences, java.io.File(filesDir, "capture-journal"))
     }
 }

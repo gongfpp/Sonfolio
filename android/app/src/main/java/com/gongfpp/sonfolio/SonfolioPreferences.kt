@@ -22,7 +22,17 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
         get() = preferences.getLong(KEY_RECORDING_SESSION_START, 0L).takeIf { it > 0L }
 
     val chargeOnly: Boolean get() = preferences.getBoolean("charge-only", false)
+    val assemblyVersion: Int get() = preferences.getInt("assembly-version", 0)
+    fun completeAssemblyMigration() { check(preferences.edit().putInt("assembly-version", 4).commit()) }
     fun setChargeOnly(value: Boolean) { preferences.edit().putBoolean("charge-only", value).apply() }
+
+    val markerWindows: List<Int> get() = listOf(3, 10, 20).mapIndexed { index, default ->
+        preferences.getInt("marker-minutes-$index", default).coerceIn(1, 60)
+    }
+    fun setMarkerWindow(index: Int, minutes: Int) {
+        require(index in 0..2 && minutes in MARKER_OPTIONS)
+        preferences.edit().putInt("marker-minutes-$index", minutes).apply()
+    }
 
     val retentionDays: Int get() = preferences.getInt("retention-days", 0)
     fun setRetentionDays(value: Int) {
@@ -51,6 +61,7 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
     }
 
     companion object {
+        val MARKER_OPTIONS = listOf(1, 3, 5, 10, 15, 20, 30, 45, 60)
         const val DEFAULT_LANGUAGE = "zh"
         const val DEFAULT_MIN_SPEECH_SECONDS = 5
         const val DEFAULT_MIN_TEXT_CHARACTERS = 4

@@ -16,6 +16,15 @@ class DayTimelineTest {
         id, start, start + duration, "/test/$id.wav", 44L + duration * 32L, state,
     )
 
+    @Test fun cleanedAudioNoLongerCountsOnHomeButConversationRemains() {
+        val audio = chunk("removed", midnight, 1_000, "AUDIO_DELETED").copy(byteSize = 0)
+        val conversation = ConversationPreview("c", ConversationType.Unknown, "00:00", "保留文字", "1秒", "摘要", "BRIEF", midnight, midnight + 1_000)
+        val day = DayTimeline.build(date, listOf(conversation), listOf(audio), emptyList(), zone)
+        assertTrue(day.chunks.isEmpty())
+        assertEquals(0L, day.savedMillis)
+        assertEquals(listOf(conversation), day.conversations)
+    }
+
     @Test fun crossMidnightAudioAndConversationAppearOnBothDaysWithClippedTotals() {
         val audio = chunk("cross", midnight - 60_000, 180_000)
         val conversation = ConversationPreview("c", ConversationType.Unknown, "23:59", "跨日讨论", "3分钟", "摘要", "BRIEF", audio.startedAtMillis, audio.endedAtMillis!!)

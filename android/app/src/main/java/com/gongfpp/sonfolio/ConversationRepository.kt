@@ -16,19 +16,26 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import com.gongfpp.sonfolio.summary.AiSummary
 import com.gongfpp.sonfolio.summary.summaryInput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class ConversationRepository(
     private val database: SonfolioDatabase,
     private val preferences: SonfolioPreferences,
 ) {
     private val conversationDao = database.conversationDao()
-    fun observeTimeline(): Flow<List<ConversationPreview>> =
+    private val rebuildLock = Mutex()
+    fun observeTimeline(start: Long = Long.MIN_VALUE, end: Long = Long.MAX_VALUE): Flow<List<ConversationPreview>> =
         combine(
-            conversationDao.observeTimeline(),
+            conversationDao.observeTimeline(start, end),
             conversationDao.observeMarkedConversationIds(),
         ) { entities, markedIds ->
             entities.map { it.toPreview(markedIds.contains(it.id)) }
         }
+
+    fun observeConversation(id: String): Flow<ConversationPreview?> = combine(conversationDao.observeConversation(id), conversationDao.observeMarkedConversationIds()) { row, marked -> row?.toPreview(row.id in marked) }
 
 
     /**
@@ -36,10 +43,46 @@ class ConversationRepository(
      * deterministic: V0.1 needs a readable, repeatable result even when no network model is
      * available. A later summarizer can replace the text without changing the timeline contract.
      */
-    suspend fun rebuildFromTranscripts() = database.withTransaction {
-        val rows = conversationDao.getReadyTranscriptRows()
-        val gaps = database.recordingDao().getGaps()
-        val aiRuns = conversationDao.getSummaryRuns().associateBy { it.sourceKey }
+    suspend fun rebuildFromTranscripts(startedAt: Long? = null, endedAt: Long? = null) = rebuildLock.withLock {
+        withContext(Dispatchers.Default) {
+            repeat(4) { if (rebuildRegion(startedAt, endedAt)) return@withContext }
+            error("整理期间内容持续更新，请稍后重试；原音和转写已保留")
+        }
+    }
+
+    /** CPU work is outside the writer transaction. Normal chunk updates only inspect the
+     * affected local days and continuous conversations crossing their boundaries. */
+    private suspend fun rebuildRegion(startedAt: Long?, endedAt: Long?): Boolean {
+        val zone = ZoneId.systemDefault()
+        var rangeStart = startedAt?.let { DayWindow.of(Instant.ofEpochMilli(it).atZone(zone).toLocalDate(), zone).start } ?: Long.MIN_VALUE
+        var rangeEnd = endedAt?.let { DayWindow.of(Instant.ofEpochMilli(it).atZone(zone).toLocalDate(), zone).end } ?: Long.MAX_VALUE
+        if (startedAt != null && endedAt != null) {
+            while (true) {
+                val neighbors = conversationDao.getReadyRowsInWindow(rangeStart - MERGE_GAP_MILLIS, rangeEnd + MERGE_GAP_MILLIS)
+                val previous = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
+                val start = minOf(rangeStart, neighbors.minOfOrNull { it.startedAtMillis } ?: rangeStart, previous.minOfOrNull { it.startedAtMillis } ?: rangeStart)
+                val end = maxOf(rangeEnd, neighbors.maxOfOrNull { it.endedAtMillis } ?: rangeEnd, previous.maxOfOrNull { it.endedAtMillis } ?: rangeEnd)
+                // Include complete days so daily summaries never lose unaffected conversations.
+                val nextStart = DayWindow.of(Instant.ofEpochMilli(start).atZone(zone).toLocalDate(), zone).start
+                val nextEnd = DayWindow.of(Instant.ofEpochMilli(end - 1).atZone(zone).toLocalDate(), zone).end
+                if (rangeStart == nextStart && rangeEnd == nextEnd) break
+                rangeStart = nextStart; rangeEnd = nextEnd
+            }
+        }
+        val rows = conversationDao.getReadyRowsInWindow(rangeStart, rangeEnd)
+        val gaps = database.recordingDao().getGapsInWindow(rangeStart, rangeEnd)
+        val oldEntities = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
+        val summaryKeys = if (startedAt == null || endedAt == null) null else {
+            val firstDay = Instant.ofEpochMilli(rangeStart).atZone(zone).toLocalDate()
+            val lastDay = Instant.ofEpochMilli(rangeEnd - 1).atZone(zone).toLocalDate()
+            (oldEntities.map { "conversation:${it.id}" } + rows.mapNotNull { it.conversationId?.let { id -> "conversation:$id" } } +
+                generateSequence(firstDay) { it.plusDays(1) }.takeWhile { it <= lastDay }.map { "day:$it" }.toList()).distinct()
+        }
+        suspend fun scopedSummaryRuns() = (summaryKeys?.chunked(400)?.flatMap { conversationDao.getSummaryRunsForKeys(it) }
+            ?: conversationDao.getSummaryRuns()).associateBy { it.sourceKey }
+        val aiRuns = scopedSummaryRuns()
+        val markers = database.recordingDao().getMarkersInWindow(rangeStart, rangeEnd)
+        val filterSnapshot = preferences.minimumSpeechSeconds to preferences.minimumTextCharacters
 
         val groups = mutableListOf<MutableList<TranscriptAudioRow>>()
         var groupEnd = Long.MIN_VALUE
@@ -56,12 +99,6 @@ class ConversationRepository(
             }
         }
 
-        conversationDao.clearGeneratedConversationLinks()
-        conversationDao.deleteGeneratedConversations()
-        conversationDao.deleteDemoConversations()
-        conversationDao.deleteGeneratedDailyJournals()
-
-        val markers = conversationDao.getMarkers()
         fun cached(key: String, sourceRows: List<TranscriptAudioRow>): AiSummary? {
             val run = aiRuns[key] ?: return null
             if (run.outputJson == null || run.sourceHash != summaryInput(key, sourceRows, markers, gaps).fingerprint) return null
@@ -71,7 +108,6 @@ class ConversationRepository(
             !isShort(group, preferences) || groupIntersectsMarker(group, markers)
         }
 
-        val zone = ZoneId.systemDefault()
         val summaries = visibleGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
         val usedIds = mutableSetOf<String>()
         val entities = visibleGroups.map { group ->
@@ -95,13 +131,7 @@ class ConversationRepository(
                 processingState = "READY",
             )
         }
-        conversationDao.insertAll(entities)
-
-        visibleGroups.zip(entities).forEach { (group, entity) ->
-            group.map { it.transcriptId }.chunked(400).forEach { ids -> conversationDao.attachTranscripts(ids, entity.id) }
-        }
-
-        conversationDao.insertConversationSummaries(
+        val newSummaries = (
             visibleGroups.zip(entities)
                 .filter { (group, entity) -> isDetailed(group) || cached("conversation:${entity.id}", group.map { it.copy(conversationId = entity.id) }) != null }
                 .map { (group, entity) ->
@@ -119,17 +149,17 @@ class ConversationRepository(
                         modelVersion = if (ai == null) "extractive-v0.2" else "${run?.provider}:${run?.model}",
                         generatedAtMillis = System.currentTimeMillis(),
                     )
-                },
+                }
         )
 
         val groupsByDate = transcriptGroupsByDate(visibleGroups, zone)
-        groupsByDate.forEach { (date, dateGroups) ->
+        val newJournals = groupsByDate.map { (date, dateGroups) ->
             val dayWindow = DayWindow.of(date, zone)
             val daySummaries = dateGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
             val linkedRows = visibleGroups.zip(entities).flatMap { (group, entity) -> group.map { it.copy(conversationId = entity.id) } }
             val ai = cached("day:$date", linkedRows)
             val run = aiRuns["day:$date"]
-            conversationDao.insertDailyJournal(
+            (
                 DailyJournalEntity(
                     id = "journal-$date",
                     localDate = date.toString(),
@@ -148,8 +178,45 @@ class ConversationRepository(
                     generatedAtMillis = System.currentTimeMillis(),
                     modelVersion = if (ai == null) "extractive-v0.2" else "${run?.provider}:${run?.model}",
                     processingState = "READY",
-                ),
+                )
             )
+        }
+        val aliases = visibleGroups.zip(entities).flatMap { (group, entity) ->
+            group.mapNotNull { it.conversationId }.distinct().filter { it != entity.id && it !in usedIds }
+                .map { com.gongfpp.sonfolio.data.local.ConversationAliasEntity(it, entity.id) }
+        }.distinctBy { it.oldId }
+        val affectedDates = oldEntities.flatMap { entity ->
+            val start = Instant.ofEpochMilli(entity.startedAtMillis).atZone(zone).toLocalDate()
+            val end = Instant.ofEpochMilli((entity.endedAtMillis - 1).coerceAtLeast(entity.startedAtMillis)).atZone(zone).toLocalDate()
+            generateSequence(start) { it.plusDays(1) }.takeWhile { it <= end }.map { it.toString() }.toList()
+        }.toSet()
+        return database.withTransaction {
+            // New ASR/markers/gaps may arrive while the plan is computed. Never publish a stale plan.
+            if (rows != conversationDao.getReadyRowsInWindow(rangeStart, rangeEnd) ||
+                gaps != database.recordingDao().getGapsInWindow(rangeStart, rangeEnd) ||
+                markers != database.recordingDao().getMarkersInWindow(rangeStart, rangeEnd) ||
+                aiRuns != scopedSummaryRuns() ||
+                filterSnapshot != (preferences.minimumSpeechSeconds to preferences.minimumTextCharacters)) return@withTransaction false
+            val oldById = oldEntities.associateBy { it.id }
+            // A previously merged ID can reappear after a split/filter change. A live ID must
+            // never redirect to another conversation through an obsolete alias.
+            entities.map { it.id }.chunked(400).forEach { conversationDao.removeAliasesForCanonicalIds(it) }
+            conversationDao.insertAll(entities.filter { oldById[it.id] != it })
+            val visibleIds = visibleGroups.flatten().map { it.transcriptId }.toSet()
+            rows.filter { it.transcriptId !in visibleIds && it.conversationId != null }.map { it.transcriptId }.chunked(400)
+                .forEach { conversationDao.detachTranscripts(it) }
+            visibleGroups.zip(entities).forEach { (group, entity) ->
+                group.filter { it.conversationId != entity.id }.map { it.transcriptId }.chunked(400)
+                    .forEach { conversationDao.attachTranscripts(it, entity.id) }
+            }
+            oldEntities.map { it.id }.filter { it !in usedIds }.chunked(400).forEach { conversationDao.deleteConversations(it) }
+            entities.map { it.id }.chunked(400).forEach { conversationDao.deleteSummaries(it) }
+            conversationDao.insertConversationSummaries(newSummaries)
+            (affectedDates - newJournals.map { it.localDate }.toSet()).forEach { conversationDao.deleteJournal(it) }
+            newJournals.forEach { conversationDao.insertDailyJournal(it) }
+            aliases.forEach { conversationDao.redirectAliases(it.oldId, it.canonicalId) }
+            conversationDao.saveAliases(aliases)
+            true
         }
     }
 

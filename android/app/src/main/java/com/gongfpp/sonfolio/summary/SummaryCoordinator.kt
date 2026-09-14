@@ -16,8 +16,21 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
     private val dao get() = app.database.conversationDao()
     private val work get() = WorkManager.getInstance(app)
 
-    internal suspend fun input(key: String): SummaryInput = app.database.withTransaction {
-        summaryInput(key, dao.getReadyTranscriptRows(), dao.getMarkers(), app.database.recordingDao().getGaps())
+    internal suspend fun input(key: String): SummaryInput {
+        val snapshot = app.database.withTransaction {
+            val rows = if (key.startsWith("day:")) {
+                val day = com.gongfpp.sonfolio.DayWindow.of(java.time.LocalDate.parse(key.removePrefix("day:")))
+                val ids = dao.getReadyRowsInWindow(day.start, day.end).mapNotNull { it.conversationId }.distinct()
+                ids.chunked(400).flatMap { dao.getReadyRowsForConversations(it) }.sortedWith(compareBy({ it.startedAtMillis }, { it.transcriptId }))
+            } else {
+                dao.getReadyRowsForConversations(listOf(key.removePrefix("conversation:")))
+            }
+            val day = if (key.startsWith("day:")) com.gongfpp.sonfolio.DayWindow.of(java.time.LocalDate.parse(key.removePrefix("day:"))) else null
+            val start = minOf(rows.minOfOrNull { it.startedAtMillis } ?: day?.start ?: 0L, day?.start ?: Long.MAX_VALUE) - 120_000
+            val end = maxOf(rows.maxOfOrNull { it.endedAtMillis } ?: day?.end ?: 0L, day?.end ?: Long.MIN_VALUE) + 120_000
+            Triple(rows, app.database.recordingDao().getMarkersInWindow(start, end), app.database.recordingDao().getGapsInWindow(start, end))
+        }
+        return summaryInput(key, snapshot.first, snapshot.second, snapshot.third)
     }
 
     fun observe(key: String) = combine(dao.observeSummaryRun(key), dao.observeTimeline(), app.database.recordingDao().observeGaps()) { run, _, _ ->
@@ -37,22 +50,25 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             .setInputData(workDataOf("key" to key, "revision" to config.revision, "force" to !automatic))
             .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true)
                 .setRequiresCharging(automatic && app.preferences.chargeOnly).build())
-            .addTag(TAG).addTag("summary-key:$key").build()
+            .addTag(TAG).addTag("summary-key:$key").addTag("summary-revision:${config.revision}").addTag("summary-force:${!automatic}").build()
         // 单队列隔离于 VAD/ASR；每个任务读取执行时的最新转写，不并行加载多个语言模型。
-        dao.saveSummaryRun(old?.copy(state = "QUEUED", message = "等待总结；电量过低时暂停", updatedAtMillis = System.currentTimeMillis())
-            ?: SummaryRunEntity(key, source.fingerprint, config.mode.name, identity(config), null, "QUEUED", "等待总结；电量过低时暂停", System.currentTimeMillis()))
+        val waiting = if (automatic && app.preferences.chargeOnly) "等待充电后自动总结；也可取消后手动生成" else "已排队，电量正常时系统将自动继续；可取消后手动重试"
+        dao.saveSummaryRun(old?.copy(state = "QUEUED", message = waiting, updatedAtMillis = System.currentTimeMillis())
+            ?: SummaryRunEntity(key, source.fingerprint, config.mode.name, identity(config), null, "QUEUED", waiting, System.currentTimeMillis()))
         work.enqueueUniqueWork("sonfolio-summary:$key", ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         Unit
     }
 
     suspend fun enqueueForNewChunk(chunkId: String) {
         if (!app.summarySettings.read().automatic) return
-        val rows = dao.getReadyTranscriptRows()
         val transcriptIds = app.database.recordingDao().getTranscriptsForSummaryChunk(chunkId).toSet()
-        val ids = rows.filter { row ->
+        val chunk = app.database.recordingDao().getChunk(chunkId) ?: return
+        val chunkRows = dao.getReadyRowsInWindow(chunk.startedAtMillis, chunk.endedAtMillis ?: chunk.startedAtMillis)
+        val ids = chunkRows.filter { row ->
             // 从已落库切片关联出本次对话；不回填发送全部历史记录。
             row.transcriptId in transcriptIds
         }.mapNotNull { it.conversationId }.distinct()
+        val rows = ids.chunked(400).flatMap { dao.getReadyRowsForConversations(it) }
         for (id in ids) enqueue("conversation:$id", automatic = true)
         val zone = ZoneId.systemDefault()
         val dates = rows.filter { it.conversationId in ids }.flatMap { row ->
@@ -70,6 +86,22 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         }
     }
 
+    suspend fun refreshConstraints() = withContext(Dispatchers.IO) { enqueueMutex.withLock {
+        val config = app.summarySettings.read()
+        work.getWorkInfosByTag(TAG).get().filter { !it.state.isFinished }.forEach { info ->
+            val key = info.tags.firstOrNull { it.startsWith("summary-key:") }?.removePrefix("summary-key:") ?: return@forEach
+            val revision = info.tags.firstOrNull { it.startsWith("summary-revision:") }?.removePrefix("summary-revision:") ?: config.revision
+            val force = info.tags.firstOrNull { it.startsWith("summary-force:") }?.removePrefix("summary-force:")?.toBooleanStrictOrNull() ?: false
+            val builder = OneTimeWorkRequestBuilder<SummaryWorker>().setId(info.id)
+                .setInputData(workDataOf("key" to key, "revision" to revision, "force" to force))
+                .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).setRequiresCharging(!force && app.preferences.chargeOnly).build())
+            info.tags.forEach { builder.addTag(it) }
+            work.updateWork(builder.build()).get()
+            if (info.state != WorkInfo.State.RUNNING) dao.updateSummaryRun(key, "QUEUED",
+                if (!force && app.preferences.chargeOnly) "等待充电后自动总结；也可取消后手动生成" else "已解除充电等待，电量正常时系统将继续", System.currentTimeMillis())
+        }
+    } }
+
     suspend fun cancel(key: String) {
         work.cancelAllWorkByTag("summary-key:$key").result.get()
         dao.updateSummaryRun(key, "CANCELLED", "已取消，已有小结保留", System.currentTimeMillis())
@@ -84,13 +116,17 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
     }
 
     internal suspend fun generate(config: SummaryConfig, system: String, user: String): String {
+        return withGenerator(config) { generate -> generate(system, user) }
+    }
+
+    internal suspend fun <T> withGenerator(config: SummaryConfig, block: suspend (suspend (String, String) -> String) -> T): T {
         check(app.summarySettings.read().revision == config.revision) { "总结配置已改变，任务已取消" }
         return when (config.mode) {
-            SummaryMode.REMOTE -> RemoteSummaryTransport(app.summarySettings).generate(config, system, user)
+            SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings).generate(config, system, user) }
             SummaryMode.LOCAL -> localMutex.withLock {
                 val file = app.summarySettings.modelFile(config)
-                require(file?.isFile == true) { "请先导入本地模型" }
-                LocalSummaryTransport(app).generate(file, system, user)
+                require(file?.isFile == true) { "请先在设置中下载 GGUF 总结模型" }
+                LocalSummaryTransport(app).withSession(file, block)
             }
             SummaryMode.BASIC -> error("请先在设置中选择 AI 总结方式")
         }
@@ -125,10 +161,12 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             var summary: AiSummary? = null
             val parts = input.parts(if (config.mode == SummaryMode.LOCAL) 500 else 4000)
             withTimeout(9 * 60_000L) {
+                coordinator.withGenerator(config) { generate ->
                 for ((index, part) in parts.withIndex()) {
                     ensureActive()
                     dao.updateSummaryRun(key, "RUNNING", "正在整理 ${index + 1}/${parts.size} 部分", System.currentTimeMillis())
-                    summary = AiSummary.parse(coordinator.generate(config, SummaryPrompt.SYSTEM, SummaryPrompt.user(input, part, summary, index, parts.size)))
+                    summary = AiSummary.parse(generate(SummaryPrompt.SYSTEM, SummaryPrompt.user(input, part, summary, index, parts.size)))
+                }
                 }
             }
             app.database.withTransaction {
@@ -138,8 +176,10 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 } else {
                     dao.saveSummaryRun(SummaryRunEntity(key, input.fingerprint, config.mode.name, SummaryCoordinator.identity(config),
                         requireNotNull(summary).json(), "READY", null, System.currentTimeMillis()))
-                    app.conversationRepository.rebuildFromTranscripts()
                 }
+            }
+            input.rows.takeIf { it.isNotEmpty() }?.let { rows ->
+                app.conversationRepository.rebuildFromTranscripts(rows.minOf { it.start }, rows.maxOf { it.end })
             }
             Result.success()
         } catch (_: TimeoutCancellationException) {

@@ -141,7 +141,7 @@ class SummaryIntegrationTest {
     }
 
     @Test fun databaseUpgradePreservesOriginalAudioAndAddsSummaryCache() = runBlocking {
-        for (oldVersion in listOf(1, 2)) {
+        for (oldVersion in listOf(1, 2, 3)) {
         val name = "summary-migration-qa-${UUID.randomUUID()}.db"
         val schema = InstrumentationRegistry.getInstrumentation().context.assets
             .open("com.gongfpp.sonfolio.data.local.SonfolioDatabase/$oldVersion.json").bufferedReader().use { JSONObject(it.readText()).getJSONObject("database") }
@@ -158,15 +158,15 @@ class SummaryIntegrationTest {
                 val setup = schema.getJSONArray("setupQueries")
                 for (i in 0 until setup.length()) old.execSQL(setup.getString(i))
                 old.execSQL("INSERT INTO audio_chunks VALUES ('original', 10, 20, '/qa/original.wav', 364, 16000, 1, 'ASR_READY', NULL)")
-                old.execSQL("INSERT INTO recording_gaps VALUES ('old-gap', 30, 40, 'existing gap', 0)")
+                old.execSQL("INSERT INTO recording_gaps (id, startedAtMillis, endedAtMillis, reason, recoveredAutomatically) VALUES ('old-gap', 30, 40, 'existing gap', 0)")
                 old.version = oldVersion
             }
-            val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name).addMigrations(SonfolioDatabase.MIGRATION_1_2, SonfolioDatabase.MIGRATION_2_3).build()
+            val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name).addMigrations(SonfolioDatabase.MIGRATION_1_2, SonfolioDatabase.MIGRATION_2_3, SonfolioDatabase.MIGRATION_3_4).build()
             try {
                 assertEquals("/qa/original.wav", migrated.recordingDao().getChunk("original")!!.localPath)
                 assertEquals(364L, migrated.recordingDao().getChunk("original")!!.byteSize)
                 assertTrue(migrated.conversationDao().getSummaryRuns().isEmpty())
-                assertEquals(3, migrated.openHelper.writableDatabase.version)
+                assertEquals(4, migrated.openHelper.writableDatabase.version)
                 val previous = migrated.recordingDao().getGaps().single()
                 assertEquals("old-gap", previous.id)
                 assertEquals(40L, previous.endedAtMillis)

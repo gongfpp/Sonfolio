@@ -8,7 +8,12 @@ internal sealed interface AppScreen {
     data object Settings : AppScreen
     data class Daily(val date: String = LocalDate.now().toString()) : AppScreen
     data class RawRecordings(val date: String? = null) : AppScreen
-    data class Conversation(val type: ConversationType, val id: String? = null, val transcriptId: String? = null) : AppScreen
+    data class Conversation(
+        val type: ConversationType,
+        val id: String? = null,
+        val transcriptId: String? = null,
+        val query: String? = null,
+    ) : AppScreen
 }
 
 internal val AppScreen.isMainScreen: Boolean
@@ -20,7 +25,16 @@ internal fun AppScreen.toSavedRoute(): String = when (this) {
     AppScreen.Settings -> "settings"
     is AppScreen.Daily -> "daily:$date"
     is AppScreen.RawRecordings -> date?.let { "raw-recordings:$it" } ?: "raw-recordings"
-    is AppScreen.Conversation -> id?.let { "conversation-id:$it${transcriptId?.let { value -> "|$value" }.orEmpty()}" } ?: "conversation:${type.name}"
+    is AppScreen.Conversation -> if (id != null) {
+        buildString {
+            append("conversation-id:")
+            append(id)
+            if (transcriptId != null) append("|").append(transcriptId)
+            if (query != null) append("^").append(query)
+        }
+    } else {
+        "conversation:${type.name}"
+    }
 }
 
 private fun validDate(value: String): String? = runCatching { LocalDate.parse(value).toString() }.getOrNull()
@@ -33,11 +47,21 @@ internal fun appScreenFromSavedRoute(route: String): AppScreen = when {
     route.startsWith("daily:") -> AppScreen.Daily(validDate(route.removePrefix("daily:")) ?: LocalDate.now().toString())
     route == "raw-recordings" -> AppScreen.RawRecordings()
     route.startsWith("raw-recordings:") -> AppScreen.RawRecordings(validDate(route.removePrefix("raw-recordings:")))
-    route.startsWith("conversation-id:") -> AppScreen.Conversation(
-        ConversationType.Unknown,
-        route.removePrefix("conversation-id:").substringBefore('|').takeIf { it.isNotBlank() },
-        route.substringAfter('|', "").takeIf { it.isNotBlank() },
-    )
+    route.startsWith("conversation-id:") -> {
+        val body = route.removePrefix("conversation-id:")
+        val bar = body.indexOf('|')
+        val id = if (bar >= 0) body.substring(0, bar) else body.substringBefore('^')
+        val afterBar = if (bar >= 0) body.substring(bar + 1) else ""
+        val caret = afterBar.indexOf('^')
+        val transcriptId = if (caret >= 0) afterBar.substring(0, caret) else afterBar
+        val query = if (caret >= 0) afterBar.substring(caret + 1) else ""
+        AppScreen.Conversation(
+            ConversationType.Unknown,
+            id.takeIf { it.isNotBlank() },
+            transcriptId.takeIf { it.isNotBlank() },
+            query.takeIf { it.isNotBlank() },
+        )
+    }
     else -> ConversationType.entries.firstOrNull { it.name == route.substringAfter("conversation:", "") }
         ?.let { AppScreen.Conversation(it) } ?: AppScreen.Today
 }

@@ -27,8 +27,19 @@ internal fun SummarySettingsCard() {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.summarySettings.config.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableStateOf(saved.mode) }
+    LaunchedEffect(saved.mode) { mode = saved.mode }
     var endpoint by rememberSaveable { mutableStateOf(saved.endpoint) }
     var model by rememberSaveable { mutableStateOf(saved.model) }
+    var provider by rememberSaveable { mutableStateOf(SummaryProvider.fromEndpoint(saved.endpoint)) }
+    var providerMenu by remember { mutableStateOf(false) }
+    var modelMenu by remember { mutableStateOf(false) }
+    var listedModels by remember(provider) { mutableStateOf(provider.defaults) }
+    var modelListNote by remember(provider) { mutableStateOf("预设模型，可从官方刷新；费用与可用性以提供商为准") }
+    var keyHelp by remember { mutableStateOf(false) }
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    LaunchedEffect(Unit) {
+        if (endpoint.isBlank()) { endpoint = provider.endpoint; model = provider.defaults.firstOrNull().orEmpty() }
+    }
     var apiKey by remember { mutableStateOf("") } // 不写入页面恢复状态、日志或剪贴板。
     var automatic by rememberSaveable { mutableStateOf(saved.automatic) }
     var consent by remember(endpoint, mode) { mutableStateOf(false) }
@@ -57,7 +68,7 @@ internal fun SummarySettingsCard() {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("总结方式", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text("当前：${saved.mode.label}。录音和转写始终在本机；切换方式不自动重做全部历史。", fontSize = 12.sp)
+            Text("当前：${saved.mode.label}。本卡片只决定文字如何总结，转文字方式在上方单独设置；切换不自动重做全部历史。", fontSize = 12.sp)
             SummaryMode.entries.forEach { option ->
                 Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { mode = option }, verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = mode == option, onClick = null)
@@ -65,30 +76,69 @@ internal fun SummarySettingsCard() {
                         Text(option.label, fontSize = 14.sp)
                         Text(when (option) {
                             SummaryMode.BASIC -> "默认 · 离线摘取原句，无需模型，不是生成式 AI"
-                            SummaryMode.LOCAL -> "导入 GGUF 模型后离线生成，占用额外存储和内存"
+                            SummaryMode.LOCAL -> "选中后直接下载 GGUF，离线生成，无需 API Key"
                             SummaryMode.REMOTE -> "仅发送转写文字到你配置的服务，可能产生费用"
                         }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
             if (mode == SummaryMode.LOCAL) {
-                Text(if (saved.localFile.isEmpty()) "尚未导入本地模型" else "已导入：${saved.localLabel}", fontSize = 12.sp)
-                Text("当前支持 arm64 手机、GGUF 文本指令模型及内置聊天模板；优先使用小模型。不会自动下载。兼容性与速度以本机测试为准。", fontSize = 11.sp)
-                Text("替换模型会移除本 App 内的旧模型副本，不改变你选择的源文件或录音。", fontSize = 11.sp)
-                OutlinedButton(onClick = { import.launch(arrayOf("*/*")) }, enabled = !busy) { Text(if (saved.localFile.isEmpty()) "导入 GGUF 模型" else "替换 GGUF 模型") }
+                com.gongfpp.sonfolio.models.ModelDownloadControl(com.gongfpp.sonfolio.models.ModelCatalog.summary)
+                Text("默认提供约 491 MB 的小模型。离线运行，效果与速度受手机性能影响。", fontSize = 11.sp)
+                var advancedImport by remember { mutableStateOf(false) }
+                TextButton(onClick = { advancedImport = !advancedImport }) { Text("高级：使用已有模型文件") }
+                if (advancedImport) {
+                    Text("替换会清理旧导入副本，不改变源文件或录音。仅用于了解 GGUF 兼容性的用户。", fontSize = 11.sp)
+                    OutlinedButton(onClick = { import.launch(arrayOf("*/*")) }, enabled = !busy) { Text("选择已有 GGUF 文件") }
+                }
             }
             if (mode == SummaryMode.REMOTE) {
+                Box {
+                    OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("提供商：${provider.label} ▾") }
+                    DropdownMenu(providerMenu, { providerMenu = false }) {
+                        SummaryProvider.entries.forEach { option -> DropdownMenuItem(text = { Text(option.label) }, onClick = {
+                            if (option != provider) {
+                                provider = option; endpoint = option.endpoint; model = option.defaults.firstOrNull().orEmpty(); apiKey = ""
+                            }
+                            providerMenu = false
+                        }) }
+                    }
+                }
+                if (provider == SummaryProvider.CUSTOM) {
                 OutlinedTextField(endpoint, { endpoint = it }, Modifier.fillMaxWidth(), label = { Text("完整 HTTPS 接口地址") },
                     placeholder = { Text("https://服务地址/v1/chat/completions") }, singleLine = true, enabled = !busy,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
                 OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("模型名称") }, singleLine = true, enabled = !busy)
-                OutlinedTextField(apiKey, { apiKey = it }, Modifier.fillMaxWidth(), label = { Text(if (saved.hasKey) "API Key（已保存，留空保留）" else "API Key") },
+                } else {
+                    Box {
+                        OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("模型：$model ▾") }
+                        DropdownMenu(modelMenu, { modelMenu = false }) {
+                            (listOf(model) + listedModels).filter { it.isNotBlank() }.distinct().forEach { id -> DropdownMenuItem(text = { Text(id) }, onClick = { model = id; modelMenu = false }) }
+                        }
+                    }
+                    Text(modelListNote, fontSize = 11.sp)
+                    TextButton(enabled = !busy, onClick = {
+                        val selected = provider; val keyDraft = apiKey; val selectedEndpoint = endpoint
+                        action {
+                            val fetched = SummaryModelDirectory.fetch(selected, app.summarySettings.keyForModelList(selectedEndpoint, keyDraft))
+                            withContext(Dispatchers.Main) {
+                                listedModels = fetched; modelListNote = "已从官方获取 ${fetched.size} 个文本模型；当前选择不会被自动替换"
+                            }
+                            "模型列表已刷新；只查询模型名称，未发送转写"
+                        }
+                    }) { Text("从官方刷新模型列表") }
+                }
+                OutlinedTextField(apiKey, { apiKey = it }, Modifier.fillMaxWidth(), label = { Text(if (saved.hasKey && saved.endpoint == endpoint) "API Key（已保存，留空保留）" else "API Key") },
+                    trailingIcon = { IconButton(onClick = { keyHelp = true }) { Text("？") } },
                     singleLine = true, enabled = !busy, visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                if (provider.help.isNotBlank()) TextButton(onClick = {
+                    runCatching { uriHandler.openUri(provider.help) }.onFailure { message = "无法打开浏览器，请到提供商官网创建 API Key" }
+                }) { Text("获取 ${provider.label} API Key ↗") }
                 Text("支持 Chat Completions 与 JSON 输出协议。密钥使用本机 Keystore 加密，修改接口地址必须重新填写密钥。", fontSize = 11.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(consent, { consent = it }, enabled = !busy)
-                    Text("我同意将所选对话或日期的转写文字发送到上述服务；原始音频不上传。", fontSize = 12.sp)
+                    Text("我同意将所选对话或日期的转写文字发送到上述服务；总结请求不上传音频。", fontSize = 12.sp)
                 }
                 if (saved.hasKey) TextButton(enabled = !busy, onClick = { action(onSuccess = { apiKey = ""; mode = SummaryMode.BASIC }) {
                     app.summarySettings.clearKey(); app.summaryCoordinator.cancelAll(); "已删除密钥，并切回本地基础整理"
@@ -97,9 +147,9 @@ internal fun SummarySettingsCard() {
             if (mode != SummaryMode.BASIC) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(automatic, { automatic = it }, enabled = !busy)
-                    Text("自动总结之后完成转写的新录音", Modifier.padding(start = 8.dp), fontSize = 12.sp)
+                    Text("转写完成后自动生成 AI 总结", Modifier.padding(start = 8.dp), fontSize = 12.sp)
                 }
-                Text("默认关闭。开启后按新录音涉及的对话和日期逐个整理；低电量暂停，失败需手动重试。长内容会分段综合。", fontSize = 11.sp)
+                Text("关闭时仍会自动转写并生成基础小结，AI 总结需在对话或一日回顾中手动点击生成。开启后只自动处理新完成转写涉及的对话和日期，不重做全部历史。低电量时等待，失败可重试。", fontSize = 11.sp)
             }
             Button(enabled = !busy, onClick = {
                 val key = apiKey
@@ -119,6 +169,11 @@ internal fun SummarySettingsCard() {
             message?.let { Text(it, fontSize = 12.sp) }
         }
     }
+    if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("API Key 从哪里获取？") },
+        text = { Text(if (provider == SummaryProvider.QWEN) "在阿里云百炼创建中国内地（北京）地域的 API Key，复制后粘贴到这里。其他地域的密钥不能混用。调用可能计费，建议在官方设置用量限制。密钥只保存在本机，不要分享或截图公开。"
+            else "在所选提供商的开发者平台登录，创建 API Key 后粘贴到这里。它不是聊天 App 的密码。调用可能计费，建议设置用量限制；不要分享或截图公开密钥。") },
+        confirmButton = { TextButton(onClick = { keyHelp = false; if (provider.help.isNotBlank()) runCatching { uriHandler.openUri(provider.help) }.onFailure { message = "无法打开浏览器，请到提供商官网查看 API Key 帮助" } }) { Text(if (provider.help.isNotBlank()) "打开官方页面" else "知道了") } },
+        dismissButton = { TextButton(onClick = { keyHelp = false }) { Text("关闭") } })
 }
 
 @Composable

@@ -14,9 +14,32 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import com.gongfpp.sonfolio.SonfolioApplication
 
 class ProcessingScheduler(context: Context) {
     private val appContext = context.applicationContext
+    fun enqueueAssembly(chunkId: String) = AssemblyWorker.enqueue(appContext, chunkId)
+
+    /** Update persisted constraints, including requests created by older versions. Running
+     * iterations finish with their current constraints; queued requests use the new policy. */
+    suspend fun refreshConstraints() = withContext(Dispatchers.IO) {
+        scheduleLock.withLock {
+            val manager = WorkManager.getInstance(appContext)
+            val dao = (appContext as SonfolioApplication).database.recordingDao()
+            dao.getChunksWithPendingProcessing().forEach { chunk ->
+                val vad = manager.getWorkInfosForUniqueWork("sonfolio-vad-${chunk.id}").get()
+                val asr = manager.getWorkInfosByTag("sonfolio-asr-chunk-${chunk.id}").get()
+                (vad.map { it to true } + asr.map { it to false }).filter { !it.first.state.isFinished }.forEach { (info, isVad) ->
+                    val builder = if (isVad) OneTimeWorkRequestBuilder<VadWorker>() else OneTimeWorkRequestBuilder<AsrWorker>()
+                    builder.setId(info.id).setConstraints(constraints())
+                        .setInputData(workDataOf(VadWorker.AUDIO_CHUNK_ID to chunk.id))
+                    info.tags.forEach { builder.addTag(it) }
+                    manager.updateWork(builder.build()).get()
+                }
+            }
+        }
+    }
 
     fun enqueueVad(audioChunkId: String) {
         runCatching {

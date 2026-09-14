@@ -14,6 +14,14 @@ android/local.properties
 android/**/build/
 android/**/.cxx/
 
+# 发布私钥及签名配置永远不要提交
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+signing.properties
+
 # 本地工作数据（含本机路径与网络信息，勿提交）
 .workbuddy/
 

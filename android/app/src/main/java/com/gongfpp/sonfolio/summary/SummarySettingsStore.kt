@@ -37,7 +37,7 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
             require(model.trim().isNotEmpty() && model.length <= 160 && model.none { it.isISOControl() }) { "请填写服务支持的模型名称" }
             require(newKey.isNotBlank() || (old.hasKey && old.endpoint == url)) { "新接口需要重新填写 API Key" }
         }
-        if (mode == SummaryMode.LOCAL) require(modelFile(old)?.isFile == true) { "请先导入 GGUF 本地模型" }
+        if (mode == SummaryMode.LOCAL) require(modelFile(old)?.isFile == true) { "请先在模型下载中下载 GGUF 本地模型" }
         require(newKey.length <= 4096 && newKey.trim().all { it.code in 33..126 }) { "API Key 只能包含可见英文字母、数字及符号，不能包含空白或控制字符" }
         val edit = prefs.edit().putString("mode", mode.name).putString("endpoint", url).putString("model", model.trim())
             .putBoolean("automatic", automatic && mode != SummaryMode.BASIC).putString("revision", UUID.randomUUID().toString())
@@ -64,8 +64,31 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
         }.getOrElse { error("无法读取 API Key，请在设置中重新填写") }
     }
 
-    fun modelFile(config: SummaryConfig = read()): File? = config.localFile.takeIf { it.matches(Regex("[a-f0-9-]+\\.gguf")) }
-        ?.let { File(context.filesDir, "summary-models/$it") }
+    @Synchronized internal fun keyForModelList(endpoint: String, draft: String): String {
+        if (draft.isNotBlank()) return draft.trim()
+        val current = read()
+        require(current.endpoint == endpoint && current.hasKey) { "请先填写此提供商的 API Key" }
+        // The key remains bound to the exact saved endpoint, even if BASIC is currently selected.
+        return apiKey(current.copy(mode = SummaryMode.REMOTE))
+    }
+
+    fun modelFile(config: SummaryConfig = read()): File? {
+        if (config.localFile == DOWNLOADED_MODEL) return com.gongfpp.sonfolio.models.ModelCatalog.file(context.filesDir, com.gongfpp.sonfolio.models.ModelCatalog.summary)
+        return config.localFile.takeIf { it.matches(Regex("[a-f0-9-]+\\.gguf")) }?.let { File(context.filesDir, "summary-models/$it") }
+    }
+
+    @Synchronized fun useDownloadedModel(activateRevision: String? = null) {
+        val model = com.gongfpp.sonfolio.models.ModelCatalog.summary
+        val file = com.gongfpp.sonfolio.models.ModelCatalog.file(context.filesDir, model)
+        require(file.isFile && file.length() == model.bytes) { "模型尚未下载完成" }
+        val edit = prefs.edit().putString("local-file", DOWNLOADED_MODEL).putString("local-label", model.label)
+        val current = read()
+        if (activateRevision != null && current.revision == activateRevision) {
+            edit.putString("mode", "LOCAL").putBoolean("automatic", false).putString("revision", UUID.randomUUID().toString())
+        } else if (current.mode == SummaryMode.LOCAL) edit.putString("revision", UUID.randomUUID().toString())
+        check(edit.commit()) { "模型设置保存失败" }
+        state.value = read()
+    }
 
     fun importModel(uri: Uri): String {
         val directory = File(context.filesDir, "summary-models").apply { mkdirs() }
@@ -123,4 +146,5 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
+    companion object { private const val DOWNLOADED_MODEL = "catalog:qwen-summary" }
 }

@@ -9,6 +9,7 @@ import com.gongfpp.sonfolio.processing.ProcessingScheduler
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
@@ -20,23 +21,64 @@ class RecordingRepository(
     private val recordingDao: RecordingDao,
     private val processingScheduler: ProcessingScheduler? = null,
     private val preferences: SonfolioPreferences? = null,
+    captureDirectory: File? = null,
+    private val audioFileMutex: Mutex = com.gongfpp.sonfolio.processing.AudioFileAccess.mutex,
 ) {
     private val recoveryLock = Mutex()
+    private val journal = captureDirectory?.let(::CaptureJournal)
+    private val metadataSignals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    private val metadataScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    init {
+        if (journal != null) metadataScope.launch {
+            for (signal in metadataSignals) {
+                try { recoveryLock.withLock { flushCaptureFacts(recoverOpen = false) } }
+                catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Exception) { android.util.Log.e("CaptureJournal", "录音已落盘，元数据待重试", error) }
+            }
+        }
+    }
+
+    internal fun saveCaptureFact(fact: CapturedChunk) {
+        checkNotNull(journal) { "录音恢复日志未配置" }.save(fact)
+        metadataSignals.trySend(Unit)
+    }
+
+    internal fun checkpointCaptureMetadata() { metadataSignals.trySend(Unit) }
+
+    private suspend fun flushCaptureFacts(recoverOpen: Boolean) {
+        val log = journal ?: return
+        for (fact in log.pending()) {
+            val file = File(fact.path)
+            val existing = recordingDao.getChunk(fact.id)
+            if (existing == null) beginChunk(fact.id, fact.startedAt, file, fact.sampleRate, fact.channels)
+            if (existing?.endedAtMillis != null) { log.acknowledge(fact.id); continue }
+            if (fact.endedAt == null && !recoverOpen) {
+                recordingDao.checkpoint(fact.id, file.length())
+                continue
+            }
+            val recovered = fact.endedAt == null
+            val bytes = if (recovered) WavChunkWriter.repairHeader(file, fact.sampleRate, fact.channels) else fact.bytes
+            val end = fact.endedAt ?: (fact.startedAt + WavChunkWriter.durationMillis(bytes, fact.sampleRate, fact.channels))
+            finishChunk(fact.id, end, bytes, if (recovered) {
+                if (bytes > WavChunkWriter.WAV_HEADER_BYTES) "RECOVERED" else "FAILED"
+            } else fact.state, if (recovered) "已从录音日志恢复，原音保留" else fact.error)
+            if (recovered) recordingDao.openGap(end, "录音进程中断，等待重新采集")
+            log.acknowledge(fact.id)
+        }
+    }
     fun observeStatus(): Flow<RecordingStatus> =
         combine(recordingDao.observeActiveChunk(), RecordingController.health, recordingDao.observeGaps()) { chunk, health, gaps ->
             RecordingStatus(
                 isRecording = health.serviceActive,
-                startedAtMillis = chunk?.let {
-                    preferences?.recordingSessionStartedAtMillis ?: it.startedAtMillis
-                },
+                startedAtMillis = if (health.serviceActive) preferences?.recordingSessionStartedAtMillis ?: chunk?.startedAtMillis else chunk?.startedAtMillis,
                 activeChunkId = chunk?.id,
                 health = health,
                 interruptionPending = gaps.any { it.endedAtMillis == null },
             )
         }
 
-    fun observeChunks(): Flow<List<com.gongfpp.sonfolio.AudioChunkPreview>> =
-        recordingDao.observeRecentChunks().map { chunks ->
+    fun observeChunks(start: Long = Long.MIN_VALUE, end: Long = Long.MAX_VALUE, limit: Int = Int.MAX_VALUE, includeDeleted: Boolean = true): Flow<List<com.gongfpp.sonfolio.AudioChunkPreview>> =
+        recordingDao.observeRecentChunks(start, end, limit, includeDeleted).map { chunks ->
             chunks.map { row ->
                 val chunk = row.chunk
                 com.gongfpp.sonfolio.AudioChunkPreview(
@@ -49,6 +91,7 @@ class RecordingRepository(
                     errorMessage = chunk.errorMessage,
                     transcriptCount = row.transcriptCount,
                     visibleTranscriptCount = row.visibleTranscriptCount,
+                    speechCount = row.speechCount,
                     sampleRateHz = chunk.sampleRateHz,
                     channelCount = chunk.channelCount,
                 )
@@ -134,6 +177,7 @@ class RecordingRepository(
         skipWhenServiceRunning: Boolean = false,
     ): Int = withContext(Dispatchers.IO) { recoveryLock.withLock {
         if (skipWhenServiceRunning && RecordingService.isRunningInProcess) return@withLock 0
+        flushCaptureFacts(recoverOpen = true)
         val chunks = recordingDao.getDanglingChunks()
         chunks.forEach { chunk ->
             val file = File(chunk.localPath)
@@ -171,7 +215,10 @@ class RecordingRepository(
     suspend fun retryProcessing(chunkId: String) {
         val chunk = recordingDao.getChunk(chunkId) ?: return
         if (chunk.endedAtMillis == null || chunk.processingState.endsWith("RUNNING")) return
-        if (chunk.processingState == "ASR_FAILED") {
+        if (chunk.processingState in setOf("ASSEMBLY_PENDING", "ASSEMBLY_FAILED")) {
+            recordingDao.updateProcessingState(chunkId, "ASSEMBLY_PENDING", "文字已保存，等待整理")
+            processingScheduler?.enqueueAssembly(chunkId)
+        } else if (chunk.processingState in setOf("ASR_FAILED", "VAD_READY")) {
             recordingDao.updateProcessingState(chunkId, "VAD_READY", null)
             processingScheduler?.enqueueAsr(chunkId)
         } else if (chunk.processingState in setOf("VAD_FAILED", "FAILED", "RECORDED", "RECOVERED")) {
@@ -186,13 +233,84 @@ class RecordingRepository(
     }
 
     suspend fun enqueuePendingAsr() {
+        recordingDao.getChunksWaitingForAssembly().forEach { processingScheduler?.enqueueAssembly(it) }
         recordingDao.getChunksWaitingForAsr().forEach { chunk ->
             processingScheduler?.enqueueAsr(chunk.id)
         }
     }
 
+    /**
+     * 录音已中断且服务已退出时，由用户主动结束：闭合仍处于打开状态的缺口，使其停止累计，
+     * 并清除失败状态，让首页回到可重新开始的干净状态。
+     */
+    suspend fun endInterruptedSession(nowMillis: Long = System.currentTimeMillis()) {
+        recordingDao.closeOpenGaps("INTERRUPTION", nowMillis, automatic = false)
+        RecordingController.updateHealth { it.copy(failure = null) }
+    }
+
+    /** 与任意标记时间窗重叠的切片 id 集合，用于批量清理时的标记保护。 */
+    suspend fun getMarkedChunkIds(): Set<String> {
+        val markers = recordingDao.getMarkers()
+        if (markers.isEmpty()) return emptySet()
+        val chunks = recordingDao.getAllChunks()
+        val protected = mutableSetOf<String>()
+        for (chunk in chunks) {
+            val cStart = chunk.startedAtMillis
+            val cEnd = chunk.endedAtMillis ?: Long.MAX_VALUE
+            for (m in markers) {
+                val mStart = m.markedAtMillis - m.windowBeforeMillis
+                val mEnd = m.markedAtMillis + m.windowAfterMillis
+                if (cStart <= mEnd && cEnd >= mStart) {
+                    protected.add(chunk.id)
+                    break
+                }
+            }
+        }
+        return protected + recordingDao.getChunksInMarkedConversations()
+    }
+
+    /** Explicit audio-only cleanup. Text, markers and conversation identity are never deleted. */
+    suspend fun deleteChunks(ids: Set<String>, protectMarked: Boolean): String = withContext(Dispatchers.IO) {
+        val lock = audioFileMutex
+        if (!lock.tryLock()) return@withContext "正在识别录音，请处理结束后再清理；未删除任何文件"
+        try {
+            val protected = if (protectMarked) getMarkedChunkIds() else emptySet()
+            var removed = 0; var skipped = 0; var failed = 0
+            ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }.forEach { chunk ->
+                if (chunk.id in protected || chunk.endedAtMillis == null || chunk.processingState != "ASR_READY") {
+                    skipped++
+                } else {
+                    val file = File(chunk.localPath)
+                    // Metadata survives a failed unlink or a crash between unlink and this update.
+                    // Navigation/coroutine cancellation cannot leave a successful unlink unrecorded.
+                    withContext(kotlinx.coroutines.NonCancellable) {
+                        if (!file.exists() || file.delete()) {
+                            recordingDao.markAudioDeleted(chunk.id)
+                            removed++
+                        } else failed++
+                    }
+                }
+            }
+            "已清理 ${removed} 份原音，保留全部文字；跳过 ${skipped} 份标记或未处理文件，失败 ${failed} 份"
+        } finally { lock.unlock() }
+    }
+
+    /** 收集批量导出所需的切片元信息与转写文本。 */
+    suspend fun collectExportItems(ids: Set<String>): List<ChunkExport> {
+        val chunks = ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }
+        return chunks.map { chunk ->
+            ChunkExport(
+                id = chunk.id,
+                startedAtMillis = chunk.startedAtMillis,
+                endedAtMillis = chunk.endedAtMillis,
+                localPath = chunk.localPath,
+                texts = recordingDao.getTranscriptTextsForChunk(chunk.id),
+            )
+        }
+    }
+
     companion object {
         const val DEFAULT_MARK_MINUTES = 3
-        const val MAX_MARK_MINUTES = 20
+        const val MAX_MARK_MINUTES = 60
     }
 }

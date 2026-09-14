@@ -7,6 +7,7 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import java.io.File
+import com.gongfpp.sonfolio.models.ModelCatalog
 
 /**
  * A process-local SenseVoice recognizer. The model is deliberately created once per worker and
@@ -17,8 +18,17 @@ class SenseVoiceAsrProcessor(
     context: Context,
     preferredLanguage: String = "zh",
 ) : AutoCloseable {
+    private val model = ModelCatalog.file(context.filesDir, ModelCatalog.speech).also {
+        require(it.isFile && it.length() == ModelCatalog.speech.bytes) { "请在设置的模型下载中下载语音识别模型" }
+    }
+    private val tokens = File(model.parentFile, TOKENS_ASSET).also { file ->
+        // Small bundled vocabulary is replaced atomically; a killed copy cannot poison later runs.
+        val temporary = File(file.parentFile, "$TOKENS_ASSET.tmp")
+        context.assets.open(TOKENS_ASSET).use { input -> java.io.FileOutputStream(temporary).use { output -> input.copyTo(output); output.fd.sync() } }
+        java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
     private val recognizer = OfflineRecognizer(
-        context.assets,
+        null,
         OfflineRecognizerConfig(
             featConfig = FeatureConfig(
                 sampleRate = SileroVadProcessor.SAMPLE_RATE_HZ,
@@ -26,11 +36,11 @@ class SenseVoiceAsrProcessor(
             ),
             modelConfig = OfflineModelConfig(
                 senseVoice = OfflineSenseVoiceModelConfig(
-                    model = MODEL_ASSET,
+                    model = model.absolutePath,
                     language = preferredLanguage.takeUnless { it == "auto" }.orEmpty(),
                     useInverseTextNormalization = true,
                 ),
-                tokens = TOKENS_ASSET,
+                tokens = tokens.absolutePath,
                 numThreads = 1,
                 debug = false,
                 provider = "cpu",

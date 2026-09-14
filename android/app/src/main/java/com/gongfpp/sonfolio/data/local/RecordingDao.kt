@@ -12,10 +12,35 @@ data class AudioChunkRow(
     @Embedded val chunk: AudioChunkEntity,
     val transcriptCount: Int,
     val visibleTranscriptCount: Int,
+    val speechCount: Int,
 )
 
 @Dao
 interface RecordingDao {
+    @Query("SELECT id FROM audio_chunks WHERE processingState = 'ASSEMBLY_PENDING'")
+    suspend fun getChunksWaitingForAssembly(): List<String>
+    @Query("SELECT * FROM audio_chunks WHERE processingState IN ('RECORDED','RECOVERED','VAD_RUNNING','VAD_READY','ASR_RUNNING') ORDER BY startedAtMillis")
+    suspend fun getChunksWithPendingProcessing(): List<AudioChunkEntity>
+
+    @Query("SELECT * FROM audio_chunks WHERE id IN (:ids)")
+    suspend fun getChunksByIds(ids: List<String>): List<AudioChunkEntity>
+
+    @Query("SELECT * FROM recording_gaps WHERE startedAtMillis <= :end AND (endedAtMillis IS NULL OR endedAtMillis >= :start) ORDER BY startedAtMillis")
+    suspend fun getGapsInWindow(start: Long, end: Long): List<RecordingGapEntity>
+
+    @Query("SELECT * FROM markers WHERE markedAtMillis - windowBeforeMillis <= :end AND markedAtMillis + windowAfterMillis >= :start ORDER BY markedAtMillis")
+    suspend fun getMarkersInWindow(start: Long, end: Long): List<MarkerEntity>
+
+    @Query("UPDATE audio_chunks SET byteSize = 0, processingState = 'AUDIO_DELETED', errorMessage = NULL WHERE id = :id AND endedAtMillis IS NOT NULL")
+    suspend fun markAudioDeleted(id: String)
+
+    @Query("""SELECT DISTINCT s.audioChunkId FROM speech_segments s JOIN transcripts t ON t.speechSegmentId = s.id
+        WHERE t.conversationId IS NOT NULL AND EXISTS (
+            SELECT 1 FROM transcripts seed, markers m WHERE seed.conversationId = t.conversationId
+            AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+            AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis)
+    """)
+    suspend fun getChunksInMarkedConversations(): List<String>
     @Query("SELECT t.id FROM transcripts t JOIN speech_segments s ON t.speechSegmentId = s.id WHERE s.audioChunkId = :chunkId")
     suspend fun getTranscriptsForSummaryChunk(chunkId: String): List<String>
     @Query(
@@ -42,14 +67,33 @@ interface RecordingDao {
 
     @Query("""
         SELECT a.*, COUNT(t.id) AS transcriptCount,
-            COUNT(c.id) AS visibleTranscriptCount
-        FROM audio_chunks a
+            COUNT(c.id) AS visibleTranscriptCount, COUNT(DISTINCT s.id) AS speechCount
+        FROM (SELECT * FROM audio_chunks WHERE startedAtMillis < :end
+            AND (:includeDeleted OR processingState <> 'AUDIO_DELETED')
+            AND COALESCE(endedAtMillis, startedAtMillis + MAX(byteSize - 44, 0) * 1000 / (sampleRateHz * channelCount * 2)) >= :start
+            ORDER BY startedAtMillis DESC, id DESC LIMIT :limit) a
         LEFT JOIN speech_segments s ON s.audioChunkId = a.id
         LEFT JOIN transcripts t ON t.speechSegmentId = s.id
         LEFT JOIN conversations c ON c.id = t.conversationId
-        GROUP BY a.id ORDER BY a.startedAtMillis DESC
+        GROUP BY a.id ORDER BY a.startedAtMillis DESC, a.id DESC
     """)
-    fun observeRecentChunks(): Flow<List<AudioChunkRow>>
+    fun observeRecentChunks(start: Long = Long.MIN_VALUE, end: Long = Long.MAX_VALUE, limit: Int = Int.MAX_VALUE, includeDeleted: Boolean = true): Flow<List<AudioChunkRow>>
+
+    @Query("SELECT COUNT(*) FROM audio_chunks WHERE processingState <> 'AUDIO_DELETED' AND startedAtMillis < :end AND COALESCE(endedAtMillis, startedAtMillis + MAX(byteSize - 44, 0) * 1000 / (sampleRateHz * channelCount * 2)) >= :start")
+    fun observeChunkCount(start: Long, end: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(byteSize), 0) FROM audio_chunks")
+    fun observeStorageBytes(): Flow<Long>
+
+    @Query("SELECT COUNT(*) FROM audio_chunks WHERE endedAtMillis < :before AND processingState <> 'AUDIO_DELETED'")
+    fun observeExpiredCount(before: Long): Flow<Int>
+
+    @Query("""SELECT a.id FROM audio_chunks a WHERE a.processingState = 'ASR_READY'
+        AND a.startedAtMillis < :end AND a.endedAtMillis >= :start AND
+        ((:silence = 1 AND NOT EXISTS (SELECT 1 FROM speech_segments s WHERE s.audioChunkId = a.id))
+        OR (:silence = 0 AND EXISTS (SELECT 1 FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId WHERE s.audioChunkId = a.id)
+        AND NOT EXISTS (SELECT 1 FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId WHERE s.audioChunkId = a.id AND t.conversationId IS NOT NULL)))""")
+    suspend fun getCleanupCandidates(start: Long, end: Long, silence: Boolean): List<String>
 
     @Query("SELECT * FROM recording_gaps ORDER BY startedAtMillis DESC")
     fun observeGaps(): Flow<List<RecordingGapEntity>>
@@ -198,4 +242,32 @@ interface RecordingDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertGap(gap: RecordingGapEntity)
+
+    @Query("SELECT * FROM markers ORDER BY markedAtMillis ASC")
+    suspend fun getMarkers(): List<MarkerEntity>
+
+    @Query("SELECT * FROM audio_chunks")
+    suspend fun getAllChunks(): List<AudioChunkEntity>
+
+    @Query("DELETE FROM audio_chunks WHERE id IN (:ids)")
+    suspend fun deleteChunks(ids: List<String>)
+
+    @Transaction
+    suspend fun deleteChunksByIds(ids: List<String>) {
+        ids.forEach { id ->
+            deleteTranscriptsForChunk(id)
+            deleteSpeechSegments(id)
+        }
+        deleteChunks(ids)
+    }
+
+    @Query(
+        """
+        SELECT text FROM transcripts t
+        JOIN speech_segments s ON t.speechSegmentId = s.id
+        WHERE s.audioChunkId = :chunkId
+        ORDER BY s.startOffsetMillis ASC
+        """,
+    )
+    suspend fun getTranscriptTextsForChunk(chunkId: String): List<String>
 }

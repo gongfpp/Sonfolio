@@ -1,2 +1,3 @@
-# Sonfolio V0.1 keeps minification disabled. Rules will be added with the
-# local inference and audio pipeline in a later phase.
+# sherpa JNI resolves these wrapper types and members by name.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keep class com.gongfpp.sonfolio.summary.LocalSummaryNative { *; }

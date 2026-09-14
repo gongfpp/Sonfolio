@@ -1,0 +1,43 @@
+name: Android checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned SDK components
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
+      - name: Source hygiene
+        run: node scripts/release-check.mjs --source-only
+      - name: Unit tests, lint and unsigned build
+        working-directory: android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease
+      - name: Preserve reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            android/app/build/reports/
+            android/app/build/outputs/apk/release/
+          retention-days: 14
+# No signing secrets, automatic publication, or access to private recordings in CI.

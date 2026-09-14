@@ -1,9 +1,11 @@
 package com.gongfpp.sonfolio
 
 import android.Manifest
-import android.app.DatePickerDialog
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import android.media.MediaPlayer
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -16,6 +18,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import kotlinx.coroutines.sync.withLock
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -69,6 +73,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -108,6 +113,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
@@ -185,9 +192,8 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         navigation = navigation.back()
     }
     BackHandler(enabled = navigation.canGoBack, onBack = goBack)
-    val conversations by viewModel.conversations.collectAsStateWithLifecycle()
+    val aliases by viewModel.conversationAliases.collectAsStateWithLifecycle()
     val recordingStatus by viewModel.recordingStatus.collectAsStateWithLifecycle()
-    val recordingChunks by viewModel.recordingChunks.collectAsStateWithLifecycle()
     val recordingGaps by viewModel.recordingGaps.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val application = context.applicationContext as SonfolioApplication
@@ -273,36 +279,41 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
             screenStates.SaveableStateProvider(screen.toSavedRoute()) {
                 when (val current = screen) {
                     AppScreen.Today -> TodayScreen(
-                        conversations = conversations,
-                        recordingChunks = recordingChunks,
+                        viewModel = viewModel,
                         recordingStatus = recordingStatus,
                         gaps = recordingGaps,
                         onStartRecording = requestRecordingStart,
                         onStopRecording = viewModel::stopRecording,
                         onMark = viewModel::markCurrentMoment,
+                        onRecoverRecording = viewModel::recoverRecording,
+                        onEndInterruptedRecording = viewModel::endInterruptedRecording,
                         onOpen = openScreen,
                     )
                     AppScreen.Search -> SearchScreen(viewModel = viewModel, onOpen = openScreen)
                     AppScreen.Settings -> SettingsScreen(
                         preferences = application.preferences,
                         recordingStatus = recordingStatus,
-                        chunks = recordingChunks,
                         onOpenRawRecordings = { openScreen(AppScreen.RawRecordings()) },
                         onRebuildConversations = viewModel::rebuildConversations,
                     )
                     is AppScreen.Daily -> DailyScreen(viewModel = viewModel, initialDate = current.date, onBack = goBack)
                     is AppScreen.RawRecordings -> RawRecordingsScreen(
-                        chunks = recordingChunks,
+                        viewModel = viewModel,
                         date = current.date,
                         onRetry = viewModel::retryProcessing,
                         onBack = goBack,
+                        onDeleteSelected = { viewModel.deleteChunks(it, protectMarked = true) },
+                        onExportSelected = { ids, uri -> viewModel.exportChunksZip(uri, ids) },
                     )
                     is AppScreen.Conversation -> {
                         if (current.id != null) {
+                            val canonicalId = aliases.firstOrNull { it.oldId == current.id }?.canonicalId ?: current.id
+                            val conversation by remember(canonicalId) { viewModel.observeConversation(canonicalId) }.collectAsStateWithLifecycle(initialValue = null)
                             RealConversationScreen(
-                                conversation = conversations.firstOrNull { it.id == current.id },
-                                conversationId = current.id,
+                                conversation = conversation,
+                                conversationId = canonicalId,
                                 initialTranscriptId = current.transcriptId,
+                                searchQuery = current.query,
                                 viewModel = viewModel,
                                 onBack = goBack,
                             )
@@ -320,18 +331,23 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
 
 @Composable
 private fun TodayScreen(
-    conversations: List<ConversationPreview>,
-    recordingChunks: List<AudioChunkPreview>,
+    viewModel: SonfolioViewModel,
     recordingStatus: RecordingStatus,
     gaps: List<com.gongfpp.sonfolio.data.local.RecordingGapEntity>,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
     onMark: (Int) -> Unit,
+    onRecoverRecording: () -> Unit,
+    onEndInterruptedRecording: () -> Unit,
     onOpen: (AppScreen) -> Unit,
 ) {
     val today = rememberCurrentDay()
     var selectedDate by rememberSaveable { mutableStateOf<String?>(null) }
     val date = selectedDate?.let(LocalDate::parse) ?: today
+    val window = remember(date) { DayWindow.of(date) }
+    val conversations by remember(date) { viewModel.observeTimeline(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val recordingChunks by remember(date) { viewModel.observeChunks(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val calendar by viewModel.calendarSpans.collectAsStateWithLifecycle()
     var gapClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(gaps.any { it.endedAtMillis == null }) {
         while (gaps.any { it.endedAtMillis == null }) { gapClock = System.currentTimeMillis(); delay(1_000) }
@@ -339,7 +355,9 @@ private fun TodayScreen(
     val day = remember(date, conversations, recordingChunks, gaps, gapClock) { DayTimeline.build(date, conversations, recordingChunks, gaps, nowMillis = gapClock) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val window = remember(date) { DayWindow.of(date) }
+    val unfinished = day.chunks.filter { it.processingState !in setOf("ASR_READY", "AUDIO_DELETED") }
+    val recordedDates = remember(calendar) { calendar.filter { !it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
+    val organizedDates = remember(calendar) { calendar.filter { it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
     LazyColumn(
         Modifier.fillMaxSize().testTag("timeline-list"), state = listState,
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
@@ -358,10 +376,12 @@ private fun TodayScreen(
                 onStart = { selectedDate = null; onStartRecording() },
                 onStop = onStopRecording,
                 onMark = onMark,
+                onRecover = onRecoverRecording,
+                onEndInterrupted = onEndInterruptedRecording,
             )
         }
         item(key = "date") {
-            DateNavigator(date, today) { next ->
+            DateNavigator(date, today, recordedDates, organizedDates) { next ->
                 selectedDate = next.takeUnless { it == today }?.toString()
                 scope.launch { listState.scrollToItem(0) }
             }
@@ -379,8 +399,11 @@ private fun TodayScreen(
                 )
             }
         }
-        items(day.chunks.filter { it.processingState != "ASR_READY" }, key = { "chunk:${it.id}" }) { chunk ->
+        items(unfinished.take(5), key = { "chunk:${it.id}" }) { chunk ->
             RawAudioCard(chunk) { onOpen(AppScreen.RawRecordings(date.toString())) }
+        }
+        if (unfinished.size > 5) item(key = "more-raw") {
+            TextButton(onClick = { onOpen(AppScreen.RawRecordings(date.toString())) }) { Text("查看更多原音（另有 ${unfinished.size - 5} 段）") }
         }
         items(day.conversations, key = { "conversation:${it.id}" }) { conversation ->
             Column {
@@ -417,15 +440,12 @@ private fun rememberCurrentDay(): LocalDate {
 }
 
 @Composable
-private fun DateNavigator(date: LocalDate, today: LocalDate = rememberCurrentDay(), onSelect: (LocalDate) -> Unit) {
-    val context = LocalContext.current
+private fun DateNavigator(date: LocalDate, today: LocalDate = rememberCurrentDay(), recorded: Set<LocalDate> = emptySet(), organized: Set<LocalDate> = emptySet(), onSelect: (LocalDate) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    if (open) RecordingCalendarDialog(date, today, recorded, organized, { open = false }) { next -> onSelect(next); open = false }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { onSelect(date.minusDays(1)) }) { Icon(Icons.Default.ChevronLeft, "前一天") }
-        TextButton(onClick = {
-            DatePickerDialog(context, { _, year, month, day -> onSelect(LocalDate.of(year, month + 1, day)) }, date.year, date.monthValue - 1, date.dayOfMonth)
-                .apply { datePicker.maxDate = today.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() - 1L }
-                .show()
-        }, modifier = Modifier.weight(1f)) {
+        TextButton(onClick = { open = true }, modifier = Modifier.weight(1f)) {
             Text(date.format(DateTimeFormatter.ofPattern("yyyy年M月d日")), fontWeight = FontWeight.Bold)
         }
         IconButton(onClick = { onSelect(date.plusDays(1)) }, enabled = date < today) { Icon(Icons.Default.ChevronRight, "后一天") }
@@ -462,7 +482,11 @@ private fun RecordingCard(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onMark: (Int) -> Unit,
+    onRecover: () -> Unit,
+    onEndInterrupted: () -> Unit,
 ) {
+    val markWindows = (LocalContext.current.applicationContext as SonfolioApplication).preferences.markerWindows
+    var sliceHelp by remember { mutableStateOf(false) }
     var nowMillis by remember(status.startedAtMillis) {
         mutableLongStateOf(System.currentTimeMillis())
     }
@@ -531,15 +555,15 @@ private fun RecordingCard(
                         .alpha(if (status.isRecording) 1f else .45f)
                         .clip(RoundedCornerShape(11.dp))
                         .background(AmberPale)
-                        .clickable(enabled = status.isRecording) { onMark(3) }
+                        .clickable(enabled = status.isRecording) { onMark(markWindows.first()) }
                         .padding(horizontal = 9.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("★", color = Amber, fontSize = 18.sp)
-                    Text("标记刚才", color = Color(0xFF694E00), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("标记（${markWindows.first()}分）", color = Color(0xFF694E00), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
                 Row(Modifier.padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf(10, 20).forEach { minutes ->
+                    markWindows.drop(1).forEach { minutes ->
                         Box(
                             Modifier
                                 .size(48.dp)
@@ -554,10 +578,36 @@ private fun RecordingCard(
                 }
             }
         }
-        if (status.isRecording || status.interruptionPending || status.health.failure != null) Text(
-            if (!status.isRecording && status.interruptionPending) "录音已中断，缺口将计至重新采集到音频。" else status.health.message(nowMillis),
-            modifier = Modifier.padding(start = 13.dp, end = 13.dp, bottom = 12.dp), color = InkSoft, fontSize = 11.sp,
-        )
+        TextButton(onClick = { sliceHelp = true }) { Text("每 5 分钟保存一份原音 · 切片说明 ⓘ", fontSize = 11.sp) }
+        if (sliceHelp) AlertDialog(onDismissRequest = { sliceHelp = false },
+            title = { Text("文件切片不等于对话切割") },
+            text = { Text("5 分钟切片是为了边录边处理，并减少异常退出时未收尾的范围。相邻语音间隔不超过 2 分钟、且没有已知录音缺口时，会合并为同一场对话，能够跨越多个文件。\n\n总结使用整场对话的已识别文字；长内容分段时会携带上一部分的总结。后续转写到达后会更新基础小结，旧 AI 结果会标为需要重新生成。\n\n当前按时间连续性合并，不是语义主题识别：同一主题停顿过久仍可能被分开，总结也需结合原文核对。") },
+            confirmButton = { TextButton(onClick = { sliceHelp = false }) { Text("知道了") } })
+        if (status.isRecording || status.interruptionPending || status.health.failure != null) {
+            val failure = status.health.failure
+            Text(
+                if (!status.isRecording && status.interruptionPending && failure == null) "录音已中断，缺口将计至重新采集到音频。" else status.health.message(nowMillis),
+                modifier = Modifier.padding(start = 13.dp, end = 13.dp, top = 4.dp, bottom = if (failure != null) 6.dp else 12.dp),
+                color = InkSoft, fontSize = 11.sp,
+            )
+            if (failure != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 13.dp, end = 13.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TextButton(onClick = onRecover) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("尝试恢复", fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(onClick = onEndInterrupted) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("结束本次记录", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
         }
     }
 }
@@ -576,11 +626,38 @@ private fun formatReadableDuration(durationMillis: Long): String {
     return if (minutes == 0L) "不足1分钟" else "${minutes}分钟"
 }
 
+/**
+ * 把 query 在 text 中的命中片段用强调样式标出，用于搜索结果与定位行的高亮。
+ * query 为空或没有命中时原样返回，不分配额外对象。
+ */
+private fun highlightText(text: String, query: String?): AnnotatedString {
+    if (query.isNullOrBlank()) return AnnotatedString(text)
+    val lower = text.lowercase()
+    val needle = query.lowercase()
+    if (needle.isEmpty() || !lower.contains(needle)) return AnnotatedString(text)
+    val ranges = mutableListOf<AnnotatedString.Range<SpanStyle>>()
+    var cursor = 0
+    var guard = 0
+    while (guard++ < 100) {
+        val at = lower.indexOf(needle, cursor)
+        if (at < 0) break
+        ranges.add(
+            AnnotatedString.Range(
+                SpanStyle(background = AmberPale, color = Color(0xFF694E00), fontWeight = FontWeight.Bold),
+                at,
+                at + needle.length,
+            ),
+        )
+        cursor = at + needle.length
+    }
+    return AnnotatedString(text, spanStyles = ranges)
+}
+
 @Composable
 private fun ProcessingSummaryCard(chunks: List<AudioChunkPreview>, onOpen: () -> Unit) {
     val recording = chunks.count { it.processingState == "RECORDING" }
-    val processing = chunks.count { it.processingState in setOf("VAD_RUNNING", "VAD_READY", "ASR_RUNNING") }
-    val waiting = chunks.count { it.processingState == "RECORDED" || it.processingState == "RECOVERED" }
+    val processing = chunks.count { it.processingState in setOf("VAD_RUNNING", "ASR_RUNNING") }
+    val waiting = chunks.count { it.processingState in setOf("RECORDED", "RECOVERED", "VAD_READY", "ASSEMBLY_PENDING", "ASSEMBLY_FAILED") }
     val failed = chunks.count { it.processingState.endsWith("FAILED") }
     val ready = chunks.count { it.processingState == "ASR_READY" }
     Surface(
@@ -592,13 +669,14 @@ private fun ProcessingSummaryCard(chunks: List<AudioChunkPreview>, onOpen: () ->
         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Refresh, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text("总结对话", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("录音处理进度", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("① 保存原音 → ② 找人声 → ③ 转写 → ④ 整理对话", color = InkSoft, fontSize = 10.sp)
                 Text(
                     when {
                         processing > 0 -> "正在本地识别，已完成${ready}段${if (recording > 0) " · 同时继续录音" else ""}"
                         failed > 0 -> "${failed}段处理失败，点击查看原音并重试"
                         recording > 0 -> "原音持续保存，每5分钟或停止时开始整理"
-                        waiting > 0 -> "原语音已保存，等待本地处理"
+                        waiting > 0 -> chunks.firstOrNull { it.errorMessage != null }?.errorMessage ?: "${waiting}段等待处理；若启用了仅充电处理，请接通电源或关闭该开关"
                         else -> "${ready}段原音已保存并处理 · 未识别或过滤的录音可在这里查看"
                     },
                     color = InkSoft,
@@ -616,7 +694,9 @@ private fun RawAudioCard(chunk: AudioChunkPreview, onClick: () -> Unit) {
     val processingLabel = when (chunk.processingState) {
         "RECORDING" -> "原始对话 · 正在录音"
         "RECORDED", "RECOVERED" -> "原始对话 · 等待识别"
-        "VAD_RUNNING", "VAD_READY" -> "原始对话 · 正在找人声"
+        "VAD_RUNNING" -> "② 正在找人声"
+        "VAD_READY" -> "③ 等待转写 · 点击查看原因"
+        "ASSEMBLY_PENDING", "ASSEMBLY_FAILED" -> "④ 文字已保存 · 等待整理"
         "ASR_RUNNING" -> "原始对话 · 正在转写"
         "VAD_FAILED", "ASR_FAILED", "FAILED" -> "原始对话 · 处理失败，原音仍保留"
         else -> "原始对话"
@@ -716,6 +796,7 @@ private fun RealConversationScreen(
     conversation: ConversationPreview?,
     conversationId: String,
     initialTranscriptId: String? = null,
+    searchQuery: String? = null,
     viewModel: SonfolioViewModel,
     onBack: () -> Unit,
 ) {
@@ -726,9 +807,18 @@ private fun RealConversationScreen(
     val structuredSummary by remember(conversationId) {
         viewModel.observeConversationSummary(conversationId)
     }.collectAsStateWithLifecycle(initialValue = null)
-    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(false) }
+    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(initialTranscriptId != null) }
     var seekLineId by remember(conversationId) { mutableStateOf(initialTranscriptId) }
-    val chunks by viewModel.recordingChunks.collectAsStateWithLifecycle()
+    var playLineId by remember(conversationId) { mutableStateOf<String?>(null) }
+    var playNonce by rememberSaveable(conversationId) { mutableLongStateOf(0L) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(seekLineId, lines) {
+        val idx = lines.indexOfFirst { it.id == seekLineId }
+        if (idx >= 0) listState.scrollToItem(idx + 1)
+    }
+    val chunkStart = lines.minOfOrNull { it.startedAtMillis } ?: 0L
+    val chunkEnd = lines.maxOfOrNull { it.endedAtMillis } ?: 0L
+    val chunks by remember(chunkStart, chunkEnd) { viewModel.observeChunks(chunkStart, chunkEnd) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val title = conversation?.title ?: "未识别"
     val meta = conversation?.let { formatConversationMeta(it) } ?: "正在整理原始对话"
     val summary = conversation?.summary ?: "正在从本地转写中生成本段小结。"
@@ -749,13 +839,16 @@ private fun RealConversationScreen(
                 lines = lines,
                 chunks = chunks,
                 requestedLineId = seekLineId,
-                onRequestConsumed = { seekLineId = null },
+                playRequest = playLineId?.let { id -> playNonce.takeIf { it > 0 }?.let { id to it } },
+                onLocateConsumed = { seekLineId = null },
+                onPlayConsumed = { playLineId = null; playNonce = 0 },
             )
         },
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize()
                 .padding(padding),
+            state = listState,
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
         ) {
             item(key = "summary") {
@@ -805,19 +898,36 @@ private fun RealConversationScreen(
                     }
                 } else {
                     items(lines, key = { it.id }) { line ->
+                        val located = line.id == seekLineId
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable { seekLineId = line.id },
                             shape = RoundedCornerShape(8.dp),
-                            color = if (line.isMarked) AmberPale else Color.Transparent,
+                            color = when {
+                                located -> Color(0xFFDCEFE8)
+                                line.isMarked -> AmberPale
+                                else -> Color.Transparent
+                            },
                         ) {
-                            Row(Modifier.padding(vertical = 6.dp, horizontal = 5.dp)) {
+                            Row(Modifier.padding(vertical = 6.dp, horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { seekLineId = line.id; playLineId = line.id; playNonce++ },
+                                    modifier = Modifier.size(30.dp),
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "播放这一句", tint = Green, modifier = Modifier.size(18.dp))
+                                }
                                 Text(
                                     if (line.isMarked) "★ ${formatClock(line.startedAtMillis)}" else formatClock(line.startedAtMillis),
-                                    modifier = Modifier.width(64.dp),
+                                    modifier = Modifier.width(58.dp),
                                     color = if (line.isMarked) Amber else InkSoft,
                                     fontSize = 12.sp,
                                 )
-                                Text(line.text, color = Color(0xFF3E4A42), fontSize = 12.5.sp, lineHeight = 18.sp)
+                                Text(
+                                    highlightText(line.text, searchQuery),
+                                    modifier = Modifier.weight(1f),
+                                    color = Color(0xFF3E4A42),
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 18.sp,
+                                )
                             }
                         }
                     }
@@ -826,7 +936,7 @@ private fun RealConversationScreen(
             item(key = "playback-hint") {
                 Column {
                     Spacer(Modifier.height(14.dp))
-                    Text("点击任意转写行可跳到对应录音位置", color = InkSoft, fontSize = 11.sp)
+                    Text("点击转写行可定位到对应录音位置；行首按钮单独播放这一句", color = InkSoft, fontSize = 11.sp)
                 }
             }
         }
@@ -852,19 +962,33 @@ private fun RealAudioPlayer(
     lines: List<TranscriptLine>,
     chunks: List<AudioChunkPreview>,
     requestedLineId: String?,
-    onRequestConsumed: () -> Unit,
+    playRequest: Pair<String, Long>?,
+    onLocateConsumed: () -> Unit,
+    onPlayConsumed: () -> Unit,
 ) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as SonfolioApplication
     val gaps by remember(app) { app.database.recordingDao().observeGaps() }.collectAsStateWithLifecycle(initialValue = emptyList())
     val timeline = remember(lines, chunks, gaps) { PlaybackTimeline.forConversation(lines, chunks, gaps) }
-    TimelineAudioPlayer(timeline, requestedLineId?.let { id -> lines.firstOrNull { it.id == id }?.startedAtMillis }, onRequestConsumed)
+    val locateTime = requestedLineId?.let { id -> lines.firstOrNull { it.id == id }?.startedAtMillis }
+    val playTime = playRequest?.let { (id, _) -> lines.firstOrNull { it.id == id }?.startedAtMillis }
+    TimelineAudioPlayer(
+        timeline = timeline,
+        requestedTime = locateTime,
+        playTime = playTime,
+        playNonce = playRequest?.second ?: 0L,
+        onLocateConsumed = onLocateConsumed,
+        onPlayConsumed = onPlayConsumed,
+    )
 }
 
 @Composable
 private fun TimelineAudioPlayer(
     timeline: PlaybackTimeline,
     requestedTime: Long? = null,
-    onRequestConsumed: () -> Unit = {},
+    playTime: Long? = null,
+    playNonce: Long = 0L,
+    onLocateConsumed: () -> Unit = {},
+    onPlayConsumed: () -> Unit = {},
 ) {
     val controller = remember(timeline.start, timeline.slices.firstOrNull()?.path) { AudioPlaybackController() }
     controller.timeline = timeline
@@ -875,8 +999,14 @@ private fun TimelineAudioPlayer(
     }
     LaunchedEffect(requestedTime, timeline.slices) {
         if (requestedTime != null && timeline.slices.isNotEmpty()) {
-            controller.seek(requestedTime - timeline.start, autoPlay = true)
-            onRequestConsumed()
+            controller.seek(requestedTime - timeline.start, autoPlay = false)
+            onLocateConsumed()
+        }
+    }
+    LaunchedEffect(playNonce, timeline.slices) {
+        if (playNonce > 0 && playTime != null && timeline.slices.isNotEmpty()) {
+            controller.seek(playTime - timeline.start, autoPlay = true)
+            onPlayConsumed()
         }
     }
     DisposableEffect(controller, lifecycle) {
@@ -1098,9 +1228,12 @@ private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBac
     }
     val narrative = journal?.narrative
     val sourceCount = journal?.sourceConversationCount ?: 0
+    val calendar by viewModel.calendarSpans.collectAsStateWithLifecycle()
+    val recordedDates = remember(calendar) { calendar.filter { !it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
+    val organizedDates = remember(calendar) { calendar.filter { it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp)) {
         DetailTopBar("一日回顾", localDate, onBack)
-        DateNavigator(LocalDate.parse(localDate)) { localDate = it.toString() }
+        DateNavigator(LocalDate.parse(localDate), recorded = recordedDates, organized = organizedDates) { localDate = it.toString() }
         Surface(Modifier.fillMaxWidth().padding(top = 15.dp), RoundedCornerShape(15.dp), color = PaleGreen) {
             Column(Modifier.padding(15.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1220,8 +1353,9 @@ internal fun SearchResultsPanel(
                         title = if (hit.isMarked) "★ ${hit.title}" else hit.title,
                         excerpt = hit.text,
                         trailing = formatClock(hit.startedAtMillis),
+                        query = query,
                     ) {
-                        onOpen(AppScreen.Conversation(ConversationType.Unknown, hit.conversationId, hit.transcriptId))
+                        onOpen(AppScreen.Conversation(ConversationType.Unknown, hit.conversationId, hit.transcriptId, query))
                     }
                 }
                 if (results.hasMore) {
@@ -1241,7 +1375,7 @@ internal fun SearchResultsPanel(
 }
 
 @Composable
-private fun SearchResult(date: String, title: String, excerpt: String, trailing: String, onClick: () -> Unit) {
+private fun SearchResult(date: String, title: String, excerpt: String, trailing: String, query: String? = null, onClick: () -> Unit) {
     Surface(Modifier.fillMaxWidth().padding(top = 10.dp).clickable(onClick = onClick), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
         Column(Modifier.padding(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1249,7 +1383,7 @@ private fun SearchResult(date: String, title: String, excerpt: String, trailing:
                 Text(title, modifier = Modifier.padding(start = 8.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Text(trailing, color = InkSoft, fontSize = 11.sp)
             }
-            Text(excerpt, modifier = Modifier.padding(top = 9.dp), color = Color(0xFF3E4A42), fontSize = 12.5.sp, lineHeight = 19.sp)
+            Text(highlightText(excerpt, query), modifier = Modifier.padding(top = 9.dp), color = Color(0xFF3E4A42), fontSize = 12.5.sp, lineHeight = 19.sp)
         }
     }
 }
@@ -1258,22 +1392,27 @@ private fun SearchResult(date: String, title: String, excerpt: String, trailing:
 private fun SettingsScreen(
     preferences: SonfolioPreferences,
     recordingStatus: RecordingStatus,
-    chunks: List<AudioChunkPreview>,
     onOpenRawRecordings: () -> Unit,
     onRebuildConversations: () -> Unit,
 ) {
     var chargeOnly by remember { mutableStateOf(preferences.chargeOnly) }
+    val settingsScope = rememberCoroutineScope()
+    var policyMessage by remember { mutableStateOf<String?>(null) }
     var retentionDays by remember { mutableStateOf(preferences.retentionDays) }
     val context = LocalContext.current
-    val available = remember(chunks) { android.os.StatFs(context.filesDir.path).availableBytes }
-    val used = chunks.sumOf { it.byteSize }
+    val app = context.applicationContext as SonfolioApplication
+    val used by remember { app.database.recordingDao().observeStorageBytes() }.collectAsStateWithLifecycle(initialValue = 0L)
+    val available = remember(used) { android.os.StatFs(context.filesDir.path).availableBytes }
     val bytesPerDay = 16_000L * 2L * 86_400L
     var language by remember { mutableStateOf(preferences.preferredLanguage) }
     var minimumSpeechSeconds by remember { mutableStateOf(preferences.minimumSpeechSeconds.toFloat()) }
     var minimumTextCharacters by remember { mutableStateOf(preferences.minimumTextCharacters.toFloat()) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("录音与存储", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
+        com.gongfpp.sonfolio.processing.TranscriptionSettingsCard()
         com.gongfpp.sonfolio.summary.SummarySettingsCard()
+        MarkerWindowSettings(preferences)
         Surface(Modifier.fillMaxWidth().padding(top = 17.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("录音服务", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -1301,7 +1440,8 @@ private fun SettingsScreen(
                             label = { Text(if (days == 0) "永久保留" else "${days}天", fontSize = 11.sp) })
                     }
                 }
-                val expired = chunks.count { retentionDays > 0 && it.endedAtMillis != null && it.endedAtMillis < System.currentTimeMillis() - retentionDays * 86_400_000L }
+                val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
+                val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)
                 Text(if (expired > 0) "${expired}段原音已到提醒期限，可进入原始录音查看或导出。" else "到期只提醒，由你决定如何处理原音。人声和标记目前引用同一份完整录音。", color = InkSoft, fontSize = 11.sp)
             }
         }
@@ -1377,11 +1517,27 @@ private fun SettingsScreen(
         }
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column {
-                ToggleRow("仅充电时处理新录音", chargeOnly) { chargeOnly = it; preferences.setChargeOnly(it) }
-                Text("此设置用于新加入的处理任务，已经开始的任务会继续。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp))
-                Text("原始音频仅保存在本机，不上传；外部总结仅按你保存的设置发送转写文字。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(13.dp))
+                ToggleRow("仅充电时自动处理录音", chargeOnly) { value ->
+                    chargeOnly = value; preferences.setChargeOnly(value)
+                    policyMessage = "正在更新等待中的任务…"
+                    settingsScope.launch {
+                        policyMessage = try {
+                            val app = context.applicationContext as SonfolioApplication
+                            app.processingScheduler.refreshConstraints()
+                            app.summaryCoordinator.refreshConstraints()
+                            app.recordingRepository.enqueuePendingVad()
+                            app.recordingRepository.enqueuePendingAsr()
+                            if (value) "等待中的任务改为充电时执行" else "已解除等待任务的充电限制，系统将继续调度"
+                        } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                        catch (_: Exception) { "设置已保存，但队列更新失败；重新打开应用会重试" }
+                    }
+                }
+                Text("包括人声检测、转写和自动 AI 总结。关闭后，已等待的任务也可在未充电时继续。开启不主动打断当前一轮；正在运行的旧任务若遇系统限制，下一轮按新设置执行。手动 AI 总结不要求充电。录音不受影响。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp))
+                policyMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp)) }
+                Text("默认本地识别，不上传音频。只有单独启用外部转文字并确认后才上传人声片段；外部总结仅发送转写文字。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(13.dp))
             }
         }
+        com.gongfpp.sonfolio.recording.BackupSettingsCard()
         Row(Modifier.padding(top = 17.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Security, contentDescription = null, tint = InkSoft, modifier = Modifier.size(19.dp))
             Text("所有核心处理默认在本机完成", modifier = Modifier.padding(start = 8.dp), color = InkSoft, fontSize = 11.sp)
@@ -1391,30 +1547,68 @@ private fun SettingsScreen(
 
 @Composable
 private fun RawRecordingsScreen(
-    chunks: List<AudioChunkPreview>,
+    viewModel: SonfolioViewModel,
     date: String?,
     onRetry: (String) -> Unit,
     onBack: () -> Unit,
+    onDeleteSelected: suspend (Set<String>) -> String,
+    onExportSelected: suspend (Set<String>, Uri) -> Unit,
 ) {
-    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var exportPath by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var showAll by rememberSaveable { mutableStateOf(date == null) }
-    val displayedChunks = remember(chunks, date, showAll) {
-        if (date == null || showAll) chunks else {
-            val window = DayWindow.of(LocalDate.parse(date))
-            chunks.filter { window.overlaps(it.startedAtMillis, it.savedEndMillis()) }
+    val selectionSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() })
+    var selection by rememberSaveable(stateSaver = selectionSaver) { mutableStateOf(emptySet<String>()) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var operationBusy by remember { mutableStateOf(false) }
+    fun leavePage() {
+        if (operationBusy) return
+        when {
+            selectedId != null -> selectedId = null
+            selectionMode -> { selectionMode = false; selection = emptySet() }
+            else -> onBack()
         }
     }
+    BackHandler(onBack = ::leavePage)
+    var cleanupIds by remember { mutableStateOf<Set<String>?>(null) }
+    val app = context.applicationContext as SonfolioApplication
+    var uploadRequest by remember { mutableStateOf<Pair<String, com.gongfpp.sonfolio.processing.TranscriptionConfig>?>(null) }
+    var operationMessage by remember { mutableStateOf<String?>(null) }
+    var visibleCount by rememberSaveable(date, showAll) { mutableIntStateOf(30) }
+    val window = remember(date, showAll) { if (date == null || showAll) DayWindow(Long.MIN_VALUE, Long.MAX_VALUE) else DayWindow.of(LocalDate.parse(date)) }
+    val chunks by remember(window, visibleCount) { viewModel.observeChunks(window.start, window.end, visibleCount + 1, includeDeleted = false) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val dao = (context.applicationContext as SonfolioApplication).database.recordingDao()
+    val totalCount by remember(window) { dao.observeChunkCount(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = 0)
+    val displayedChunks = chunks
+    fun prepareCleanup(silence: Boolean) {
+        if (operationBusy || cleanupIds != null) return
+        operationBusy = true
+        scope.launch {
+            try {
+                val ids = dao.getCleanupCandidates(window.start, window.end, silence).toSet()
+                if (ids.isEmpty()) operationMessage = "没有符合条件的原音，无需清理" else cleanupIds = ids
+            }
+            catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (_: Exception) { operationMessage = "读取清理清单失败，未删除任何文件" }
+            finally { operationBusy = false }
+        }
+    }
+    val allIds = displayedChunks.take(visibleCount).filter { it.processingState != "AUDIO_DELETED" }.map { it.id }
+    val allSelected = allIds.isNotEmpty() && selection.containsAll(allIds)
+    val availableBytes = remember(chunks) { android.os.StatFs(context.filesDir.path).availableBytes }
+    val bytesPerDay = 16_000L * 2L * 86_400L
+    val hoursLeft = (availableBytes.toDouble() / bytesPerDay) * 24.0
+    val remainingLabel = if (hoursLeft >= 48) "预计还能录约 ${(hoursLeft / 24).toInt()} 天" else "预计还能录约 ${hoursLeft.toInt()} 小时"
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("audio/wav"),
     ) { uri ->
         val sourcePath = exportPath
-        if (uri == null || sourcePath == null) return@rememberLauncherForActivityResult
-        scope.launch(Dispatchers.IO) {
-            val result = runCatching {
+        if (uri == null || sourcePath == null || operationBusy) return@rememberLauncherForActivityResult
+        operationBusy = true
+        scope.launch {
+            try { withContext(Dispatchers.IO) { com.gongfpp.sonfolio.processing.AudioFileAccess.mutex.withLock {
                 val source = File(sourcePath)
                 require(source.exists()) { "原始录音文件不存在" }
                 FileInputStream(source).use { input ->
@@ -1422,35 +1616,121 @@ private fun RawRecordingsScreen(
                         input.copyTo(output)
                     } ?: error("无法打开导出目标")
                 }
-            }
-            withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    context,
-                    if (result.isSuccess) "原始录音已导出" else "导出失败：${result.exceptionOrNull()?.message}",
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
+            } }; operationMessage = "原始录音已导出" }
+            catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (_: Exception) { operationMessage = "导出失败，目标可能是不完整文件，请重新导出" }
+            finally { operationBusy = false }
+        }
+    }
+    val zipLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val ids = selection
+        if (operationBusy) return@rememberLauncherForActivityResult
+        operationBusy = true
+        scope.launch {
+            try {
+                onExportSelected(ids, uri)
+                operationMessage = "原音与文字已导出；这不是完整的数据恢复备份"
+                selection = emptySet()
+                selectionMode = false
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) { operationMessage = "导出失败，目标可能是不完整文件：${error.message}" }
+            finally { operationBusy = false }
         }
     }
 
+    cleanupIds?.let { ids ->
+        AlertDialog(onDismissRequest = { if (!operationBusy) cleanupIds = null },
+            title = { Text("清理 ${ids.size} 份原音？") },
+            text = { Text("此操作不可撤销，请先导出需要保留的文件。仅清理已识别完成的原音，保留转写、总结和标记；被标记的整场对话及未处理文件会跳过。") },
+            confirmButton = { TextButton(enabled = !operationBusy, onClick = {
+                if (operationBusy) return@TextButton
+                operationBusy = true
+                selectedId = null
+                scope.launch {
+                    try { operationMessage = onDeleteSelected(ids); selection = emptySet(); selectionMode = false }
+                    catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                    catch (error: Exception) { operationMessage = "清理未全部完成，请检查列表后重试：${error.message}" }
+                    finally { operationBusy = false; cleanupIds = null }
+                }
+            }) { Text("确认清理原音") } },
+            dismissButton = { TextButton(enabled = !operationBusy, onClick = { cleanupIds = null }) { Text("取消") } })
+    }
+
+    uploadRequest?.let { (id, config) ->
+        AlertDialog(onDismissRequest = { uploadRequest = null }, title = { Text("上传这份录音的人声片段？") },
+            text = { Text("将发送到 ${config.provider.label} 的 ${config.model}，可能产生流量和调用费用。这只授权当前一份原音，不上传其他历史录音；原音在本机保留。") },
+            confirmButton = { TextButton(onClick = {
+                runCatching { app.transcriptionSettings.authorizeChunk(id, config.revision) }
+                    .onSuccess { onRetry(id); operationMessage = "已授权这份原音，等待转写" }
+                    .onFailure { operationMessage = it.message ?: "授权失败，请重新确认" }
+                uploadRequest = null
+            }) { Text("确认上传并处理") } },
+            dismissButton = { TextButton(onClick = { uploadRequest = null }) { Text("取消") } })
+    }
+
     val selected = displayedChunks.firstOrNull { it.id == selectedId && it.endedAtMillis != null }
-    Scaffold(containerColor = Paper, bottomBar = {
-        selected?.let { chunk ->
-            TimelineAudioPlayer(PlaybackTimeline(listOf(PlaybackSlice(chunk.localPath, chunk.startedAtMillis, chunk.startedAtMillis, chunk.savedEndMillis()))))
+    if (selected != null) {
+        Scaffold(containerColor = Paper, bottomBar = {
+            TimelineAudioPlayer(PlaybackTimeline(listOf(PlaybackSlice(selected.localPath, selected.startedAtMillis, selected.startedAtMillis, selected.savedEndMillis()))))
+        }) { padding ->
+            Column(Modifier.fillMaxSize().padding(padding).padding(18.dp)) {
+                DetailTopBar("原音回听", formatDateTime(selected.startedAtMillis), ::leavePage)
+                Text("${formatBytes(selected.byteSize)} · ${File(selected.localPath).name}", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(top = 18.dp))
+                Text("拖动底部进度条跳转；暂停后可以从当前位置继续。", color = InkSoft, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+            }
         }
-    }) { padding ->
+        return
+    }
+    Scaffold(containerColor = Paper) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)) {
             item(key = "header") {
                 Column {
-                    DetailTopBar("原始录音", "${if (showAll) "全部日期" else date} · ${displayedChunks.size} 段", onBack)
+                    DetailTopBar("原始录音", "${if (showAll) "全部日期" else date} · ${totalCount} 段原音", ::leavePage)
                     Text(
-                        "录音默认保存在声迹的本地空间。这里可以查看文件状态，也可以导出到系统存储；应用不会自动删除。",
+                        "点击卡片回听，长按进入多选。清理后原音从此列表移除，已有转写和总结仍保留。",
                         modifier = Modifier.padding(start = 46.dp, top = 4.dp),
                         color = InkSoft,
                         fontSize = 11.5.sp,
                         lineHeight = 17.sp,
                     )
-                    if (date != null) TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "仅看 $date" else "查看全部录音") }
+                    Text(
+                        "$remainingLabel（${formatBytes(availableBytes)} 可用）",
+                        modifier = Modifier.padding(start = 46.dp, top = 3.dp),
+                        color = InkSoft,
+                        fontSize = 11.5.sp,
+                    )
+                    if (date != null) TextButton(enabled = !operationBusy, onClick = { selection = emptySet(); selectionMode = false; showAll = !showAll }) { Text(if (showAll) "仅看 $date" else "查看全部录音") }
+                    Text("本地目录：${File(context.filesDir, "recordings").absolutePath}", color = InkSoft, fontSize = 10.sp)
+                    Text("系统文件管理器通常不能直接访问应用私有目录；请使用下方导出功能。", color = InkSoft, fontSize = 11.sp)
+                    operationMessage?.let { Text(it, color = InkSoft, fontSize = 12.sp) }
+                    if (operationBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Row {
+                        TextButton(enabled = !operationBusy, onClick = {
+                            prepareCleanup(false)
+                        }) { Text("清理已过滤原音") }
+                        TextButton(enabled = !operationBusy, onClick = {
+                            prepareCleanup(true)
+                        }) { Text("清理无人声原音") }
+                    }
+                }
+            }
+            if (selectionMode) {
+                item(key = "selection-bar") {
+                    val totalBytes = selection.sumOf { id -> displayedChunks.firstOrNull { it.id == id }?.byteSize ?: 0L }
+                    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(13.dp), color = Green) {
+                        Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("已选 ${selection.size} 段 · ${formatBytes(totalBytes)}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            TextButton(enabled = !operationBusy && selection.isNotEmpty(), onClick = { cleanupIds = selection }) { Text("清理原音", color = Color.White) }
+                            TextButton(enabled = !operationBusy && selection.isNotEmpty(), onClick = { zipLauncher.launch("sonfolio-export-${date ?: "all"}.zip") }) { Text("导出文件", color = Color.White) }
+                        }
+                    }
+                    Row {
+                        if (allIds.isNotEmpty()) TextButton(enabled = !operationBusy, onClick = { selection = if (allSelected) emptySet() else allIds.toSet() }) { Text(if (allSelected) "取消全选" else "全选本页") }
+                        TextButton(enabled = !operationBusy, onClick = { selection = emptySet(); selectionMode = false }) { Text("退出多选") }
+                    }
                 }
             }
             if (displayedChunks.isEmpty()) {
@@ -1458,54 +1738,89 @@ private fun RawRecordingsScreen(
                     Text("${if (showAll) "还没有" else "这一天没有"}原始录音。开始记录后，录音切片会立即出现在这里。", modifier = Modifier.padding(top = 24.dp), color = InkSoft, fontSize = 13.sp)
                 }
             } else {
-                items(displayedChunks, key = { it.id }) { chunk ->
+                items(displayedChunks.take(visibleCount), key = { it.id }) { chunk ->
                     RawRecordingRow(
                         chunk = chunk,
-                        selected = selectedId == chunk.id,
-                        onPlay = { selectedId = chunk.id },
-                        onRetry = { onRetry(chunk.id) },
+                        selectionMode = selectionMode,
+                        enabled = !operationBusy,
+                        checked = selection.contains(chunk.id),
+                        onToggleSelect = {
+                            selection = if (selection.contains(chunk.id)) selection - chunk.id else selection + chunk.id
+                        },
+                        onLongClick = { selectionMode = true; selection = selection + chunk.id },
+                        onPlay = {
+                            if (selectionMode) selection = if (chunk.id in selection) selection - chunk.id else selection + chunk.id
+                            else if (chunk.endedAtMillis != null && File(chunk.localPath).exists()) selectedId = chunk.id
+                            else operationMessage = "正在保存录音，切片完成后可回听"
+                        },
+                        onRetry = {
+                            val config = app.transcriptionSettings.read()
+                            if (config.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE &&
+                                chunk.processingState !in listOf("ASSEMBLY_PENDING", "ASSEMBLY_FAILED") &&
+                                !app.transcriptionSettings.isAuthorized(config, chunk.id, chunk.startedAtMillis)) uploadRequest = chunk.id to config
+                            else onRetry(chunk.id)
+                        },
                         onExport = {
                             exportPath = chunk.localPath
                             exportLauncher.launch(File(chunk.localPath).name)
                         },
                     )
                 }
+                if (displayedChunks.size > visibleCount) item(key = "more") {
+                    TextButton(onClick = { visibleCount += 30 }) { Text("查看更多原音（已显示 $visibleCount / $totalCount）") }
+                }
             }
         }
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun RawRecordingRow(chunk: AudioChunkPreview, selected: Boolean, onPlay: () -> Unit, onRetry: () -> Unit, onExport: () -> Unit) {
+private fun RawRecordingRow(
+    chunk: AudioChunkPreview,
+    selectionMode: Boolean,
+    enabled: Boolean,
+    checked: Boolean,
+    onToggleSelect: () -> Unit,
+    onLongClick: () -> Unit,
+    onPlay: () -> Unit,
+    onRetry: () -> Unit,
+    onExport: () -> Unit,
+) {
     val file = remember(chunk.localPath) { File(chunk.localPath) }
     val stateLabel = when (chunk.processingState) {
         "RECORDING" -> "正在录音"
-        "RECORDED", "RECOVERED" -> "等待整理"
-        "VAD_RUNNING", "VAD_READY" -> "正在检测人声"
-        "ASR_RUNNING" -> "正在转写"
+        "RECORDED", "RECOVERED" -> "1/4 原音已保存 · 等待人声检测"
+        "VAD_RUNNING" -> "2/4 正在检测人声"
+        "VAD_READY" -> "2/4 人声检测完成 · 等待转写"
+        "ASR_RUNNING" -> "3/4 正在转写文字"
+        "ASSEMBLY_PENDING", "ASSEMBLY_FAILED" -> "3/4 文字已保存 · 等待整理对话"
+        "AUDIO_DELETED" -> "原音已清理 · 已有文字保留"
         "ASR_READY" -> when {
-            chunk.transcriptCount == 0 -> "未识别 · 可回听原音"
-            chunk.visibleTranscriptCount == 0 -> "短录音已过滤 · 原音保留"
-            else -> "已整理"
+            chunk.speechCount == 0 -> "处理结束 · 未检测到人声，不生成对话"
+            chunk.transcriptCount == 0 -> "处理结束 · 检测到人声但未识别出文字，可回听原音"
+            chunk.visibleTranscriptCount == 0 -> "处理结束 · 低于过滤阈值，对话已隐藏，原音保留"
+            else -> "4/4 对话与基础小结已完成 · AI 总结可在对话详情生成"
         }
         else -> "原音已保留"
     }
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("raw-audio-row").combinedClickable(enabled = enabled, onClick = onPlay, onLongClick = onLongClick, onLongClickLabel = "选择原音"),
         shape = RoundedCornerShape(13.dp),
-        color = if (selected) PaleGreen else Color(0xFFFFFEFA),
+        color = if (checked) PaleGreen else Color(0xFFFFFEFA),
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selectionMode) Checkbox(checked = checked, onCheckedChange = { onToggleSelect() }, enabled = enabled)
             Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(20.dp))
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(formatDateTime(chunk.startedAtMillis), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("${stateLabel} · ${formatBytes(chunk.byteSize)} · ${file.name}", color = InkSoft, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(stateLabel, color = InkSoft, fontSize = 12.sp)
+                Text("${formatBytes(chunk.byteSize)} · ${file.name}", color = InkSoft, fontSize = 11.sp)
                 chunk.errorMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp) }
-                Row {
-                    TextButton(onClick = onPlay, enabled = chunk.endedAtMillis != null && file.exists()) { Text(if (selected) "已选中" else "回听") }
-                    if (chunk.processingState.endsWith("FAILED")) TextButton(onClick = onRetry) { Text("重试处理") }
-                    TextButton(onClick = onExport, enabled = chunk.endedAtMillis != null && file.exists()) { Text("导出") }
+                if (!selectionMode) Row {
+                    if (chunk.processingState.endsWith("FAILED") || chunk.processingState in setOf("RECORDED", "RECOVERED", "VAD_READY", "ASSEMBLY_PENDING")) TextButton(enabled = enabled, onClick = onRetry) { Text("继续处理") }
+                    TextButton(onClick = onExport, enabled = enabled && chunk.endedAtMillis != null && file.exists()) { Text("导出") }
                 }
             }
         }

@@ -9,17 +9,21 @@ import java.io.File
 import java.util.UUID
 import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.withLock
 
 class VadWorker(
     appContext: Context,
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = AudioFileAccess.mutex.withLock { process() }
+
+    private suspend fun process(): Result {
         val chunkId = inputData.getString(AUDIO_CHUNK_ID)
             ?: return Result.failure()
         val app = applicationContext as SonfolioApplication
         val dao = app.database.recordingDao()
         val chunk = dao.getChunk(chunkId) ?: return Result.failure()
+        if (chunk.endedAtMillis == null || chunk.processingState == "AUDIO_DELETED") return Result.success()
         if (chunk.processingState in setOf("ASR_READY", "ASR_RUNNING", "VAD_READY")) return Result.success()
         val file = File(chunk.localPath)
         if (!file.exists() || file.length() <= 44L) {

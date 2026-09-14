@@ -39,7 +39,7 @@ internal data class DayTimeline(
     val gapMillis: Long,
 ) {
     val failedCount get() = chunks.count { it.processingState.endsWith("FAILED") }
-    val pendingCount get() = chunks.count { it.processingState !in setOf("ASR_READY", "RECORDING") && !it.processingState.endsWith("FAILED") }
+    val pendingCount get() = chunks.count { it.processingState !in setOf("ASR_READY", "AUDIO_DELETED", "RECORDING") && !it.processingState.endsWith("FAILED") }
 
     companion object {
         fun build(
@@ -51,7 +51,7 @@ internal data class DayTimeline(
             nowMillis: Long = System.currentTimeMillis(),
         ): DayTimeline {
             val window = DayWindow.of(date, zone)
-            val dayChunks = chunks.filter { window.overlaps(it.startedAtMillis, it.savedEndMillis()) }.sortedBy { it.startedAtMillis }
+            val dayChunks = chunks.filter { it.processingState != "AUDIO_DELETED" && window.overlaps(it.startedAtMillis, it.savedEndMillis()) }.sortedBy { it.startedAtMillis }
             val dayGaps = gaps.filter { window.overlaps(it.startedAtMillis, it.endedAtMillis ?: nowMillis) }.sortedBy { it.startedAtMillis }
             return DayTimeline(
                 conversations.filter { window.overlaps(it.startedAtMillis, it.endedAtMillis) }.sortedBy { it.startedAtMillis },

@@ -5,6 +5,9 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+@Entity(tableName = "conversation_aliases", indices = [Index("canonicalId")])
+data class ConversationAliasEntity(@PrimaryKey val oldId: String, val canonicalId: String)
+
 @Entity(
     tableName = "audio_chunks",
     indices = [Index("startedAtMillis")],

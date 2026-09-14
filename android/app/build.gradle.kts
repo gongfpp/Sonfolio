@@ -1,9 +1,32 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("androidx.room")
+}
+
+// Only a path is supplied to Gradle. Keys and passwords remain outside the repository.
+val releaseSigningFile = providers.environmentVariable("SONFOLIO_SIGNING_PROPERTIES")
+    .orElse(providers.gradleProperty("sonfolioSigningProperties"))
+    .orNull
+val releaseSigningProperties = releaseSigningFile?.let { path ->
+    val config = file(path)
+    require(config.isFile) { "找不到发布签名配置文件。" }
+    Properties().apply { config.reader(Charsets.UTF_8).use { load(it) } }.also { values ->
+        listOf("storeFile", "storePassword", "keyAlias", "keyPassword").forEach { key ->
+            require(!values.getProperty(key).isNullOrBlank()) { "发布签名配置缺少 $key。" }
+        }
+        require(file(values.getProperty("storeFile")).isFile) { "找不到发布密钥库。" }
+    }
+}
+
+val prepareRuntimeAssets by tasks.registering(Sync::class) {
+    from("src/main/assets")
+    exclude("sense-voice-model.int8.onnx")
+    into(layout.buildDirectory.dir("generated/runtimeAssets"))
 }
 
 android {
@@ -16,8 +39,8 @@ android {
         applicationId = "com.gongfpp.sonfolio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.1.8"
+        versionCode = 10
+        versionName = "0.2.0"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake {
             arguments += "-DANDROID_STL=c++_shared"
@@ -26,9 +49,23 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        releaseSigningProperties?.let { values ->
+            create("release") {
+                storeFile = file(values.getProperty("storeFile"))
+                storeType = values.getProperty("storeType", "PKCS12")
+                storePassword = values.getProperty("storePassword")
+                keyAlias = values.getProperty("keyAlias")
+                keyPassword = values.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            if (releaseSigningProperties != null) signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -47,10 +84,14 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     sourceSets.getByName("androidTest").assets.srcDir("schemas")
+    sourceSets.getByName("main").assets.setSrcDirs(listOf(prepareRuntimeAssets.map { it.destinationDir }))
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6" } }
 }
+
+tasks.named("preBuild") { dependsOn(prepareRuntimeAssets) }
 
 room {
     schemaDirectory("$projectDir/schemas")

@@ -30,7 +30,8 @@ class ClientUiTest {
         ui.onNodeWithText("原始录音").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.onNodeWithText("原始录音").assertIsDisplayed()
         ui.onNodeWithContentDescription("返回").performSemanticsAction(SemanticsActions.OnClick) { it() }
-        ui.onNodeWithText("录音与存储").assertIsDisplayed()
+        // Returning preserves the settings scroll position, so the top heading may be offscreen.
+        ui.onNodeWithText("录音与存储").assertExists()
     }
 
     @Test fun searchQueryAndFilterSurviveTabSwitchAndActivityRecreation() {
