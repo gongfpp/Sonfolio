@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lightbulb
@@ -122,6 +123,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
+import com.gongfpp.sonfolio.data.local.ConversationSummaryEntity
 import com.gongfpp.sonfolio.recording.RecordingFeedback
 import java.time.Instant
 import java.time.LocalDate
@@ -386,6 +388,22 @@ private fun TodayScreen(
                 scope.launch { listState.scrollToItem(0) }
             }
         }
+        item(key = "journal") {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).clickable { onOpen(AppScreen.Daily(date.toString())) },
+                shape = RoundedCornerShape(15.dp),
+                color = PaleGreen,
+            ) {
+                Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Green, modifier = Modifier.size(28.dp))
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("一日回顾", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("${date.format(DateTimeFormatter.ofPattern("M月d日"))} · 查看这一天的总结", color = InkSoft, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Green)
+                }
+            }
+        }
         item(key = "health") { DayRecordingCard(day) { onOpen(AppScreen.RawRecordings(date.toString())) } }
         if (day.chunks.isNotEmpty()) {
             item(key = "processing") { ProcessingSummaryCard(day.chunks) { onOpen(AppScreen.RawRecordings(date.toString())) } }
@@ -410,22 +428,6 @@ private fun TodayScreen(
                 TimelineCard(conversation) { onOpen(AppScreen.Conversation(type = conversation.type, id = conversation.id)) }
                 if (conversation.startedAtMillis < window.start || conversation.endedAtMillis > window.end) {
                     Text("跨日对话 · 打开后可查看及回听完整内容", Modifier.padding(start = 22.dp, top = 3.dp), color = InkSoft, fontSize = 11.sp)
-                }
-            }
-        }
-        item(key = "journal") {
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).clickable { onOpen(AppScreen.Daily(date.toString())) },
-                shape = RoundedCornerShape(15.dp),
-                color = PaleGreen,
-            ) {
-                Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Green, modifier = Modifier.size(28.dp))
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text("一日回顾", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("${date.format(DateTimeFormatter.ofPattern("M月d日"))} · 查看这一天的总结", color = InkSoft, fontSize = 12.sp)
-                    }
-                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Green)
                 }
             }
         }
@@ -660,32 +662,61 @@ private fun ProcessingSummaryCard(chunks: List<AudioChunkPreview>, onOpen: () ->
     val waiting = chunks.count { it.processingState in setOf("RECORDED", "RECOVERED", "VAD_READY", "ASSEMBLY_PENDING", "ASSEMBLY_FAILED") }
     val failed = chunks.count { it.processingState.endsWith("FAILED") }
     val ready = chunks.count { it.processingState == "ASR_READY" }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).clickable(onClick = onOpen),
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         shape = RoundedCornerShape(14.dp),
         color = Color(0xFFFFF7DD),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEAD9A4)),
     ) {
-        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Refresh, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
-            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text("录音处理进度", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text("① 保存原音 → ② 找人声 → ③ 转写 → ④ 整理对话", color = InkSoft, fontSize = 10.sp)
-                Text(
-                    when {
-                        processing > 0 -> "正在本地识别，已完成${ready}段${if (recording > 0) " · 同时继续录音" else ""}"
-                        failed > 0 -> "${failed}段处理失败，点击查看原音并重试"
-                        recording > 0 -> "原音持续保存，每5分钟或停止时开始整理"
-                        waiting > 0 -> chunks.firstOrNull { it.errorMessage != null }?.errorMessage ?: "${waiting}段等待处理；若启用了仅充电处理，请接通电源或关闭该开关"
-                        else -> "${ready}段原音已保存并处理 · 未识别或过滤的录音可在这里查看"
-                    },
-                    color = InkSoft,
-                    fontSize = 11.5.sp,
-                )
+        Column {
+            Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text("录音处理进度", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("① 保存原音 → ② 找人声 → ③ 转写 → ④ 整理对话", color = InkSoft, fontSize = 10.sp)
+                    Text(
+                        when {
+                            processing > 0 -> "正在本地识别，已完成${ready}段${if (recording > 0) " · 同时继续录音" else ""}"
+                            failed > 0 -> "${failed}段处理失败，点击查看原音并重试"
+                            recording > 0 -> "原音持续保存，每5分钟或停止时开始整理"
+                            waiting > 0 -> chunks.firstOrNull { it.errorMessage != null }?.errorMessage ?: "${waiting}段等待处理；若启用了仅充电处理，请接通电源或关闭该开关"
+                            else -> "${ready}段原音已保存并处理 · 未识别或过滤的录音可在这里查看"
+                        },
+                        color = InkSoft,
+                        fontSize = 11.5.sp,
+                    )
+                }
+                Text("${chunks.size}段", color = Amber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-            Text("${chunks.size}段", color = Amber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.padding(start = 4.dp)) {
+                Text(if (expanded) "收起各段状态" else "展开各段状态（${chunks.size}）", fontSize = 12.sp)
+            }
+            if (expanded) {
+                chunks.sortedByDescending { it.startedAtMillis }.forEach { chunk ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(formatDateTime(chunk.startedAtMillis), color = InkSoft, fontSize = 11.sp, modifier = Modifier.width(90.dp))
+                        Text(chunkStageLabel(chunk.processingState), color = Color(0xFF725B18), fontSize = 11.sp, modifier = Modifier.weight(1f))
+                        Text(formatBytes(chunk.byteSize), color = InkSoft, fontSize = 11.sp)
+                    }
+                    chunk.errorMessage?.let { Text(it, Modifier.padding(start = 103.dp, end = 13.dp).padding(bottom = 2.dp), color = InkSoft, fontSize = 10.5.sp) }
+                }
+            }
         }
     }
+}
+
+/** 把切片的内部处理状态翻译成用户能理解的阶段文案。 */
+private fun chunkStageLabel(state: String): String = when (state) {
+    "RECORDING" -> "正在录音"
+    "RECORDED", "RECOVERED" -> "① 原音已保存"
+    "VAD_RUNNING" -> "② 正在找人声"
+    "VAD_READY" -> "③ 等待转写"
+    "ASR_RUNNING" -> "③ 正在转写"
+    "ASSEMBLY_PENDING", "ASSEMBLY_FAILED" -> "④ 等待整理对话"
+    "ASR_READY" -> "已完成"
+    "AUDIO_DELETED" -> "原音已清理 · 文字保留"
+    else -> if (state.endsWith("FAILED")) "处理失败" else "处理中"
 }
 
 @Composable
@@ -811,6 +842,10 @@ private fun RealConversationScreen(
     var seekLineId by remember(conversationId) { mutableStateOf(initialTranscriptId) }
     var playLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playNonce by rememberSaveable(conversationId) { mutableLongStateOf(0L) }
+    var titleDraft by remember(conversationId) { mutableStateOf<String?>(null) }
+    var noteDraft by remember(conversationId) { mutableStateOf<String?>(null) }
+    var editingLine by remember(conversationId) { mutableStateOf<TranscriptLine?>(null) }
+    var editLineText by remember(conversationId) { mutableStateOf("") }
     val listState = rememberLazyListState()
     LaunchedEffect(seekLineId, lines) {
         val idx = lines.indexOfFirst { it.id == seekLineId }
@@ -831,6 +866,26 @@ private fun RealConversationScreen(
         },
         "说话人" to "暂不区分",
     )
+    val exportContext = LocalContext.current
+    val exportScope = rememberCoroutineScope()
+    val exportTextLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val payload = buildConversationText(title, meta, summary, conversation?.note, structuredSummary, lines)
+        exportScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                exportContext.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray()) } ?: error("无法打开导出目标")
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    exportContext,
+                    if (result.isSuccess) "对话文本已导出" else "导出失败：${result.exceptionOrNull()?.message}",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Paper,
@@ -854,7 +909,18 @@ private fun RealConversationScreen(
             item(key = "summary") {
                 Column {
                     DetailTopBar(title, meta, onBack)
-                    Spacer(Modifier.height(15.dp))
+                    Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TextButton(onClick = { titleDraft = conversation?.title ?: "" }) {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("改标题", fontSize = 12.sp)
+                        }
+                        if (conversation?.isMarked == true) {
+                            TextButton(onClick = { viewModel.removeConversationMarker(conversationId) }) { Text("取消标记", fontSize = 12.sp, color = Color(0xFF805900)) }
+                        }
+                        TextButton(onClick = { exportTextLauncher.launch("sonfolio-对话文本.txt") }) { Text("导出文本", fontSize = 12.sp) }
+                    }
+                    Spacer(Modifier.height(9.dp))
                     val marked = lines.filter { it.isMarked }
                     if (marked.isNotEmpty()) {
                         Surface(Modifier.fillMaxWidth().padding(bottom = 10.dp), RoundedCornerShape(10.dp), color = AmberPale) {
@@ -865,18 +931,25 @@ private fun RealConversationScreen(
                         }
                     }
                     SummaryCard(summary, detailFields, detailFields.first { it.first == "整理方式" }.second)
-                    com.gongfpp.sonfolio.summary.SummaryAction("conversation:$conversationId")
-                    if (structuredSummary != null) {
-                        val detailText = structuredSummary?.let { summary ->
-                            listOf("讨论要点" to summary.keyPointsJson, "提到的决定" to summary.decisionsJson,
-                                "提到的安排" to summary.followUpsJson, "提出的问题" to summary.openQuestionsJson)
-                                .mapNotNull { (label, json) -> parseJsonLines(json).takeIf { it.isNotBlank() }?.let { "$label\n$it" } }
-                                .joinToString("\n\n")
-                        }.orEmpty()
-                        if (detailText.isNotBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            StructuredCard("重点整理", detailText, Icons.AutoMirrored.Filled.List)
+                    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(12.dp), color = Color(0xFFF4F1E4)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("备注", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { noteDraft = conversation?.note ?: "" }) {
+                                    Text(if (conversation?.note.isNullOrBlank()) "添加" else "编辑", fontSize = 12.sp)
+                                }
+                            }
+                            Text(
+                                conversation?.note?.takeIf { it.isNotBlank() } ?: "还没有备注，可写一句提醒自己。",
+                                color = if (conversation?.note.isNullOrBlank()) InkSoft else Color(0xFF4A4632),
+                                fontSize = 12.5.sp,
+                            )
                         }
+                    }
+                    com.gongfpp.sonfolio.summary.SummaryAction("conversation:$conversationId")
+                    structuredSummary?.let { structured ->
+                        Spacer(Modifier.height(10.dp))
+                        SummaryPointsCard(structured, lines) { id -> transcriptOpen = true; seekLineId = id }
                     }
                     Spacer(Modifier.height(16.dp))
                     Surface(Modifier.fillMaxWidth().height(1.dp), color = Line) {}
@@ -908,26 +981,42 @@ private fun RealConversationScreen(
                                 else -> Color.Transparent
                             },
                         ) {
-                            Row(Modifier.padding(vertical = 6.dp, horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(
-                                    onClick = { seekLineId = line.id; playLineId = line.id; playNonce++ },
-                                    modifier = Modifier.size(30.dp),
-                                ) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = "播放这一句", tint = Green, modifier = Modifier.size(18.dp))
+                            Column(Modifier.padding(vertical = 6.dp, horizontal = 5.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { seekLineId = line.id; playLineId = line.id; playNonce++ },
+                                        modifier = Modifier.size(30.dp),
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = "播放这一句", tint = Green, modifier = Modifier.size(18.dp))
+                                    }
+                                    Text(
+                                        if (line.isMarked) "★ ${formatClock(line.startedAtMillis)}" else formatClock(line.startedAtMillis),
+                                        modifier = Modifier.width(58.dp),
+                                        color = if (line.isMarked) Amber else InkSoft,
+                                        fontSize = 12.sp,
+                                    )
+                                    Text(
+                                        highlightText(line.text, searchQuery),
+                                        modifier = Modifier.weight(1f),
+                                        color = Color(0xFF3E4A42),
+                                        fontSize = 12.5.sp,
+                                        lineHeight = 18.sp,
+                                    )
+                                    IconButton(
+                                        onClick = { editingLine = line; editLineText = line.text },
+                                        modifier = Modifier.size(30.dp),
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "修正这一句", tint = InkSoft, modifier = Modifier.size(16.dp))
+                                    }
                                 }
-                                Text(
-                                    if (line.isMarked) "★ ${formatClock(line.startedAtMillis)}" else formatClock(line.startedAtMillis),
-                                    modifier = Modifier.width(58.dp),
-                                    color = if (line.isMarked) Amber else InkSoft,
-                                    fontSize = 12.sp,
-                                )
-                                Text(
-                                    highlightText(line.text, searchQuery),
-                                    modifier = Modifier.weight(1f),
-                                    color = Color(0xFF3E4A42),
-                                    fontSize = 12.5.sp,
-                                    lineHeight = 18.sp,
-                                )
+                                if (line.originalText != null) {
+                                    Text(
+                                        "已修正 · 原始版本：${line.originalText}",
+                                        modifier = Modifier.padding(start = 58.dp, top = 2.dp),
+                                        color = InkSoft,
+                                        fontSize = 10.5.sp,
+                                    )
+                                }
                             }
                         }
                     }
@@ -936,9 +1025,44 @@ private fun RealConversationScreen(
             item(key = "playback-hint") {
                 Column {
                     Spacer(Modifier.height(14.dp))
-                    Text("点击转写行可定位到对应录音位置；行首按钮单独播放这一句", color = InkSoft, fontSize = 11.sp)
+                    Text("点击转写行可定位；行首按钮播放这一句，末尾铅笔可修正文字（保留原始版本）", color = InkSoft, fontSize = 11.sp)
                 }
             }
+        }
+        titleDraft?.let { draft ->
+            var value by remember(draft) { mutableStateOf(draft) }
+            AlertDialog(
+                onDismissRequest = { titleDraft = null },
+                title = { Text("修改对话标题") },
+                text = { OutlinedTextField(value, { value = it }, singleLine = true, label = { Text("标题（最多 30 字）") }) },
+                confirmButton = { TextButton(onClick = { viewModel.updateConversationTitle(conversationId, value); titleDraft = null }) { Text("保存") } },
+                dismissButton = { TextButton(onClick = { titleDraft = null }) { Text("取消") } },
+            )
+        }
+        noteDraft?.let { draft ->
+            var value by remember(draft) { mutableStateOf(draft) }
+            AlertDialog(
+                onDismissRequest = { noteDraft = null },
+                title = { Text("对话备注") },
+                text = { Column {
+                    OutlinedTextField(value, { value = it }, label = { Text("简短备注（最多 200 字）") }, minLines = 2)
+                } },
+                confirmButton = { TextButton(onClick = { viewModel.updateConversationNote(conversationId, value); noteDraft = null }) { Text("保存") } },
+                dismissButton = { TextButton(onClick = { noteDraft = null }) { Text("取消") } },
+            )
+        }
+        editingLine?.let { line ->
+            AlertDialog(
+                onDismissRequest = { editingLine = null },
+                title = { Text("修正这一句") },
+                text = { Column {
+                    OutlinedTextField(editLineText, { editLineText = it }, label = { Text("识别文字") }, minLines = 2)
+                    if (line.originalText == null) Text("保存后会保留原始识别版本。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                    else Text("原始版本：${line.originalText}", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                } },
+                confirmButton = { TextButton(onClick = { viewModel.updateTranscriptText(line.id, editLineText); editingLine = null }) { Text("保存") } },
+                dismissButton = { TextButton(onClick = { editingLine = null }) { Text("取消") } },
+            )
         }
     }
 }
@@ -1206,6 +1330,44 @@ private fun GameSummaryScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * 结构化要点：每条要点可点击定位到最接近的原句，方便逐条核对，而不是只给一句「请结合原文核对」。
+ */
+@Composable
+private fun SummaryPointsCard(summary: ConversationSummaryEntity, lines: List<TranscriptLine>, onLocate: (String) -> Unit) {
+    val sections = listOf(
+        "讨论要点" to summary.keyPointsJson,
+        "提到的决定" to summary.decisionsJson,
+        "提到的安排" to summary.followUpsJson,
+        "提出的问题" to summary.openQuestionsJson,
+    ).mapNotNull { (label, json) -> parseJsonArray(json).takeIf { it.isNotEmpty() }?.let { label to it } }
+    if (sections.isEmpty()) return
+    Surface(shape = RoundedCornerShape(14.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(13.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
+                Text("重点整理", modifier = Modifier.padding(start = 8.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("点条目核对原文", color = InkSoft, fontSize = 10.sp)
+            }
+            sections.forEach { (label, points) ->
+                Text(label, modifier = Modifier.padding(top = 10.dp), fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                points.forEach { point ->
+                    val matchId = remember(point, lines) { bestMatchLineId(lines, point) }
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 5.dp)
+                            .clickable(enabled = matchId != null) { matchId?.let(onLocate) },
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Text("•", color = Green, fontSize = 12.5.sp)
+                        Text(point, modifier = Modifier.padding(start = 6.dp).weight(1f), color = Color(0xFF3D4B41), fontSize = 12.5.sp, lineHeight = 19.sp)
+                        if (matchId != null) Text("定位", color = Green, fontSize = 11.sp, modifier = Modifier.padding(start = 6.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun StructuredCard(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color = PaleGreen) {
     Surface(shape = RoundedCornerShape(14.dp), color = color, modifier = Modifier.fillMaxWidth()) {
@@ -1262,6 +1424,66 @@ private fun parseJsonLines(value: String?): String = runCatching {
     (0 until array.length()).map { array.getString(it) }.joinToString("\n") { "• $it" }
 }.getOrDefault("")
 
+private fun parseJsonArray(value: String?): List<String> = runCatching {
+    val array = JSONArray(value ?: "[]")
+    (0 until array.length()).mapNotNull { array.optString(it).takeIf { s -> s.isNotBlank() } }
+}.getOrDefault(emptyList())
+
+/**
+ * 为一条摘要要点在转写里找最接近的原句，用于「定位原文」核对。
+ * 先精确包含，再回退到词元命中最多的一行。
+ */
+private fun bestMatchLineId(lines: List<TranscriptLine>, point: String): String? {
+    val target = point.trim()
+    if (target.isEmpty() || lines.isEmpty()) return null
+    lines.firstOrNull { it.text.contains(target) || target.contains(it.text) }?.let { return it.id }
+    val tokens = target.split(Regex("[\\s\\p{Z}，。、；：！？,.!?;:（）()\\[\\]「」『』]+"))
+        .filter { it.length >= 2 }
+    if (tokens.isEmpty()) return null
+    return lines
+        .map { line -> line to tokens.count { line.text.contains(it) } }
+        .filter { it.second > 0 }
+        .maxByOrNull { it.second }
+        ?.first?.id
+}
+
+/** 把一段对话（小结、备注、结构化要点、逐句转写）整理成可导出的纯文本。 */
+private fun buildConversationText(
+    title: String,
+    meta: String,
+    summary: String,
+    note: String?,
+    structured: ConversationSummaryEntity?,
+    lines: List<TranscriptLine>,
+): String = buildString {
+    appendLine("$title（$meta）")
+    if (!note.isNullOrBlank()) appendLine("备注：$note")
+    appendLine()
+    appendLine("【小结】")
+    appendLine(summary)
+    if (structured != null) {
+        listOf(
+            "讨论要点" to structured.keyPointsJson,
+            "提到的决定" to structured.decisionsJson,
+            "提到的安排" to structured.followUpsJson,
+            "提出的问题" to structured.openQuestionsJson,
+        ).forEach { (label, json) ->
+            val points = parseJsonArray(json)
+            if (points.isNotEmpty()) {
+                appendLine()
+                appendLine("【$label】")
+                points.forEach { appendLine("• $it") }
+            }
+        }
+    }
+    appendLine()
+    appendLine("【转写】")
+    lines.forEach { line ->
+        appendLine("${formatClock(line.startedAtMillis)}  ${line.text}")
+        line.originalText?.let { appendLine("　（原始版本：$it）") }
+    }
+}
+
 @Composable
 private fun AuxiliaryCard(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
     Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(14.dp), color = Color(0xFFEAF3E7)) {
@@ -1279,14 +1501,17 @@ private fun AuxiliaryCard(title: String, body: String, icon: androidx.compose.ui
 @Composable
 private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
-    var filter by rememberSaveable { mutableStateOf("全部") }
+    var dateRange by rememberSaveable { mutableStateOf(SearchDateRange.All) }
+    var markedOnly by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     fun resetScroll() { scope.launch { listState.scrollToItem(0) } }
     val today = rememberCurrentDay()
-    var visibleLimit by rememberSaveable(query, filter, today.toString()) { mutableIntStateOf(SEARCH_BATCH_SIZE) }
-    val results by key(query, filter, today) {
-        remember(query, filter, today, visibleLimit) { viewModel.observeSearch(query, filter, visibleLimit) }.collectAsStateWithLifecycle(initialValue = null)
+    var visibleLimit by rememberSaveable(query, dateRange, markedOnly, today.toString()) { mutableIntStateOf(SEARCH_BATCH_SIZE) }
+    val results by key(query, dateRange, markedOnly, today) {
+        remember(query, dateRange, markedOnly, today, visibleLimit) {
+            viewModel.observeSearch(query, dateRange, markedOnly, visibleLimit)
+        }.collectAsStateWithLifecycle(initialValue = null)
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("搜索记忆", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -1300,13 +1525,26 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
             trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = ""; resetScroll() }) { Icon(Icons.Default.Close, contentDescription = "清空搜索") } },
             shape = RoundedCornerShape(11.dp),
         )
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("全部", "今天", "本周", "仅标记").forEach { value ->
-                FilterChip(selected = filter == value, onClick = { filter = value; resetScroll() }, label = { Text(value, fontSize = 12.sp) })
+        Text("时间范围", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 12.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SearchDateRange.entries.forEach { range ->
+                FilterChip(
+                    selected = dateRange == range,
+                    onClick = { dateRange = range; resetScroll() },
+                    label = { Text(range.label, fontSize = 12.sp) },
+                )
             }
         }
+        Text("筛选", color = InkSoft, fontSize = 11.sp)
+        Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = markedOnly,
+                onClick = { markedOnly = !markedOnly; resetScroll() },
+                label = { Text("仅标记", fontSize = 12.sp) },
+            )
+        }
         SearchResultsPanel(
-            query, filter, results, visibleLimit, listState,
+            query, dateRange, markedOnly, results, visibleLimit, listState,
             onLoadMore = { visibleLimit = (visibleLimit.toLong() + SEARCH_BATCH_SIZE).coerceAtMost(Int.MAX_VALUE - 1L).toInt() },
             onOpen = onOpen,
             modifier = Modifier.weight(1f),
@@ -1317,7 +1555,8 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
 @Composable
 internal fun SearchResultsPanel(
     query: String,
-    filter: String,
+    dateRange: SearchDateRange,
+    markedOnly: Boolean,
     results: SearchResults?,
     visibleLimit: Int,
     listState: LazyListState,
@@ -1326,10 +1565,11 @@ internal fun SearchResultsPanel(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth()) {
+        val noCriteria = query.isBlank() && dateRange == SearchDateRange.All && !markedOnly
         Text(
             when {
                 results?.errorMessage != null -> results.errorMessage
-                query.isBlank() && filter == "全部" -> "输入文字后搜索本地转写"
+                noCriteria -> "输入文字后搜索本地转写"
                 results == null -> "正在搜索…"
                 results.hasMore -> "已显示 ${results.hits.size} 条相关内容 · 还有更多"
                 else -> "找到 ${results.hits.size} 条相关内容"
@@ -1339,8 +1579,8 @@ internal fun SearchResultsPanel(
         if (results?.errorMessage != null) return@Column
         if (hits != null && hits.isEmpty()) {
             Text(
-                if (query.isBlank() && filter == "全部") "搜索不会自动列出全部记录；你可以输入主题、关键词或人名。"
-                else if (query.isBlank()) "此筛选条件下没有已整理的内容。" else "没有找到包含“$query”的转写。",
+                if (noCriteria) "搜索不会自动列出全部记录；你可以输入主题、关键词或人名。"
+                else if (query.isBlank()) "此条件下没有已整理的内容。" else "没有找到包含“$query”的转写。",
                 modifier = Modifier.padding(top = 20.dp),
                 color = InkSoft,
                 fontSize = 13.sp,
