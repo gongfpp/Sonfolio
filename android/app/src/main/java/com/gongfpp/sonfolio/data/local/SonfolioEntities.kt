@@ -69,6 +69,8 @@ data class TranscriptEntity(
     val modelVersion: String,
     val processingState: String,
     val errorMessage: String?,
+    /** 用户修正前的原始识别文字；为空表示从未修正过。 */
+    val originalText: String? = null,
 )
 
 @Entity(
@@ -85,6 +87,8 @@ data class ConversationEntity(
     val briefSummary: String,
     val summaryLevel: String,
     val processingState: String,
+    /** 用户为这段对话写的简短备注。 */
+    val note: String? = null,
 )
 
 @Entity(

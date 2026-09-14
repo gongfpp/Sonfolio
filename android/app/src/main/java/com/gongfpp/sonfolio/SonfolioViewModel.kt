@@ -56,8 +56,13 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
     fun observeTranscript(conversationId: String): Flow<List<TranscriptLine>> =
         repository.observeTranscript(conversationId)
 
-    fun observeSearch(query: String, filter: String = "全部", visibleLimit: Int = SEARCH_BATCH_SIZE): Flow<SearchResults> =
-        repository.observeSearch(query, filter, visibleLimit)
+    fun observeSearch(
+        query: String,
+        dateRange: SearchDateRange = SearchDateRange.All,
+        markedOnly: Boolean = false,
+        visibleLimit: Int = SEARCH_BATCH_SIZE,
+    ): Flow<SearchResults> =
+        repository.observeSearch(query, dateRange, markedOnly, visibleLimit)
 
     fun observeDailyJournal(localDate: String): Flow<com.gongfpp.sonfolio.data.local.DailyJournalEntity?> =
         repository.observeDailyJournal(localDate)
@@ -122,5 +127,21 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
 
     fun markCurrentMoment(windowMinutes: Int = 3) {
         RecordingController.mark(getApplication(), windowMinutes)
+    }
+
+    fun updateConversationTitle(conversationId: String, title: String) {
+        viewModelScope.launch { repository.updateConversationTitle(conversationId, title) }
+    }
+
+    fun updateConversationNote(conversationId: String, note: String?) {
+        viewModelScope.launch { repository.updateConversationNote(conversationId, note) }
+    }
+
+    fun removeConversationMarker(conversationId: String) {
+        viewModelScope.launch { repository.removeMarkerForConversation(conversationId) }
+    }
+
+    fun updateTranscriptText(transcriptId: String, text: String) {
+        viewModelScope.launch { repository.updateTranscriptText(transcriptId, text) }
     }
 }

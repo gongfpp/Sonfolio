@@ -51,7 +51,7 @@ class SearchRepositoryIntegrationTest {
             val firstEmpty = CompletableDeferred<Unit>()
             val marked = async(start = CoroutineStart.UNDISPATCHED) {
                 withTimeout(10_000) {
-                    repository.observeSearch(query, "仅标记", 200)
+                    repository.observeSearch(query, markedOnly = true, visibleLimit = 200)
                         .onEach { if (it.hits.isEmpty()) firstEmpty.complete(Unit) }
                         .first { it.hits.isNotEmpty() }
                 }

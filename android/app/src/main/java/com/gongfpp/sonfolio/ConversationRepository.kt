@@ -231,13 +231,20 @@ class ConversationRepository(
                     localPath = row.localPath,
                     chunkStartedAtMillis = row.chunkStartedAtMillis,
                     isMarked = row.isMarked,
+                    originalText = row.originalText,
                 )
             }
         }
 
-    fun observeSearch(query: String, filter: String = "全部", visibleLimit: Int = SEARCH_BATCH_SIZE): Flow<SearchResults> {
-        val request = SearchQuery.build(query, filter, visibleLimit)
-        if (request.errorMessage != null || (query.isBlank() && filter == "全部")) {
+    fun observeSearch(
+        query: String,
+        dateRange: SearchDateRange = SearchDateRange.All,
+        markedOnly: Boolean = false,
+        visibleLimit: Int = SEARCH_BATCH_SIZE,
+    ): Flow<SearchResults> {
+        val request = SearchQuery.build(query, dateRange, markedOnly, visibleLimit)
+        val noCriteria = query.isBlank() && dateRange == SearchDateRange.All && !markedOnly
+        if (request.errorMessage != null || noCriteria) {
             return flowOf(SearchResults(emptyList(), requestedLimit = request.visibleLimit, errorMessage = request.errorMessage))
         }
         return conversationDao.observeSearch(androidx.sqlite.db.SimpleSQLiteQuery(request.sql, request.arguments.toTypedArray())).map { rows ->
@@ -261,6 +268,32 @@ class ConversationRepository(
 
     fun observeConversationSummary(conversationId: String): Flow<ConversationSummaryEntity?> =
         conversationDao.observeConversationSummary(conversationId)
+
+    /** 用户修改对话标题（去掉首尾空白，限 30 字）。 */
+    suspend fun updateConversationTitle(conversationId: String, title: String) {
+        val trimmed = title.trim().take(30)
+        if (trimmed.isEmpty()) return
+        conversationDao.updateConversationTitle(conversationId, trimmed)
+    }
+
+    /** 用户写/清空简短备注（限 200 字）。 */
+    suspend fun updateConversationNote(conversationId: String, note: String?) {
+        val trimmed = note?.trim()?.take(200)?.takeIf { it.isNotEmpty() }
+        conversationDao.updateConversationNote(conversationId, trimmed)
+    }
+
+    /** 撤销这段对话涉及的标记。 */
+    suspend fun removeMarkerForConversation(conversationId: String) {
+        val conversation = conversationDao.getConversation(conversationId) ?: return
+        conversationDao.deleteMarkersOverlapping(conversation.startedAtMillis, conversation.endedAtMillis)
+    }
+
+    /** 修正单条转写文字；原始识别版本会被保留在 originalText。 */
+    suspend fun updateTranscriptText(transcriptId: String, text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        conversationDao.updateTranscriptText(transcriptId, trimmed)
+    }
 }
 
 private const val MERGE_GAP_MILLIS = 2 * 60 * 1_000L
@@ -311,5 +344,6 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         startedAtMillis = startedAtMillis,
         endedAtMillis = endedAtMillis,
         isMarked = isMarked,
+        note = note,
     )
 }
