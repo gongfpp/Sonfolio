@@ -16,3 +16,6 @@ android/**/.cxx/
 
 # 本地工作数据（含本机路径与网络信息，勿提交）
 .workbuddy/
+
+# 用户自行下载的本地总结模型，不放入 Git 或 APK
+.local-models/
