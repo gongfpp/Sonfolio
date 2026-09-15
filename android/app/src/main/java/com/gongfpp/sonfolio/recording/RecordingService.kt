@@ -209,7 +209,11 @@ class RecordingService : Service() {
         val startedAtMillis = System.currentTimeMillis()
         val startedAtElapsed = SystemClock.elapsedRealtime()
         val file = createChunkFile(startedAtMillis)
-        val fact = CapturedChunk(chunkId, startedAtMillis, file.absolutePath, SAMPLE_RATE_HZ, CHANNEL_COUNT)
+        val startedZone = java.time.ZoneId.systemDefault()
+        val fact = CapturedChunk(chunkId, startedAtMillis, file.absolutePath, SAMPLE_RATE_HZ, CHANNEL_COUNT,
+            zoneId = startedZone.id,
+            offsetSeconds = startedZone.rules.getOffset(java.time.Instant.ofEpochMilli(startedAtMillis)).totalSeconds,
+            localStartDate = java.time.Instant.ofEpochMilli(startedAtMillis).atZone(startedZone).toLocalDate().toString())
         repository.saveCaptureFact(fact)
         val writer = WavChunkWriter(
             file = file,

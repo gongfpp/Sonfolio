@@ -19,6 +19,8 @@ data class TranscriptAudioRow(
     @ColumnInfo(name = "chunkStartedAtMillis") val chunkStartedAtMillis: Long,
     @ColumnInfo(name = "isMarked") val isMarked: Boolean,
     @ColumnInfo(name = "originalText") val originalText: String? = null,
+    /** 所属切片录音发生时的时区；空值按设备时区回退。 */
+    @ColumnInfo(name = "recordedZoneId") val recordedZoneId: String = "",
 )
 
 data class TranscriptSearchRow(
@@ -44,9 +46,9 @@ data class TranscriptRef(
 @Dao
 interface ConversationDao {
     @Query("""SELECT MIN(startedAtMillis) AS `start`, MAX(COALESCE(endedAtMillis, startedAtMillis + 1)) AS `end`, 0 AS organized
-        FROM audio_chunks WHERE processingState <> 'AUDIO_DELETED' GROUP BY date(startedAtMillis / 1000, 'unixepoch', 'localtime')
+        FROM audio_chunks WHERE processingState <> 'AUDIO_DELETED' GROUP BY COALESCE(NULLIF(localStartDate, ''), date(startedAtMillis / 1000, 'unixepoch', 'localtime'))
         UNION ALL SELECT MIN(startedAtMillis) AS `start`, MAX(endedAtMillis) AS `end`, 1 AS organized
-        FROM conversations GROUP BY date(startedAtMillis / 1000, 'unixepoch', 'localtime')""")
+        FROM conversations GROUP BY COALESCE(NULLIF(localStartDate, ''), date(startedAtMillis / 1000, 'unixepoch', 'localtime'))""")
     fun observeCalendarSpans(): Flow<List<CalendarSpan>>
 
     @Query("SELECT * FROM conversations WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
@@ -82,7 +84,7 @@ interface ConversationDao {
     suspend fun deleteJournal(date: String)
 
     @Query("""SELECT t.id AS transcriptId, t.conversationId, t.startedAtMillis, t.endedAtMillis,
-        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked
+        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked, a.recordedZoneId
         FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId JOIN audio_chunks a ON a.id = s.audioChunkId
         WHERE t.processingState = 'ASR_READY' AND t.text <> '' AND t.startedAtMillis <= :end AND t.endedAtMillis >= :start
         ORDER BY t.startedAtMillis, t.id""")
@@ -94,7 +96,7 @@ interface ConversationDao {
     suspend fun getSummaryRunsForKeys(keys: List<String>): List<SummaryRunEntity>
 
     @Query("""SELECT t.id AS transcriptId, t.conversationId, t.startedAtMillis, t.endedAtMillis,
-        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked
+        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked, a.recordedZoneId
         FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId JOIN audio_chunks a ON a.id = s.audioChunkId
         WHERE t.processingState = 'ASR_READY' AND t.text <> '' AND t.conversationId IN (:ids)
         ORDER BY t.startedAtMillis, t.id""")
@@ -151,7 +153,8 @@ interface ConversationDao {
             t.originalText AS originalText,
             a.localPath AS localPath,
             a.startedAtMillis AS chunkStartedAtMillis,
-            0 AS isMarked
+            0 AS isMarked,
+            a.recordedZoneId
         FROM transcripts t
         JOIN speech_segments s ON s.id = t.speechSegmentId
         JOIN audio_chunks a ON a.id = s.audioChunkId
@@ -173,6 +176,7 @@ interface ConversationDao {
             t.originalText AS originalText,
             a.localPath AS localPath,
             a.startedAtMillis AS chunkStartedAtMillis,
+            a.recordedZoneId,
             CASE WHEN EXISTS (
                 SELECT 1
                 FROM transcripts seed, markers m
@@ -220,6 +224,9 @@ interface ConversationDao {
 
     @Query("SELECT * FROM daily_journals WHERE localDate = :localDate LIMIT 1")
     fun observeDailyJournal(localDate: String): Flow<DailyJournalEntity?>
+
+    @Query("SELECT * FROM daily_journals WHERE localDate = :localDate LIMIT 1")
+    suspend fun getDailyJournal(localDate: String): DailyJournalEntity?
 
     @Query("SELECT * FROM conversation_summaries WHERE conversationId = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :conversationId), :conversationId) LIMIT 1")
     fun observeConversationSummary(conversationId: String): Flow<ConversationSummaryEntity?>

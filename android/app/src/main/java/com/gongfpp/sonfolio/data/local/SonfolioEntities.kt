@@ -22,6 +22,12 @@ data class AudioChunkEntity(
     val channelCount: Int,
     val processingState: String,
     val errorMessage: String?,
+    /** 录音发生时的时区；日期归属以它为准，而不是之后打开 App 时的设备时区。 */
+    @androidx.room.ColumnInfo(defaultValue = "") val recordedZoneId: String = "",
+    /** 录音发生时的 UTC 偏移（秒），供无时区数据库环境追溯。 */
+    @androidx.room.ColumnInfo(defaultValue = "0") val recordedOffsetSeconds: Int = 0,
+    /** 录音发生时按 recordedZoneId 算出的当地日期（ISO），日历按它分桶。 */
+    @androidx.room.ColumnInfo(defaultValue = "") val localStartDate: String = "",
 )
 
 @Entity(
@@ -92,6 +98,8 @@ data class ConversationEntity(
     val processingState: String,
     /** 用户为这段对话写的简短备注。 */
     val note: String? = null,
+    /** 对话开始时刻按所属录音时区算出的当地日期；为空表示旧数据，按设备时区回退。 */
+    @androidx.room.ColumnInfo(defaultValue = "") val localStartDate: String = "",
 )
 
 @Entity(

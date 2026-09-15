@@ -78,14 +78,16 @@ private fun unionDuration(ranges: List<LongRange>): Long {
 
 internal fun localDateAt(millis: Long): LocalDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 
-/** 一句话无法按午夜切开文字，所以在相交的两天保留该句，由回顾注明跨日。 */
+/** 一句话无法按午夜切开文字，所以在相交的两天保留该句，由回顾注明跨日。
+ * 日期归属优先使用该行录音发生时的时区（recordedZoneId），fallback 只用于历史空值。 */
 internal fun transcriptGroupsByDate(
     groups: List<List<TranscriptAudioRow>>,
     zone: ZoneId,
 ): Map<LocalDate, List<List<TranscriptAudioRow>>> = groups.flatMap { group ->
     group.flatMap { row ->
-        val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(zone).toLocalDate()
-        val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(zone).toLocalDate()
+        val rowZone = runCatching { ZoneId.of(row.recordedZoneId) }.getOrNull() ?: zone
+        val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(rowZone).toLocalDate()
+        val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(rowZone).toLocalDate()
         generateSequence(first) { it.plusDays(1) }.takeWhile { it <= last }.map { it to row }.toList()
     }.groupBy({ it.first }, { it.second }).toList()
 }.groupBy({ it.first }, { it.second })

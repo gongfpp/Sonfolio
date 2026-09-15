@@ -50,7 +50,7 @@ class RecordingRepository(
         for (fact in log.pending()) {
             val file = File(fact.path)
             val existing = recordingDao.getChunk(fact.id)
-            if (existing == null) beginChunk(fact.id, fact.startedAt, file, fact.sampleRate, fact.channels)
+            if (existing == null) beginChunk(fact.id, fact.startedAt, file, fact.sampleRate, fact.channels, fact.zoneId, fact.offsetSeconds, fact.localStartDate)
             if (existing?.endedAtMillis != null) { log.acknowledge(fact.id); continue }
             if (fact.endedAt == null && !recoverOpen) {
                 recordingDao.checkpoint(fact.id, file.length())
@@ -104,6 +104,9 @@ class RecordingRepository(
         file: File,
         sampleRateHz: Int,
         channelCount: Int,
+        zoneId: String = "",
+        offsetSeconds: Int = 0,
+        localStartDate: String = "",
     ) {
         recordingDao.insertChunk(
             AudioChunkEntity(
@@ -116,6 +119,9 @@ class RecordingRepository(
                 channelCount = channelCount,
                 processingState = "RECORDING",
                 errorMessage = null,
+                recordedZoneId = zoneId,
+                recordedOffsetSeconds = offsetSeconds,
+                localStartDate = localStartDate,
             ),
         )
     }

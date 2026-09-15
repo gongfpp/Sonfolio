@@ -18,7 +18,7 @@ import androidx.room.RoomDatabase
         SummaryRunEntity::class,
         ConversationAliasEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -26,6 +26,16 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun recordingDao(): RecordingDao
 
     companion object {
+        // 0.2.1 时间模型：保存录音发生时的时区/偏移/当地日期，日期归属不再随设备时区漂移。
+        // 历史行留空（''），消费端按设备时区回退。
+        val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE audio_chunks ADD COLUMN recordedZoneId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE audio_chunks ADD COLUMN recordedOffsetSeconds INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE audio_chunks ADD COLUMN localStartDate TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE conversations ADD COLUMN localStartDate TEXT NOT NULL DEFAULT ''")
+            }
+        }
         // 0.2.1 数据一致性：把用户手工输入与自动生成字段分开。
         // 存量 title 一律视为 AI 生成（迁移语义 B），titleOverride 为空表示尚未手工编辑。
         val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
@@ -82,7 +92,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build().also { database -> instance = database }
             }
     }
 }
