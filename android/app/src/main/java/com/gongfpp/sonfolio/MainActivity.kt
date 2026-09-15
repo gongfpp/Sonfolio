@@ -1532,59 +1532,17 @@ private fun SettingsScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("录音与存储", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
+        SectionTitle("识别与总结")
         com.gongfpp.sonfolio.processing.TranscriptionSettingsCard()
         com.gongfpp.sonfolio.summary.SummarySettingsCard()
-        MarkerWindowSettings(preferences)
+        SectionTitle("录音")
         Surface(Modifier.fillMaxWidth().padding(top = 17.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("录音服务", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                 Text(if (recordingStatus.isRecording) "正在记录" else "已停止", color = Green, fontSize = 13.sp)
             }
         }
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
-            Column(Modifier.padding(13.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    StorageValue("录音已使用", String.format(Locale.US, "%.2f", used / 1_073_741_824.0), "GB", Modifier.weight(1f))
-                    StorageValue("预计还可记录", (available / bytesPerDay).toString(), "天", Modifier.weight(1f))
-                }
-                Box(Modifier.fillMaxWidth().padding(top = 14.dp).height(10.dp).clip(CircleShape).background(Color(0xFFE3E3DF))) {
-                    Box(Modifier.fillMaxWidth((used.toFloat() / (used + available).coerceAtLeast(1)).coerceIn(0f, 1f)).fillMaxSize().clip(CircleShape).background(Green))
-                }
-                Text("连续录音约${formatBytes(bytesPerDay)}/天，剩余${formatBytes(available)}；模型和系统也占用存储。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
-            }
-        }
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
-            Column(Modifier.padding(13.dp)) {
-                Text("原音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(0, 7, 30, 90).forEach { days ->
-                        FilterChip(selected = retentionDays == days, onClick = { retentionDays = days; preferences.setRetentionDays(days) },
-                            label = { Text(if (days == 0) "永久保留" else "${days}天", fontSize = 11.sp) })
-                    }
-                }
-                val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
-                val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)
-                Text(
-                    if (expired > 0) "${expired}段原音超过保留期：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。"
-                    else "转写完成后自动压缩原音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择“永久保留”则始终保留原声。",
-                    color = InkSoft, fontSize = 11.sp,
-                )
-            }
-        }
-        Surface(
-            Modifier.fillMaxWidth().padding(top = 13.dp).clickable(onClick = onOpenRawRecordings),
-            RoundedCornerShape(14.dp),
-            color = Color(0xFFFFFEFA),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Line),
-        ) {
-            Row(Modifier.padding(horizontal = 13.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("原始录音", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text("查看本地文件并导出到系统存储", color = InkSoft, fontSize = 11.sp)
-                }
-                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = InkSoft)
-            }
-        }
+        MarkerWindowSettings(preferences)
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
                 Text("识别语言", fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -1661,6 +1619,51 @@ private fun SettingsScreen(
                 Text("包括人声检测、转写和自动 AI 总结。关闭后，已等待的任务也可在未充电时继续。开启不主动打断当前一轮；正在运行的旧任务若遇系统限制，下一轮按新设置执行。手动 AI 总结不要求充电。录音不受影响。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp))
                 policyMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp)) }
                 Text("默认本地识别，不上传音频。只有单独启用外部转文字并确认后才上传人声片段；外部总结仅发送转写文字。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(13.dp))
+            }
+        }
+        SectionTitle("存储与原音")
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+            Column(Modifier.padding(13.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    StorageValue("录音已使用", String.format(Locale.US, "%.2f", used / 1_073_741_824.0), "GB", Modifier.weight(1f))
+                    StorageValue("预计还可记录", (available / bytesPerDay).toString(), "天", Modifier.weight(1f))
+                }
+                Box(Modifier.fillMaxWidth().padding(top = 14.dp).height(10.dp).clip(CircleShape).background(Color(0xFFE3E3DF))) {
+                    Box(Modifier.fillMaxWidth((used.toFloat() / (used + available).coerceAtLeast(1)).coerceIn(0f, 1f)).fillMaxSize().clip(CircleShape).background(Green))
+                }
+                Text("连续录音约${formatBytes(bytesPerDay)}/天，剩余${formatBytes(available)}；模型和系统也占用存储。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+            }
+        }
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+            Column(Modifier.padding(13.dp)) {
+                Text("原音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0, 7, 30, 90).forEach { days ->
+                        FilterChip(selected = retentionDays == days, onClick = { retentionDays = days; preferences.setRetentionDays(days) },
+                            label = { Text(if (days == 0) "永久保留" else "${days}天", fontSize = 11.sp) })
+                    }
+                }
+                val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
+                val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)
+                Text(
+                    if (expired > 0) "${expired}段原音超过保留期：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。"
+                    else "转写完成后自动压缩原音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择“永久保留”则始终保留原声。",
+                    color = InkSoft, fontSize = 11.sp,
+                )
+            }
+        }
+        Surface(
+            Modifier.fillMaxWidth().padding(top = 13.dp).clickable(onClick = onOpenRawRecordings),
+            RoundedCornerShape(14.dp),
+            color = Color(0xFFFFFEFA),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Line),
+        ) {
+            Row(Modifier.padding(horizontal = 13.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("原始录音", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("查看本地文件并导出到系统存储", color = InkSoft, fontSize = 11.sp)
+                }
+                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = InkSoft)
             }
         }
         com.gongfpp.sonfolio.recording.BackupSettingsCard()
