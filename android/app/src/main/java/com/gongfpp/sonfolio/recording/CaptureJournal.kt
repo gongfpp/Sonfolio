@@ -36,13 +36,17 @@ internal class CaptureJournal(private val directory: File) {
     }
 
     @Synchronized fun pending(): List<CapturedChunk> = directory.listFiles().orEmpty()
-        .filter { it.name.endsWith(".capture") }.map { file ->
-            val data = Properties().apply { file.inputStream().use { load(it) } }
-            CapturedChunk(data.getProperty("id"), data.getProperty("startedAt").toLong(), data.getProperty("path"),
-                data.getProperty("sampleRate").toInt(), data.getProperty("channels").toInt(),
-                data.getProperty("endedAt")?.toLong(), data.getProperty("bytes").toLong(),
-                data.getProperty("state"), data.getProperty("error"),
-                data.getProperty("zoneId", ""), data.getProperty("offsetSeconds", "0").toInt(), data.getProperty("localStartDate", ""))
+        .filter { it.name.endsWith(".capture") }.mapNotNull { file ->
+            // 单个坏文件（旧格式、外部写入、磁盘残页）只跳过自身，
+            // 不能让整份恢复日志失效而阻断录音启动与恢复队列。
+            runCatching {
+                val data = Properties().apply { file.inputStream().use { load(it) } }
+                CapturedChunk(data.getProperty("id"), data.getProperty("startedAt").toLong(), data.getProperty("path"),
+                    data.getProperty("sampleRate").toInt(), data.getProperty("channels").toInt(),
+                    data.getProperty("endedAt")?.toLong(), data.getProperty("bytes").toLong(),
+                    data.getProperty("state"), data.getProperty("error"),
+                    data.getProperty("zoneId", ""), data.getProperty("offsetSeconds", "0").toInt(), data.getProperty("localStartDate", ""))
+            }.getOrNull()
         }.sortedBy { it.startedAt }
 
     /** Called only after the closed fact is committed. Never removes WAV files. */

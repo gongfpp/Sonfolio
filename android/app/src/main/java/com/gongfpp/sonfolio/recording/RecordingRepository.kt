@@ -289,14 +289,17 @@ class RecordingRepository(
         val cutoff = nowMillis - days * 86_400_000L
         val protectedIds = getMarkedChunkIds()
         var retired = 0
-        recordingDao.getWavRetirementCandidates(cutoff).forEach { chunk ->
-            if (chunk.id in protectedIds) return@forEach
-            val file = File(chunk.localPath)
-            // 先改元数据再删文件会丢字节引用；沿用先删文件、失败不登记的顺序。
-            withContext(kotlinx.coroutines.NonCancellable) {
-                if (!file.exists() || file.delete()) {
-                    recordingDao.markWavRetired(chunk.id)
-                    retired++
+        // 与导出/备份/清理共用同一把文件锁，避免删除与读取并发造成半成品文件。
+        audioFileMutex.withLock {
+            recordingDao.getWavRetirementCandidates(cutoff).forEach { chunk ->
+                if (chunk.id in protectedIds) return@forEach
+                val file = File(chunk.localPath)
+                // 先改元数据再删文件会丢字节引用；沿用先删文件、失败不登记的顺序。
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    if (!file.exists() || file.delete()) {
+                        recordingDao.markWavRetired(chunk.id)
+                        retired++
+                    }
                 }
             }
         }

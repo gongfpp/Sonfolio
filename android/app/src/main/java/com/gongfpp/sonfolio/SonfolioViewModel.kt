@@ -76,18 +76,27 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
                 recordingRepository.recoverDanglingChunks(skipWhenServiceRunning = true)
                 if (!RecordingService.isRunningInProcess) sonfolioApplication.preferences.clearRecordingSession()
             }
+            // 启动恢复各步骤相互独立：一步失败（如 WorkManager 异常、坏恢复日志）只跳过自身，
+            // 不允许阻断其后的队列补投递、保留策略清理与整理迁移，否则每次打开都会重复同一失败。
             // WorkManager 自行恢复被中断任务，打开页面不能重置仍在执行的任务。
-            sonfolioApplication.processingScheduler.refreshConstraints()
-            sonfolioApplication.summaryCoordinator.refreshConstraints()
-            recordingRepository.recoverOrphanedRunningStates()
-            recordingRepository.enqueuePendingVad()
-            recordingRepository.enqueuePendingAsr()
+            runCatching { sonfolioApplication.processingScheduler.refreshConstraints() }
+                .onFailure { android.util.Log.e("SonfolioViewModel", "刷新处理约束失败", it) }
+            runCatching { sonfolioApplication.summaryCoordinator.refreshConstraints() }
+                .onFailure { android.util.Log.e("SonfolioViewModel", "刷新总结约束失败", it) }
+            runCatching {
+                recordingRepository.recoverOrphanedRunningStates()
+                recordingRepository.enqueuePendingVad()
+                recordingRepository.enqueuePendingAsr()
+            }.onFailure { android.util.Log.e("SonfolioViewModel", "补投递处理队列失败", it) }
             // 压缩与保留策略是存储层面的后台整理；文字与总结永远不受影响。
-            recordingRepository.applyRetention()
-            if (sonfolioApplication.preferences.assemblyVersion < 4) {
-                repository.rebuildFromTranscripts()
-                sonfolioApplication.preferences.completeAssemblyMigration()
-            }
+            runCatching { recordingRepository.applyRetention() }
+                .onFailure { android.util.Log.e("SonfolioViewModel", "执行保留策略失败", it) }
+            runCatching {
+                if (sonfolioApplication.preferences.assemblyVersion < 4) {
+                    repository.rebuildFromTranscripts()
+                    sonfolioApplication.preferences.completeAssemblyMigration()
+                }
+            }.onFailure { android.util.Log.e("SonfolioViewModel", "整理迁移失败", it) }
         }
     }
 
