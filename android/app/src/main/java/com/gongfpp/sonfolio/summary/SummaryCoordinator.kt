@@ -59,12 +59,21 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             .setInputData(workDataOf("key" to key, "revision" to config.revision, "force" to !automatic))
             .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true)
                 .setRequiresCharging(automatic && app.preferences.chargeOnly).build())
-            .addTag(TAG).addTag("summary-key:$key").addTag("summary-revision:${config.revision}").addTag("summary-force:${!automatic}").build()
+            .addTag(TAG).addTag("summary-key:$key").addTag("summary-revision:${config.revision}").addTag("summary-force:${!automatic}")
+        if (automatic) {
+            // 持续录音时同一对话/日期会随每个新切片被反复触发；延迟并入队替换（REPLACE），
+            // 只保留静默 10 分钟后的最新一次，避免长内容被逐切片重复计费生成。
+            request.setInitialDelay(java.time.Duration.ofMinutes(10))
+        }
         // 单队列隔离于 VAD/ASR；每个任务读取执行时的最新转写，不并行加载多个语言模型。
         val waiting = if (automatic && app.preferences.chargeOnly) "等待充电后自动总结；也可取消后手动生成" else "已排队，电量正常时系统将自动继续；可取消后手动重试"
         dao.saveSummaryRun(old?.copy(state = "QUEUED", message = waiting, updatedAtMillis = System.currentTimeMillis())
             ?: SummaryRunEntity(key, source.fingerprint, config.mode.name, identity(config), null, "QUEUED", waiting, System.currentTimeMillis()))
-        work.enqueueUniqueWork("sonfolio-summary:$key", ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+        work.enqueueUniqueWork(
+            "sonfolio-summary:$key",
+            if (automatic) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.APPEND_OR_REPLACE,
+            request.build(),
+        )
         Unit
     }
 

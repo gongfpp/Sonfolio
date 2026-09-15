@@ -20,51 +20,55 @@ internal class RemoteSpeechTransport(
 ) {
     suspend fun transcribe(file: File, windows: List<DetectedSpeechWindow>, config: TranscriptionConfig,
         chunkId: String, startedAt: Long, language: String): List<String> = withContext(Dispatchers.IO) {
-        windows.map { window ->
-            ensureActive()
-            val key = store.apiKey(config, chunkId, startedAt)
-            require(window.startOffsetMillis >= 0 && window.endOffsetMillis > window.startOffsetMillis &&
-                window.endOffsetMillis - window.startOffsetMillis <= 30_000) { "人声片段超过安全上传范围，请重新检测人声" }
-            val samples = WavPcmReader.readWindow(file, 16_000, window.startOffsetMillis, window.endOffsetMillis)
-            val request = request(config, wav(samples), language)
-            coroutineScope {
-                val connection = open(URL(config.provider.endpoint))
-                val guard = launch(Dispatchers.IO) {
-                    try { store.config.first { it.revision != config.revision } }
-                    finally { connection.disconnect() }
-                }
-                try {
-                    ensureActive()
-                    check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，已停止后续上传" }
-                    connection.instanceFollowRedirects = false
-                    connection.connectTimeout = 15_000; connection.readTimeout = 60_000
-                    connection.requestMethod = "POST"; connection.doOutput = true
-                    connection.setRequestProperty("Authorization", "Bearer $key")
-                    connection.setRequestProperty("Content-Type", request.first)
-                    connection.setFixedLengthStreamingMode(request.second.size)
-                    connection.outputStream.use { it.write(request.second) }
-                    val status = connection.responseCode
-                    check(status in 200..299) { when (status) {
-                        401, 403 -> "识别密钥无效、地域不匹配或无模型权限，请检查转文字设置"
-                        429 -> "识别服务限流或额度不足，稍后在原始录音中重试"
-                        else -> "识别服务返回 HTTP $status；原音已保留，可稍后重试"
-                    } }
-                    val response = connection.inputStream.use { input ->
-                        val output = ByteArrayOutputStream(); val buffer = ByteArray(8192)
-                        while (true) {
-                            ensureActive()
-                            val count = input.read(buffer); if (count < 0) break
-                            require(output.size() + count <= 1_048_576) { "识别响应超过限制" }
-                            output.write(buffer, 0, count)
-                        }
-                        output.toString("UTF-8")
-                    }
-                    check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
-                    parse(config.provider, response)
-                } catch (error: CancellationException) { throw error }
-                catch (error: java.io.IOException) { error("识别网络中断或超时，原音已保留；重试可能再次计费") }
-                finally { guard.cancel(); connection.disconnect() }
+        windows.map { transcribeWindow(file, it, config, chunkId, startedAt, language) }
+    }
+
+    /** 上传单个 ≤30 秒的人声窗口并返回转写文字；失败只影响该窗口，由调用方决定重试范围。 */
+    suspend fun transcribeWindow(file: File, window: DetectedSpeechWindow, config: TranscriptionConfig,
+        chunkId: String, startedAt: Long, language: String): String = withContext(Dispatchers.IO) {
+        ensureActive()
+        val key = store.apiKey(config, chunkId, startedAt)
+        require(window.startOffsetMillis >= 0 && window.endOffsetMillis > window.startOffsetMillis &&
+            window.endOffsetMillis - window.startOffsetMillis <= 30_000) { "人声片段超过安全上传范围，请重新检测人声" }
+        val samples = WavPcmReader.readWindow(file, 16_000, window.startOffsetMillis, window.endOffsetMillis)
+        val request = request(config, wav(samples), language)
+        coroutineScope {
+            val connection = open(URL(config.provider.endpoint))
+            val guard = launch(Dispatchers.IO) {
+                try { store.config.first { it.revision != config.revision } }
+                finally { connection.disconnect() }
             }
+            try {
+                ensureActive()
+                check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，已停止后续上传" }
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = 15_000; connection.readTimeout = 60_000
+                connection.requestMethod = "POST"; connection.doOutput = true
+                connection.setRequestProperty("Authorization", "Bearer $key")
+                connection.setRequestProperty("Content-Type", request.first)
+                connection.setFixedLengthStreamingMode(request.second.size)
+                connection.outputStream.use { it.write(request.second) }
+                val status = connection.responseCode
+                check(status in 200..299) { when (status) {
+                    401, 403 -> "识别密钥无效、地域不匹配或无模型权限，请检查转文字设置"
+                    429 -> "识别服务限流或额度不足，稍后在原始录音中重试"
+                    else -> "识别服务返回 HTTP $status；原音已保留，可稍后重试"
+                } }
+                val response = connection.inputStream.use { input ->
+                    val output = ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                    while (true) {
+                        ensureActive()
+                        val count = input.read(buffer); if (count < 0) break
+                        require(output.size() + count <= 1_048_576) { "识别响应超过限制" }
+                        output.write(buffer, 0, count)
+                    }
+                    output.toString("UTF-8")
+                }
+                check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
+                parse(config.provider, response)
+            } catch (error: CancellationException) { throw error }
+            catch (error: java.io.IOException) { error("识别网络中断或超时，原音已保留；重试可能再次计费") }
+            finally { guard.cancel(); connection.disconnect() }
         }
     }
 
