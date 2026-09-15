@@ -10,6 +10,8 @@ import java.util.Properties
 internal data class CapturedChunk(
     val id: String, val startedAt: Long, val path: String, val sampleRate: Int, val channels: Int,
     val endedAt: Long? = null, val bytes: Long = 0, val state: String = "RECORDING", val error: String? = null,
+    /** 录音开始时的时区与偏移；日期归属属于事实数据，恢复时不得按设备时区重新解释。 */
+    val zoneId: String = "", val offsetSeconds: Int = 0, val localStartDate: String = "",
 )
 
 internal class CaptureJournal(private val directory: File) {
@@ -23,6 +25,9 @@ internal class CaptureJournal(private val directory: File) {
             setProperty("path", fact.path); setProperty("sampleRate", fact.sampleRate.toString())
             setProperty("channels", fact.channels.toString()); setProperty("bytes", fact.bytes.toString())
             setProperty("state", fact.state)
+            if (fact.zoneId.isNotEmpty()) setProperty("zoneId", fact.zoneId)
+            if (fact.offsetSeconds != 0) setProperty("offsetSeconds", fact.offsetSeconds.toString())
+            if (fact.localStartDate.isNotEmpty()) setProperty("localStartDate", fact.localStartDate)
             fact.endedAt?.let { setProperty("endedAt", it.toString()) }
             fact.error?.let { setProperty("error", it) }
         }
@@ -36,7 +41,8 @@ internal class CaptureJournal(private val directory: File) {
             CapturedChunk(data.getProperty("id"), data.getProperty("startedAt").toLong(), data.getProperty("path"),
                 data.getProperty("sampleRate").toInt(), data.getProperty("channels").toInt(),
                 data.getProperty("endedAt")?.toLong(), data.getProperty("bytes").toLong(),
-                data.getProperty("state"), data.getProperty("error"))
+                data.getProperty("state"), data.getProperty("error"),
+                data.getProperty("zoneId", ""), data.getProperty("offsetSeconds", "0").toInt(), data.getProperty("localStartDate", ""))
         }.sortedBy { it.startedAt }
 
     /** Called only after the closed fact is committed. Never removes WAV files. */

@@ -21,6 +21,20 @@ class ProcessingScheduler(context: Context) {
     private val appContext = context.applicationContext
     fun enqueueAssembly(chunkId: String) = AssemblyWorker.enqueue(appContext, chunkId)
 
+    /** 整理完成后的原音压缩；约束比 ASR 宽松，但避免低电与低存储时写入大文件。 */
+    fun enqueueCompression(chunkId: String) {
+        runCatching {
+            val request = OneTimeWorkRequestBuilder<AudioCompressionWorker>()
+                .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).setRequiresStorageNotLow(true).build())
+                .setInputData(workDataOf("chunk" to chunkId))
+                .addTag(AudioCompressionWorker.TAG)
+                .build()
+            WorkManager.getInstance(appContext).enqueueUniqueWork(
+                "sonfolio-compress-$chunkId", ExistingWorkPolicy.KEEP, request,
+            )
+        }.onFailure { Log.e("ProcessingScheduler", "无法加入压缩队列，原音保持未压缩状态", it) }
+    }
+
     /** Update persisted constraints, including requests created by older versions. Running
      * iterations finish with their current constraints; queued requests use the new policy. */
     suspend fun refreshConstraints() = withContext(Dispatchers.IO) {

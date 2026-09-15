@@ -30,7 +30,7 @@ import androidx.work.*
                 val running = info != null && !info.state.isFinished
                 Text("${model.label} · ${model.bytes / 1_000_000} MB", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Text(when {
-                    installed -> if (model == ModelCatalog.summary) "GGUF 已下载 · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) "已启用手机本地 AI" else "点击下方按钮启用"}" else "已下载，可离线转写"
+                    installed -> if (model == ModelCatalog.summary) "总结模型已下载 · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) "已启用在手机上总结" else "点击下方按钮启用"}" else "已下载，可离线转写"
                     info?.state == WorkInfo.State.RUNNING -> info.progress.getString("message") ?: "正在准备下载"
                     running -> if (info?.constraints?.requiredNetworkType == NetworkType.UNMETERED) "等待非计费网络；手机热点可能仍被系统视为计费网络" else "等待网络与系统调度"
                     info?.state == WorkInfo.State.CANCELLED -> "已取消，重新下载会尝试续传"
@@ -40,13 +40,13 @@ import androidx.work.*
                     LinearProgressIndicator(progress = { (info!!.progress.getLong("bytes", 0).toFloat() / model.bytes).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                     TextButton(onClick = { manager.cancelUniqueWork("download-model:${model.id}") }) { Text("取消下载") }
                 } else if (!installed) {
-                    OutlinedButton(onClick = { acceptedLicense = false; confirm = model }) { Text(if (model == ModelCatalog.summary) "下载使用 GGUF 模型" else "下载语音识别模型") }
+                    OutlinedButton(onClick = { acceptedLicense = false; confirm = model }) { Text(if (model == ModelCatalog.summary) "下载总结模型" else "下载语音识别模型") }
                 } else if (model == ModelCatalog.summary && summary.mode != com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) {
                     OutlinedButton(onClick = {
                         runCatching { app.summarySettings.useDownloadedModel(summary.revision) }
-                            .onSuccess { message = "已启用手机本地 AI；自动总结默认关闭，可在下方设置" }
+                            .onSuccess { message = "已启用在手机上总结；自动总结默认关闭，可在下方设置" }
                             .onFailure { message = "启用失败，请重试" }
-                    }) { Text("使用已下载的 GGUF 模型") }
+                    }) { Text("使用已下载的总结模型") }
                 }
             message?.let { Text(it, fontSize = 11.sp) }
             Text("统一保存在应用私有目录 files/models/，卸载应用会移除。模型首次下载需联网，不上传录音；下载源不可达时会报错，不会自动改用不明来源。", fontSize = 11.sp)
@@ -54,8 +54,8 @@ import androidx.work.*
     confirm?.let { model -> AlertDialog(onDismissRequest = { confirm = null },
         title = { Text("下载 ${model.bytes / 1_000_000} MB 模型？") },
         text = { Column {
-            Text("请预留模型空间及至少 512 MB 录音空间。GGUF 用于文字总结，SenseVoice 用于语音转写，互不替代。")
-            if (model == ModelCatalog.summary) Text("下载完成后启用手机本地 AI；若期间切换了总结配置，不会覆盖你的新选择。", fontSize = 12.sp)
+            Text("请预留模型空间及至少 512 MB 录音空间。总结模型用于文字总结，语音识别模型用于转写，互不替代。")
+            Text("下载完成后即可离线生成总结；若期间切换了总结配置，不会覆盖你的新选择。", fontSize = 12.sp)
             if (model == ModelCatalog.speech) {
                 Text("SenseVoice 权重受独立的 FunASR 模型许可约束，含使用限制，不属于客户端的 GPL-3.0 许可。", fontSize = 12.sp)
                 TextButton(onClick = { runCatching { uriHandler.openUri("https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE") } }) { Text("查看独立模型许可 ↗") }

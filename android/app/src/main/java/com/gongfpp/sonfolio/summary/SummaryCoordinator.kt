@@ -18,19 +18,28 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
 
     internal suspend fun input(key: String): SummaryInput {
         val snapshot = app.database.withTransaction {
+            // 日期窗口按整理该日时使用的录音时区展开，与 ConversationRepository 保持一致。
+            var dayZone: java.time.ZoneId? = null
             val rows = if (key.startsWith("day:")) {
-                val day = com.gongfpp.sonfolio.DayWindow.of(java.time.LocalDate.parse(key.removePrefix("day:")))
+                val date = java.time.LocalDate.parse(key.removePrefix("day:"))
+                val zone = dao.getDailyJournal(date.toString())?.zoneId
+                    ?.let { zoneId -> runCatching { java.time.ZoneId.of(zoneId) }.getOrNull() }
+                    ?: java.time.ZoneId.systemDefault()
+                dayZone = zone
+                val day = com.gongfpp.sonfolio.DayWindow.of(date, zone)
                 val ids = dao.getReadyRowsInWindow(day.start, day.end).mapNotNull { it.conversationId }.distinct()
                 ids.chunked(400).flatMap { dao.getReadyRowsForConversations(it) }.sortedWith(compareBy({ it.startedAtMillis }, { it.transcriptId }))
             } else {
                 dao.getReadyRowsForConversations(listOf(key.removePrefix("conversation:")))
             }
-            val day = if (key.startsWith("day:")) com.gongfpp.sonfolio.DayWindow.of(java.time.LocalDate.parse(key.removePrefix("day:"))) else null
+            val day = dayZone?.let { zone ->
+                com.gongfpp.sonfolio.DayWindow.of(java.time.LocalDate.parse(key.removePrefix("day:")), zone)
+            }
             val start = minOf(rows.minOfOrNull { it.startedAtMillis } ?: day?.start ?: 0L, day?.start ?: Long.MAX_VALUE) - 120_000
             val end = maxOf(rows.maxOfOrNull { it.endedAtMillis } ?: day?.end ?: 0L, day?.end ?: Long.MIN_VALUE) + 120_000
-            Triple(rows, app.database.recordingDao().getMarkersInWindow(start, end), app.database.recordingDao().getGapsInWindow(start, end))
+            Triple(rows, app.database.recordingDao().getMarkersInWindow(start, end), app.database.recordingDao().getGapsInWindow(start, end)) to dayZone
         }
-        return summaryInput(key, snapshot.first, snapshot.second, snapshot.third)
+        return summaryInput(key, snapshot.first.first, snapshot.first.second, snapshot.first.third, snapshot.second ?: java.time.ZoneId.systemDefault())
     }
 
     fun observe(key: String) = combine(dao.observeSummaryRun(key), dao.observeTimeline(), app.database.recordingDao().observeGaps()) { run, _, _ ->
@@ -70,7 +79,9 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         }.mapNotNull { it.conversationId }.distinct()
         val rows = ids.chunked(400).flatMap { dao.getReadyRowsForConversations(it) }
         for (id in ids) enqueue("conversation:$id", automatic = true)
-        val zone = ZoneId.systemDefault()
+        // 日期按切片录音发生时的时区归属，不随设备时区漂移。
+        val zone = chunk.recordedZoneId.takeIf { it.isNotBlank() }
+            ?.let { zoneId -> runCatching { ZoneId.of(zoneId) }.getOrNull() } ?: ZoneId.systemDefault()
         val dates = rows.filter { it.conversationId in ids }.flatMap { row ->
             val start = Instant.ofEpochMilli(row.startedAtMillis).atZone(zone).toLocalDate()
             val end = Instant.ofEpochMilli((row.endedAtMillis - 1).coerceAtLeast(row.startedAtMillis)).atZone(zone).toLocalDate()
@@ -125,7 +136,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings).generate(config, system, user) }
             SummaryMode.LOCAL -> localMutex.withLock {
                 val file = app.summarySettings.modelFile(config)
-                require(file?.isFile == true) { "请先在设置中下载 GGUF 总结模型" }
+                require(file?.isFile == true) { "请先在设置中下载总结模型" }
                 LocalSummaryTransport(app).withSession(file, block)
             }
             SummaryMode.BASIC -> error("请先在设置中选择 AI 总结方式")

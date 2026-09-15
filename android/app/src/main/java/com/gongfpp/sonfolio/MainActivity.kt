@@ -368,7 +368,7 @@ private fun TodayScreen(
         item(key = "header") {
             Text("声迹", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                if (recordingStatus.isRecording) "采集状态见下方 · 原音保存在本机" else "本地保存 · 按日期回看",
+                if (recordingStatus.isRecording) "正在记录 · 原音保存在本机" else "你的记录保存在本机 · 按日期回看",
                 color = InkSoft, fontSize = 14.sp,
             )
         }
@@ -1034,7 +1034,16 @@ private fun RealConversationScreen(
             AlertDialog(
                 onDismissRequest = { titleDraft = null },
                 title = { Text("修改对话标题") },
-                text = { OutlinedTextField(value, { value = it }, singleLine = true, label = { Text("标题（最多 30 字）") }) },
+                text = { Column {
+                    OutlinedTextField(value, { value = it }, singleLine = true, label = { Text("标题（最多 30 字）") })
+                    if (conversation?.titleOverride != null) {
+                        Text("已手工命名；后台整理不会覆盖你写的标题。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                        TextButton(onClick = {
+                            viewModel.resetConversationTitle(conversationId)
+                            titleDraft = null
+                        }) { Text("恢复自动标题", fontSize = 12.sp) }
+                    }
+                } },
                 confirmButton = { TextButton(onClick = { viewModel.updateConversationTitle(conversationId, value); titleDraft = null }) { Text("保存") } },
                 dismissButton = { TextButton(onClick = { titleDraft = null }) { Text("取消") } },
             )
@@ -1673,16 +1682,20 @@ private fun SettingsScreen(
         }
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
-                Text("原音保留提醒", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("原音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(0, 7, 30).forEach { days ->
+                    listOf(0, 7, 30, 90).forEach { days ->
                         FilterChip(selected = retentionDays == days, onClick = { retentionDays = days; preferences.setRetentionDays(days) },
                             label = { Text(if (days == 0) "永久保留" else "${days}天", fontSize = 11.sp) })
                     }
                 }
                 val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
                 val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)
-                Text(if (expired > 0) "${expired}段原音已到提醒期限，可进入原始录音查看或导出。" else "到期只提醒，由你决定如何处理原音。人声和标记目前引用同一份完整录音。", color = InkSoft, fontSize = 11.sp)
+                Text(
+                    if (expired > 0) "${expired}段原音超过保留期：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。"
+                    else "转写完成后自动压缩原音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择“永久保留”则始终保留原声。",
+                    color = InkSoft, fontSize = 11.sp,
+                )
             }
         }
         Surface(

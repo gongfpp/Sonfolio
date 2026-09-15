@@ -13,7 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class TranscriptionMode(val label: String) { LOCAL("手机本地识别"), REMOTE("外部 API 识别") }
+enum class TranscriptionMode(val label: String) { LOCAL("在手机上识别"), REMOTE("在线识别") }
 
 enum class SpeechProvider(val label: String, val endpoint: String, val models: List<String>, val keyPage: String) {
     QWEN("通义千问 · 中国内地", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", listOf("qwen3-asr-flash"), "https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),

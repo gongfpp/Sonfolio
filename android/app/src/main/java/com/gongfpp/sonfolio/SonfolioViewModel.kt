@@ -81,6 +81,8 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
             sonfolioApplication.summaryCoordinator.refreshConstraints()
             recordingRepository.enqueuePendingVad()
             recordingRepository.enqueuePendingAsr()
+            // 压缩与保留策略是存储层面的后台整理；文字与总结永远不受影响。
+            recordingRepository.applyRetention()
             if (sonfolioApplication.preferences.assemblyVersion < 4) {
                 repository.rebuildFromTranscripts()
                 sonfolioApplication.preferences.completeAssemblyMigration()
@@ -131,6 +133,10 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
 
     fun updateConversationTitle(conversationId: String, title: String) {
         viewModelScope.launch { repository.updateConversationTitle(conversationId, title) }
+    }
+
+    fun resetConversationTitle(conversationId: String) {
+        viewModelScope.launch { repository.resetConversationTitle(conversationId) }
     }
 
     fun updateConversationNote(conversationId: String, note: String?) {

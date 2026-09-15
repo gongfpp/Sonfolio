@@ -50,7 +50,7 @@ class RecordingRepository(
         for (fact in log.pending()) {
             val file = File(fact.path)
             val existing = recordingDao.getChunk(fact.id)
-            if (existing == null) beginChunk(fact.id, fact.startedAt, file, fact.sampleRate, fact.channels)
+            if (existing == null) beginChunk(fact.id, fact.startedAt, file, fact.sampleRate, fact.channels, fact.zoneId, fact.offsetSeconds, fact.localStartDate)
             if (existing?.endedAtMillis != null) { log.acknowledge(fact.id); continue }
             if (fact.endedAt == null && !recoverOpen) {
                 recordingDao.checkpoint(fact.id, file.length())
@@ -85,7 +85,8 @@ class RecordingRepository(
                     id = chunk.id,
                     startedAtMillis = chunk.startedAtMillis,
                     endedAtMillis = chunk.endedAtMillis,
-                    localPath = chunk.localPath,
+                    // 压缩音生成后即成为可播放文件；原始 WAV 只剩归档用途。
+                    localPath = chunk.compressedPath ?: chunk.localPath,
                     byteSize = chunk.byteSize,
                     processingState = chunk.processingState,
                     errorMessage = chunk.errorMessage,
@@ -104,6 +105,9 @@ class RecordingRepository(
         file: File,
         sampleRateHz: Int,
         channelCount: Int,
+        zoneId: String = "",
+        offsetSeconds: Int = 0,
+        localStartDate: String = "",
     ) {
         recordingDao.insertChunk(
             AudioChunkEntity(
@@ -116,6 +120,9 @@ class RecordingRepository(
                 channelCount = channelCount,
                 processingState = "RECORDING",
                 errorMessage = null,
+                recordedZoneId = zoneId,
+                recordedOffsetSeconds = offsetSeconds,
+                localStartDate = localStartDate,
             ),
         )
     }
@@ -237,6 +244,33 @@ class RecordingRepository(
         recordingDao.getChunksWaitingForAsr().forEach { chunk ->
             processingScheduler?.enqueueAsr(chunk.id)
         }
+        recordingDao.getChunksWaitingForCompression().forEach { chunk ->
+            processingScheduler?.enqueueCompression(chunk.id)
+        }
+    }
+
+    /**
+     * 原音保留策略：已完成压缩且超过保留期的切片，删除未压缩 WAV（文字、标记与压缩音保留）。
+     * 标记时间窗内的录音受保护；保留期为 0 表示永久保留原音。
+     */
+    suspend fun applyRetention(nowMillis: Long = System.currentTimeMillis()): Int = withContext(Dispatchers.IO) {
+        val days = preferences?.retentionDays ?: 0
+        if (days <= 0) return@withContext 0
+        val cutoff = nowMillis - days * 86_400_000L
+        val protectedIds = getMarkedChunkIds()
+        var retired = 0
+        recordingDao.getWavRetirementCandidates(cutoff).forEach { chunk ->
+            if (chunk.id in protectedIds) return@forEach
+            val file = File(chunk.localPath)
+            // 先改元数据再删文件会丢字节引用；沿用先删文件、失败不登记的顺序。
+            withContext(kotlinx.coroutines.NonCancellable) {
+                if (!file.exists() || file.delete()) {
+                    recordingDao.markWavRetired(chunk.id)
+                    retired++
+                }
+            }
+        }
+        retired
     }
 
     /**
@@ -280,11 +314,12 @@ class RecordingRepository(
                 if (chunk.id in protected || chunk.endedAtMillis == null || chunk.processingState != "ASR_READY") {
                     skipped++
                 } else {
-                    val file = File(chunk.localPath)
+                    // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。
+                    val files = listOfNotNull(File(chunk.localPath), chunk.compressedPath?.let(::File))
                     // Metadata survives a failed unlink or a crash between unlink and this update.
                     // Navigation/coroutine cancellation cannot leave a successful unlink unrecorded.
                     withContext(kotlinx.coroutines.NonCancellable) {
-                        if (!file.exists() || file.delete()) {
+                        if (files.all { !it.exists() || it.delete() }) {
                             recordingDao.markAudioDeleted(chunk.id)
                             removed++
                         } else failed++

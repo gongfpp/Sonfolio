@@ -7,6 +7,10 @@ enum class ConversationType {
     Unknown,
 }
 
+/** 展示标题：用户手工标题优先，其次才是自动生成标题。 */
+val com.gongfpp.sonfolio.data.local.ConversationEntity.displayTitle: String
+    get() = titleOverride ?: generatedTitle
+
 data class ConversationPreview(
     val id: String,
     val type: ConversationType,
@@ -19,6 +23,8 @@ data class ConversationPreview(
     val endedAtMillis: Long,
     val isMarked: Boolean = false,
     val note: String? = null,
+    /** 为空表示标题仍是自动生成的；展示标题见 title。 */
+    val titleOverride: String? = null,
 )
 
 data class TranscriptLine(

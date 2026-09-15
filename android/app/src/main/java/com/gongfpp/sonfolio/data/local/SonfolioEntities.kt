@@ -22,6 +22,15 @@ data class AudioChunkEntity(
     val channelCount: Int,
     val processingState: String,
     val errorMessage: String?,
+    /** 录音发生时的时区；日期归属以它为准，而不是之后打开 App 时的设备时区。 */
+    @androidx.room.ColumnInfo(defaultValue = "") val recordedZoneId: String = "",
+    /** 录音发生时的 UTC 偏移（秒），供无时区数据库环境追溯。 */
+    @androidx.room.ColumnInfo(defaultValue = "0") val recordedOffsetSeconds: Int = 0,
+    /** 录音发生时按 recordedZoneId 算出的当地日期（ISO），日历按它分桶。 */
+    @androidx.room.ColumnInfo(defaultValue = "") val localStartDate: String = "",
+    /** 整理完成后生成的 AAC 压缩音；为空表示尚未压缩或仅剩原音。 */
+    val compressedPath: String? = null,
+    val compressedBytes: Long? = null,
 )
 
 @Entity(
@@ -83,12 +92,17 @@ data class ConversationEntity(
     val startedAtMillis: Long,
     val endedAtMillis: Long,
     val zoneId: String,
-    val title: String,
+    /** 自动生成的标题；AI 和规则只能写这个字段，永远不覆盖用户输入。 */
+    val generatedTitle: String,
+    /** 用户手动修改过的标题；为空表示仍在使用自动标题。 */
+    val titleOverride: String? = null,
     val briefSummary: String,
     val summaryLevel: String,
     val processingState: String,
     /** 用户为这段对话写的简短备注。 */
     val note: String? = null,
+    /** 对话开始时刻按所属录音时区算出的当地日期；为空表示旧数据，按设备时区回退。 */
+    @androidx.room.ColumnInfo(defaultValue = "") val localStartDate: String = "",
 )
 
 @Entity(

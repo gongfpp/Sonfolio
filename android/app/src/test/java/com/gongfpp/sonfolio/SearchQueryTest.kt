@@ -18,10 +18,10 @@ class SearchQueryTest {
 
     @Before fun setUp() {
         database = DriverManager.getConnection("jdbc:sqlite::memory:")
-        execute("CREATE TABLE conversations(id TEXT PRIMARY KEY, title TEXT)")
+        execute("CREATE TABLE conversations(id TEXT PRIMARY KEY, generatedTitle TEXT, titleOverride TEXT, briefSummary TEXT, summaryLevel TEXT, processingState TEXT)")
         execute("CREATE TABLE transcripts(id TEXT PRIMARY KEY, conversationId TEXT, startedAtMillis INTEGER, endedAtMillis INTEGER, text TEXT, processingState TEXT)")
         execute("CREATE TABLE markers(markedAtMillis INTEGER, windowBeforeMillis INTEGER, windowAfterMillis INTEGER)")
-        execute("INSERT INTO conversations VALUES ('c', '测试主题'), ('other', '其他主题')")
+        execute("INSERT INTO conversations VALUES ('c', '测试主题', NULL, '', 'BRIEF', 'READY'), ('other', '其他主题', NULL, '', 'BRIEF', 'READY')")
     }
 
     @After fun tearDown() { database.close() }

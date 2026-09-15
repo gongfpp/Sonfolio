@@ -36,7 +36,7 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
 
     val retentionDays: Int get() = preferences.getInt("retention-days", 0)
     fun setRetentionDays(value: Int) {
-        require(value in listOf(0, 7, 30))
+        require(value in listOf(0, 7, 30, 90))
         preferences.edit().putInt("retention-days", value).apply()
     }
 

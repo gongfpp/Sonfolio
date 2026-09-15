@@ -37,7 +37,7 @@ class PublicScreenshotsTest {
                 dao.insertChunk(AudioChunkEntity(id, start, start + duration, file.path, file.length(), 16_000, 1, "ASR_READY", null))
                 dao.insertSpeechSegments(listOf(SpeechSegmentEntity("s-$id", id, 0, duration, 1f, "ASR_READY")))
                 dao.insertTranscript(TranscriptEntity("t-$id", "s-$id", id, start, start + duration, text, "zh", "演示资料", "fixture", "ASR_READY", null))
-                app.database.conversationDao().insertAll(listOf(ConversationEntity(id, "Unknown", start, start + duration, java.time.ZoneId.systemDefault().id, title, text, "BRIEF", "READY")))
+                app.database.conversationDao().insertAll(listOf(ConversationEntity(id, "Unknown", start, start + duration, java.time.ZoneId.systemDefault().id, title, null, text, "BRIEF", "READY")))
                 if (index == 0) dao.insertMarker(MarkerEntity("public-mark", start + duration, 180_000, 0, null))
             }
         }

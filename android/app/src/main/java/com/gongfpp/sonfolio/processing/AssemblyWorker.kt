@@ -19,6 +19,8 @@ class AssemblyWorker(context: Context, params: WorkerParameters) : CoroutineWork
             try { app.summaryCoordinator.enqueueForNewChunk(id) }
             catch (error: CancellationException) { throw error }
             catch (_: Exception) { dao.updateProcessingState(id, "ASR_READY", "基础整理已完成；AI 未能排队，请进入对话手动生成") }
+            // 转写完成后异步压缩原音；失败只影响存储体积，不回头影响录音与文字。
+            app.processingScheduler.enqueueCompression(id)
             Result.success()
         } catch (error: CancellationException) { throw error }
         catch (_: Exception) {

@@ -19,6 +19,8 @@ data class TranscriptAudioRow(
     @ColumnInfo(name = "chunkStartedAtMillis") val chunkStartedAtMillis: Long,
     @ColumnInfo(name = "isMarked") val isMarked: Boolean,
     @ColumnInfo(name = "originalText") val originalText: String? = null,
+    /** 所属切片录音发生时的时区；空值按设备时区回退。 */
+    @ColumnInfo(name = "recordedZoneId") val recordedZoneId: String = "",
 )
 
 data class TranscriptSearchRow(
@@ -33,12 +35,20 @@ data class TranscriptSearchRow(
 
 data class CalendarSpan(val start: Long, val end: Long, val organized: Boolean)
 
+/** 修正转写时定位受影响的时间窗与所属对话。 */
+data class TranscriptRef(
+    @ColumnInfo(name = "id") val id: String,
+    @ColumnInfo(name = "conversationId") val conversationId: String?,
+    @ColumnInfo(name = "startedAtMillis") val startedAtMillis: Long,
+    @ColumnInfo(name = "endedAtMillis") val endedAtMillis: Long,
+)
+
 @Dao
 interface ConversationDao {
     @Query("""SELECT MIN(startedAtMillis) AS `start`, MAX(COALESCE(endedAtMillis, startedAtMillis + 1)) AS `end`, 0 AS organized
-        FROM audio_chunks WHERE processingState <> 'AUDIO_DELETED' GROUP BY date(startedAtMillis / 1000, 'unixepoch', 'localtime')
+        FROM audio_chunks WHERE processingState <> 'AUDIO_DELETED' GROUP BY COALESCE(NULLIF(localStartDate, ''), date(startedAtMillis / 1000, 'unixepoch', 'localtime'))
         UNION ALL SELECT MIN(startedAtMillis) AS `start`, MAX(endedAtMillis) AS `end`, 1 AS organized
-        FROM conversations GROUP BY date(startedAtMillis / 1000, 'unixepoch', 'localtime')""")
+        FROM conversations GROUP BY COALESCE(NULLIF(localStartDate, ''), date(startedAtMillis / 1000, 'unixepoch', 'localtime'))""")
     fun observeCalendarSpans(): Flow<List<CalendarSpan>>
 
     @Query("SELECT * FROM conversations WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
@@ -74,7 +84,7 @@ interface ConversationDao {
     suspend fun deleteJournal(date: String)
 
     @Query("""SELECT t.id AS transcriptId, t.conversationId, t.startedAtMillis, t.endedAtMillis,
-        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked
+        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked, a.recordedZoneId
         FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId JOIN audio_chunks a ON a.id = s.audioChunkId
         WHERE t.processingState = 'ASR_READY' AND t.text <> '' AND t.startedAtMillis <= :end AND t.endedAtMillis >= :start
         ORDER BY t.startedAtMillis, t.id""")
@@ -86,7 +96,7 @@ interface ConversationDao {
     suspend fun getSummaryRunsForKeys(keys: List<String>): List<SummaryRunEntity>
 
     @Query("""SELECT t.id AS transcriptId, t.conversationId, t.startedAtMillis, t.endedAtMillis,
-        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked
+        t.text, t.originalText, a.localPath, a.startedAtMillis AS chunkStartedAtMillis, 0 AS isMarked, a.recordedZoneId
         FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId JOIN audio_chunks a ON a.id = s.audioChunkId
         WHERE t.processingState = 'ASR_READY' AND t.text <> '' AND t.conversationId IN (:ids)
         ORDER BY t.startedAtMillis, t.id""")
@@ -143,7 +153,8 @@ interface ConversationDao {
             t.originalText AS originalText,
             a.localPath AS localPath,
             a.startedAtMillis AS chunkStartedAtMillis,
-            0 AS isMarked
+            0 AS isMarked,
+            a.recordedZoneId
         FROM transcripts t
         JOIN speech_segments s ON s.id = t.speechSegmentId
         JOIN audio_chunks a ON a.id = s.audioChunkId
@@ -165,6 +176,7 @@ interface ConversationDao {
             t.originalText AS originalText,
             a.localPath AS localPath,
             a.startedAtMillis AS chunkStartedAtMillis,
+            a.recordedZoneId,
             CASE WHEN EXISTS (
                 SELECT 1
                 FROM transcripts seed, markers m
@@ -213,14 +225,22 @@ interface ConversationDao {
     @Query("SELECT * FROM daily_journals WHERE localDate = :localDate LIMIT 1")
     fun observeDailyJournal(localDate: String): Flow<DailyJournalEntity?>
 
+    @Query("SELECT * FROM daily_journals WHERE localDate = :localDate LIMIT 1")
+    suspend fun getDailyJournal(localDate: String): DailyJournalEntity?
+
     @Query("SELECT * FROM conversation_summaries WHERE conversationId = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :conversationId), :conversationId) LIMIT 1")
     fun observeConversationSummary(conversationId: String): Flow<ConversationSummaryEntity?>
 
     @Query("SELECT * FROM conversations WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id) LIMIT 1")
     suspend fun getConversation(id: String): ConversationEntity?
 
-    @Query("UPDATE conversations SET title = :title WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
+    /** 用户修改标题写入 titleOverride；自动生成的 generatedTitle 不被触碰。 */
+    @Query("UPDATE conversations SET titleOverride = :title WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
     suspend fun updateConversationTitle(id: String, title: String)
+
+    /** 用户放弃手工标题，回到自动标题。 */
+    @Query("UPDATE conversations SET titleOverride = NULL WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
+    suspend fun resetConversationTitle(id: String)
 
     @Query("UPDATE conversations SET note = :note WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
     suspend fun updateConversationNote(id: String, note: String?)
@@ -228,6 +248,9 @@ interface ConversationDao {
     /** 修正转写：首次修正时把原文字存进 originalText，之后只改 text，原始版本始终保留。 */
     @Query("UPDATE transcripts SET originalText = CASE WHEN originalText IS NULL THEN text ELSE originalText END, text = :text WHERE id = :id")
     suspend fun updateTranscriptText(id: String, text: String)
+
+    @Query("SELECT id, conversationId, startedAtMillis, endedAtMillis FROM transcripts WHERE id = :id LIMIT 1")
+    suspend fun getTranscriptWindow(id: String): TranscriptRef?
 
     /** 撤销标记：删除时间窗与这段对话重叠的标记。 */
     @Query("DELETE FROM markers WHERE markedAtMillis + windowAfterMillis >= :start AND markedAtMillis - windowBeforeMillis <= :end")

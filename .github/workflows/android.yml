@@ -39,6 +39,8 @@ jobs:
       - name: Unit tests, lint and unsigned build
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease
+      - name: APK content check
+        run: node scripts/release-check.mjs android/app/build/outputs/apk/release/app-release.apk
       - name: Preserve reports
         if: always()
         uses: actions/upload-artifact@v4

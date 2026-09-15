@@ -31,8 +31,23 @@ interface RecordingDao {
     @Query("SELECT * FROM markers WHERE markedAtMillis - windowBeforeMillis <= :end AND markedAtMillis + windowAfterMillis >= :start ORDER BY markedAtMillis")
     suspend fun getMarkersInWindow(start: Long, end: Long): List<MarkerEntity>
 
-    @Query("UPDATE audio_chunks SET byteSize = 0, processingState = 'AUDIO_DELETED', errorMessage = NULL WHERE id = :id AND endedAtMillis IS NOT NULL")
+    @Query("UPDATE audio_chunks SET byteSize = 0, localPath = '', compressedPath = NULL, compressedBytes = NULL, processingState = 'AUDIO_DELETED', errorMessage = NULL WHERE id = :id AND endedAtMillis IS NOT NULL")
     suspend fun markAudioDeleted(id: String)
+
+    @Query("""SELECT * FROM audio_chunks WHERE processingState = 'ASR_READY' AND compressedPath IS NULL
+        AND localPath <> '' AND endedAtMillis IS NOT NULL ORDER BY startedAtMillis ASC""")
+    suspend fun getChunksWaitingForCompression(): List<AudioChunkEntity>
+
+    @Query("UPDATE audio_chunks SET compressedPath = :path, compressedBytes = :bytes WHERE id = :id AND compressedPath IS NULL AND processingState = 'ASR_READY'")
+    suspend fun setCompressedAudio(id: String, path: String, bytes: Long): Int
+
+    /** 原始 WAV 已按保留策略删除；压缩音继续保留，文字不受影响。 */
+    @Query("UPDATE audio_chunks SET byteSize = 0, localPath = '' WHERE id = :id AND compressedPath IS NOT NULL AND localPath <> ''")
+    suspend fun markWavRetired(id: String)
+
+    @Query("""SELECT * FROM audio_chunks WHERE processingState = 'ASR_READY' AND compressedPath IS NOT NULL
+        AND localPath <> '' AND endedAtMillis IS NOT NULL AND endedAtMillis < :cutoff ORDER BY startedAtMillis ASC""")
+    suspend fun getWavRetirementCandidates(cutoff: Long): List<AudioChunkEntity>
 
     @Query("""SELECT DISTINCT s.audioChunkId FROM speech_segments s JOIN transcripts t ON t.speechSegmentId = s.id
         WHERE t.conversationId IS NOT NULL AND EXISTS (
@@ -82,10 +97,10 @@ interface RecordingDao {
     @Query("SELECT COUNT(*) FROM audio_chunks WHERE processingState <> 'AUDIO_DELETED' AND startedAtMillis < :end AND COALESCE(endedAtMillis, startedAtMillis + MAX(byteSize - 44, 0) * 1000 / (sampleRateHz * channelCount * 2)) >= :start")
     fun observeChunkCount(start: Long, end: Long): Flow<Int>
 
-    @Query("SELECT COALESCE(SUM(byteSize), 0) FROM audio_chunks")
+    @Query("SELECT COALESCE(SUM(byteSize + COALESCE(compressedBytes, 0)), 0) FROM audio_chunks")
     fun observeStorageBytes(): Flow<Long>
 
-    @Query("SELECT COUNT(*) FROM audio_chunks WHERE endedAtMillis < :before AND processingState <> 'AUDIO_DELETED'")
+    @Query("SELECT COUNT(*) FROM audio_chunks WHERE endedAtMillis < :before AND processingState <> 'AUDIO_DELETED' AND compressedPath IS NULL AND localPath <> ''")
     fun observeExpiredCount(before: Long): Flow<Int>
 
     @Query("""SELECT a.id FROM audio_chunks a WHERE a.processingState = 'ASR_READY'

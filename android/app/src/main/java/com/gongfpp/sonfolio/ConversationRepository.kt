@@ -53,25 +53,49 @@ class ConversationRepository(
     /** CPU work is outside the writer transaction. Normal chunk updates only inspect the
      * affected local days and continuous conversations crossing their boundaries. */
     private suspend fun rebuildRegion(startedAt: Long?, endedAt: Long?): Boolean {
-        val zone = ZoneId.systemDefault()
-        var rangeStart = startedAt?.let { DayWindow.of(Instant.ofEpochMilli(it).atZone(zone).toLocalDate(), zone).start } ?: Long.MIN_VALUE
-        var rangeEnd = endedAt?.let { DayWindow.of(Instant.ofEpochMilli(it).atZone(zone).toLocalDate(), zone).end } ?: Long.MAX_VALUE
-        if (startedAt != null && endedAt != null) {
+        val fallbackZone = ZoneId.systemDefault()
+        /** 日期归属属于事实数据：优先使用录音发生时的时区，历史空值才回退设备时区。 */
+        fun rowZone(row: TranscriptAudioRow): ZoneId = runCatching { ZoneId.of(row.recordedZoneId) }.getOrNull() ?: fallbackZone
+        suspend fun expandToCompleteDays(start: Long, end: Long, zone: ZoneId): Pair<Long, Long> {
+            var rangeStart = start
+            var rangeEnd = end
             while (true) {
                 val neighbors = conversationDao.getReadyRowsInWindow(rangeStart - MERGE_GAP_MILLIS, rangeEnd + MERGE_GAP_MILLIS)
                 val previous = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
-                val start = minOf(rangeStart, neighbors.minOfOrNull { it.startedAtMillis } ?: rangeStart, previous.minOfOrNull { it.startedAtMillis } ?: rangeStart)
-                val end = maxOf(rangeEnd, neighbors.maxOfOrNull { it.endedAtMillis } ?: rangeEnd, previous.maxOfOrNull { it.endedAtMillis } ?: rangeEnd)
+                val first = minOf(rangeStart, neighbors.minOfOrNull { it.startedAtMillis } ?: rangeStart, previous.minOfOrNull { it.startedAtMillis } ?: rangeStart)
+                val last = maxOf(rangeEnd, neighbors.maxOfOrNull { it.endedAtMillis } ?: rangeEnd, previous.maxOfOrNull { it.endedAtMillis } ?: rangeEnd)
                 // Include complete days so daily summaries never lose unaffected conversations.
-                val nextStart = DayWindow.of(Instant.ofEpochMilli(start).atZone(zone).toLocalDate(), zone).start
-                val nextEnd = DayWindow.of(Instant.ofEpochMilli(end - 1).atZone(zone).toLocalDate(), zone).end
+                val nextStart = DayWindow.of(Instant.ofEpochMilli(first).atZone(zone).toLocalDate(), zone).start
+                val nextEnd = DayWindow.of(Instant.ofEpochMilli(last - 1).atZone(zone).toLocalDate(), zone).end
                 if (rangeStart == nextStart && rangeEnd == nextEnd) break
                 rangeStart = nextStart; rangeEnd = nextEnd
             }
+            return rangeStart to rangeEnd
+        }
+        var rangeStart = startedAt?.let { DayWindow.of(Instant.ofEpochMilli(it).atZone(fallbackZone).toLocalDate(), fallbackZone).start } ?: Long.MIN_VALUE
+        var rangeEnd = endedAt?.let { DayWindow.of(Instant.ofEpochMilli(it).atZone(fallbackZone).toLocalDate(), fallbackZone).end } ?: Long.MAX_VALUE
+        var zone = fallbackZone
+        if (startedAt != null && endedAt != null) {
+            val bounds = expandToCompleteDays(rangeStart, rangeEnd, fallbackZone)
+            rangeStart = bounds.first; rangeEnd = bounds.second
+            // 找到受影响区间实际的录音时区，再用它重新对齐完整天窗口。
+            zone = conversationDao.getReadyRowsInWindow(rangeStart, rangeEnd).asSequence().map(::rowZone).firstOrNull() ?: fallbackZone
+            if (zone != fallbackZone) {
+                val rebase = expandToCompleteDays(
+                    DayWindow.of(Instant.ofEpochMilli(startedAt).atZone(zone).toLocalDate(), zone).start,
+                    DayWindow.of(Instant.ofEpochMilli(endedAt).atZone(zone).toLocalDate(), zone).end,
+                    zone,
+                )
+                rangeStart = rebase.first; rangeEnd = rebase.second
+            }
+        } else if (startedAt == null && endedAt == null) {
+            zone = conversationDao.getReadyRowsInWindow(rangeStart, rangeEnd).asSequence().map(::rowZone).firstOrNull() ?: fallbackZone
         }
         val rows = conversationDao.getReadyRowsInWindow(rangeStart, rangeEnd)
         val gaps = database.recordingDao().getGapsInWindow(rangeStart, rangeEnd)
         val oldEntities = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
+        // 重建只允许写自动生成字段；用户标题与备注从这里原样带回。
+        val oldById = oldEntities.associateBy { it.id }
         val summaryKeys = if (startedAt == null || endedAt == null) null else {
             val firstDay = Instant.ofEpochMilli(rangeStart).atZone(zone).toLocalDate()
             val lastDay = Instant.ofEpochMilli(rangeEnd - 1).atZone(zone).toLocalDate()
@@ -119,16 +143,24 @@ class ConversationRepository(
             usedIds += id
             val summary = summaries.getValue(group.first().transcriptId)
             val ai = cached("conversation:$id", group.map { it.copy(conversationId = id) })
+            // 用户数据所有权：本组原对话的用户标题/备注优先保留；合并时从并入的对话继承。
+            val olds = group.mapNotNull { row -> row.conversationId?.let(oldById::get) }.distinctBy { it.id }
+            val survivor = olds.firstOrNull { it.id == id }
+            val inherited = olds.filter { it.id != id }
+            val groupZone = rowZone(group.first())
             ConversationEntity(
                 id = id,
                 kind = ConversationType.Unknown.name,
                 startedAtMillis = start,
                 endedAtMillis = end,
-                zoneId = zone.id,
-                title = ai?.title ?: summary.title,
+                zoneId = groupZone.id,
+                generatedTitle = ai?.title ?: summary.title,
+                titleOverride = survivor?.titleOverride ?: inherited.firstNotNullOfOrNull { it.titleOverride },
                 briefSummary = ai?.brief ?: summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
                 processingState = "READY",
+                note = survivor?.note ?: inherited.firstNotNullOfOrNull { it.note },
+                localStartDate = Instant.ofEpochMilli(start).atZone(groupZone).toLocalDate().toString(),
             )
         }
         val newSummaries = (
@@ -154,7 +186,9 @@ class ConversationRepository(
 
         val groupsByDate = transcriptGroupsByDate(visibleGroups, zone)
         val newJournals = groupsByDate.map { (date, dateGroups) ->
-            val dayWindow = DayWindow.of(date, zone)
+            // 当天跨时区时，日期的时区取当天第一行所属录音的时区。
+            val dayZone = dateGroups.asSequence().flatMap { it.asSequence() }.map(::rowZone).firstOrNull() ?: zone
+            val dayWindow = DayWindow.of(date, dayZone)
             val daySummaries = dateGroups.associate { group -> group.first().transcriptId to LocalSummaryEngine.summarize(group.map { it.text }) }
             val linkedRows = visibleGroups.zip(entities).flatMap { (group, entity) -> group.map { it.copy(conversationId = entity.id) } }
             val ai = cached("day:$date", linkedRows)
@@ -163,10 +197,10 @@ class ConversationRepository(
                 DailyJournalEntity(
                     id = "journal-$date",
                     localDate = date.toString(),
-                    zoneId = zone.id,
+                    zoneId = dayZone.id,
                     narrative = ai?.brief ?: (if (gaps.any { dayWindow.overlaps(it.startedAtMillis, it.endedAtMillis ?: Long.MAX_VALUE) })
                         "本日存在录音缺口，以下仅根据已保存的内容整理，不代表完整经历。\n\n" else "") + dateGroups.joinToString("\n\n") { group ->
-                        val time = Instant.ofEpochMilli(maxOf(group.first().startedAtMillis, dayWindow.start)).atZone(zone)
+                        val time = Instant.ofEpochMilli(maxOf(group.first().startedAtMillis, dayWindow.start)).atZone(dayZone)
                             .format(DateTimeFormatter.ofPattern("HH:mm"))
                         val crossDay = if (group.any { it.startedAtMillis < dayWindow.start || it.endedAtMillis > dayWindow.end }) "跨日内容 · " else ""
                         "$time · $crossDay${daySummaries.getValue(group.first().transcriptId).brief}"
@@ -186,8 +220,9 @@ class ConversationRepository(
                 .map { com.gongfpp.sonfolio.data.local.ConversationAliasEntity(it, entity.id) }
         }.distinctBy { it.oldId }
         val affectedDates = oldEntities.flatMap { entity ->
-            val start = Instant.ofEpochMilli(entity.startedAtMillis).atZone(zone).toLocalDate()
-            val end = Instant.ofEpochMilli((entity.endedAtMillis - 1).coerceAtLeast(entity.startedAtMillis)).atZone(zone).toLocalDate()
+            val entityZone = runCatching { ZoneId.of(entity.zoneId) }.getOrDefault(zone)
+            val start = Instant.ofEpochMilli(entity.startedAtMillis).atZone(entityZone).toLocalDate()
+            val end = Instant.ofEpochMilli((entity.endedAtMillis - 1).coerceAtLeast(entity.startedAtMillis)).atZone(entityZone).toLocalDate()
             generateSequence(start) { it.plusDays(1) }.takeWhile { it <= end }.map { it.toString() }.toList()
         }.toSet()
         return database.withTransaction {
@@ -197,7 +232,6 @@ class ConversationRepository(
                 markers != database.recordingDao().getMarkersInWindow(rangeStart, rangeEnd) ||
                 aiRuns != scopedSummaryRuns() ||
                 filterSnapshot != (preferences.minimumSpeechSeconds to preferences.minimumTextCharacters)) return@withTransaction false
-            val oldById = oldEntities.associateBy { it.id }
             // A previously merged ID can reappear after a split/filter change. A live ID must
             // never redirect to another conversation through an obsolete alias.
             entities.map { it.id }.chunked(400).forEach { conversationDao.removeAliasesForCanonicalIds(it) }
@@ -269,11 +303,16 @@ class ConversationRepository(
     fun observeConversationSummary(conversationId: String): Flow<ConversationSummaryEntity?> =
         conversationDao.observeConversationSummary(conversationId)
 
-    /** 用户修改对话标题（去掉首尾空白，限 30 字）。 */
+    /** 用户修改对话标题（去掉首尾空白，限 30 字）；写入 titleOverride，自动标题不被触碰。 */
     suspend fun updateConversationTitle(conversationId: String, title: String) {
         val trimmed = title.trim().take(30)
         if (trimmed.isEmpty()) return
         conversationDao.updateConversationTitle(conversationId, trimmed)
+    }
+
+    /** 用户放弃手工标题，回到自动生成标题。 */
+    suspend fun resetConversationTitle(conversationId: String) {
+        conversationDao.resetConversationTitle(conversationId)
     }
 
     /** 用户写/清空简短备注（限 200 字）。 */
@@ -288,11 +327,37 @@ class ConversationRepository(
         conversationDao.deleteMarkersOverlapping(conversation.startedAtMillis, conversation.endedAtMillis)
     }
 
-    /** 修正单条转写文字；原始识别版本会被保留在 originalText。 */
+    /**
+     * 修正单条转写文字；原始识别版本保留在 originalText。
+     * 修正是对原始记录的编辑，派生数据必须同步失效：重建受影响区间的基础小结与每日回顾，
+     * 并把关联的 AI 总结标记为 STALE，防止“原文改了，总结还是旧的”。
+     */
     suspend fun updateTranscriptText(transcriptId: String, text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
+        val row = conversationDao.getTranscriptWindow(transcriptId) ?: return
         conversationDao.updateTranscriptText(transcriptId, trimmed)
+        val zone = ZoneId.systemDefault()
+        val keys = buildSet {
+            row.conversationId?.let { raw -> add("conversation:${conversationDao.resolveAlias(raw) ?: raw}") }
+            val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(zone).toLocalDate()
+            val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(zone).toLocalDate()
+            generateSequence(first) { it.plusDays(1) }.takeWhile { it <= last }.forEach { add("day:$it") }
+        }
+        keys.forEach { key ->
+            val run = conversationDao.getSummaryRun(key) ?: return@forEach
+            if (run.state !in listOf("QUEUED", "RUNNING")) {
+                conversationDao.updateSummaryRun(key, "STALE", "转写已修正，请重新生成 AI 总结", System.currentTimeMillis())
+            }
+        }
+        try {
+            rebuildFromTranscripts(row.startedAtMillis, row.endedAtMillis)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // 文字已保存；整理遇到并发更新失败时留给下一次整理合并，不吞掉已确认的用户输入。
+            android.util.Log.e("ConversationRepository", "转写修正后的整理未完成，待下次合并", error)
+        }
     }
 }
 
@@ -337,7 +402,7 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         id = id,
         type = type,
         time = start.format(DateTimeFormatter.ofPattern("M月d日 HH:mm")),
-        title = title,
+        title = displayTitle,
         duration = durationLabel,
         summary = briefSummary,
         summaryLevel = summaryLevel,
@@ -345,5 +410,6 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         endedAtMillis = endedAtMillis,
         isMarked = isMarked,
         note = note,
+        titleOverride = titleOverride,
     )
 }

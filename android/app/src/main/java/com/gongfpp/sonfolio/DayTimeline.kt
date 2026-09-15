@@ -25,10 +25,14 @@ internal data class DayWindow(val start: Long, val end: Long) {
     }
 }
 
+/** WAV 仍在时按已保存字节数计时（墙钟可能包含缺口）；原始 WAV 已按保留策略删除时，
+ * byteSize 归零，退回数据库的结束时间。 */
 internal fun AudioChunkPreview.savedEndMillis(): Long {
     val bytesPerSecond = sampleRateHz.toLong() * channelCount * 2L
-    val duration = if (bytesPerSecond > 0) (byteSize - 44L).coerceAtLeast(0L) * 1_000L / bytesPerSecond else 0L
-    return startedAtMillis + duration
+    if (byteSize > 44L && bytesPerSecond > 0) {
+        return startedAtMillis + (byteSize - 44L).coerceAtLeast(0L) * 1_000L / bytesPerSecond
+    }
+    return endedAtMillis ?: startedAtMillis
 }
 
 internal data class DayTimeline(
@@ -78,14 +82,16 @@ private fun unionDuration(ranges: List<LongRange>): Long {
 
 internal fun localDateAt(millis: Long): LocalDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 
-/** 一句话无法按午夜切开文字，所以在相交的两天保留该句，由回顾注明跨日。 */
+/** 一句话无法按午夜切开文字，所以在相交的两天保留该句，由回顾注明跨日。
+ * 日期归属优先使用该行录音发生时的时区（recordedZoneId），fallback 只用于历史空值。 */
 internal fun transcriptGroupsByDate(
     groups: List<List<TranscriptAudioRow>>,
     zone: ZoneId,
 ): Map<LocalDate, List<List<TranscriptAudioRow>>> = groups.flatMap { group ->
     group.flatMap { row ->
-        val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(zone).toLocalDate()
-        val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(zone).toLocalDate()
+        val rowZone = runCatching { ZoneId.of(row.recordedZoneId) }.getOrNull() ?: zone
+        val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(rowZone).toLocalDate()
+        val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(rowZone).toLocalDate()
         generateSequence(first) { it.plusDays(1) }.takeWhile { it <= last }.map { it to row }.toList()
     }.groupBy({ it.first }, { it.second }).toList()
 }.groupBy({ it.first }, { it.second })
