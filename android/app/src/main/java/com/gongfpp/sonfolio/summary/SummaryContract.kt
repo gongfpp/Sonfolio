@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class SummaryMode(val label: String) {
-    BASIC("本地基础整理"), LOCAL("手机本地 AI"), REMOTE("外部 API"),
+    BASIC("在手机上总结（基础）"), LOCAL("在手机上总结"), REMOTE("在线总结"),
 }
 
 data class SummaryConfig(

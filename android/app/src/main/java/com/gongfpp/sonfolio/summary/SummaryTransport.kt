@@ -51,7 +51,7 @@ internal class RemoteSummaryTransport(
                 conn.outputStream.use { it.write(request.toString().toByteArray(Charsets.UTF_8)) }
                 verifyTransport(conn.responseCode in 200..299) {
                     when (conn.responseCode) {
-                        401, 403 -> "API Key 无效或没有权限"
+                        401, 403 -> "服务密钥无效或没有权限"
                         429 -> "模型服务限流或额度不足，请稍后手动重试"
                         in 300..399 -> "接口发生重定向，请填写最终 HTTPS 地址"
                         else -> "模型服务请求失败（HTTP ${conn.responseCode}），请检查接口和模型名称"

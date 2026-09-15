@@ -41,7 +41,7 @@ import kotlinx.coroutines.*
     Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("转文字方式", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text("当前：${saved.mode.label}${if (saved.mode == TranscriptionMode.REMOTE) " · ${saved.provider.label}" else " · SenseVoice"}。录音始终先保存在本机；识别失败不影响录音。", fontSize = 12.sp)
+            Text("当前：${saved.mode.label}${if (saved.mode == TranscriptionMode.REMOTE) " · ${saved.provider.label}" else " · 本机识别"}。录音始终先保存在本机；识别失败不影响录音。", fontSize = 12.sp)
             TranscriptionMode.entries.forEach { option ->
                 Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { mode = option }, verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(mode == option, onClick = null)
@@ -64,18 +64,22 @@ import kotlinx.coroutines.*
                         }) }
                     }
                 }
-                Box {
-                    OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("语音模型：$model ▾") }
-                    DropdownMenu(modelMenu, { modelMenu = false }) {
-                        provider.models.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { model = option; modelMenu = false }) }
-                    }
-                }
-                Text("内置官方文档中的语音模型，不是聊天总结模型。${if (provider == SpeechProvider.QWEN) "使用北京地域 API Key，支持下方主要语言设置。" else "此提供商自动判断语言，不支持强制主要语言。"}", fontSize = 11.sp)
                 OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
-                    label = { Text(if (saved.hasKey && provider == saved.provider) "识别 API Key（已保存，留空保留）" else "识别 API Key") },
+                    label = { Text(if (saved.hasKey && provider == saved.provider) "识别密钥（已保存，留空保留）" else "识别密钥") },
                     trailingIcon = { IconButton(onClick = { keyHelp = true }) { Text("？") } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), visualTransformation = PasswordVisualTransformation())
-                TextButton(onClick = { runCatching { uriHandler.openUri(provider.keyPage) }.onFailure { message = "无法打开浏览器，请到提供商官网创建 API Key" } }) { Text("获取 ${provider.label} API Key ↗") }
+                TextButton(onClick = { runCatching { uriHandler.openUri(provider.keyPage) }.onFailure { message = "无法打开浏览器，请到提供商官网创建识别密钥" } }) { Text("获取 ${provider.label} 识别密钥 ↗") }
+                var advancedModel by remember { mutableStateOf(false) }
+                TextButton(onClick = { advancedModel = !advancedModel }) { Text("高级：选择识别模型") }
+                if (advancedModel) {
+                    Box {
+                        OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("语音模型：$model ▾") }
+                        DropdownMenu(modelMenu, { modelMenu = false }) {
+                            provider.models.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { model = option; modelMenu = false }) }
+                        }
+                    }
+                    Text("内置官方文档中的语音模型，不是聊天总结模型。${if (provider == SpeechProvider.QWEN) "使用北京地域密钥，支持下方主要语言设置。" else "此提供商自动判断语言，不支持强制主要语言。"}", fontSize = 11.sp)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(consent, { consent = it }, enabled = !busy)
                     Text("我同意将保存设置之后开始的录音中的人声音频上传至上述提供商，并承担可能的流量和调用费用。", fontSize = 12.sp)
@@ -108,7 +112,7 @@ import kotlinx.coroutines.*
             message?.let { Text(it, fontSize = 12.sp) }
         }
     }
-    if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("如何获取识别 API Key") },
-        text = { Text("点击卡片中的“获取 API Key”进入官方控制台，登录并创建密钥，再粘贴到此处。密钥不是聊天 App 的密码，只在本机加密保存；请勿分享或公开截图。各提供商、各地域的密钥不能混用，请在官方设置费用限额。") },
+    if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("如何获取识别密钥") },
+        text = { Text("点击卡片中的“获取识别密钥”进入官方控制台，登录并创建密钥，再粘贴到此处。密钥不是聊天 App 的密码，只在本机加密保存；请勿分享或公开截图。各提供商、各地域的密钥不能混用，请在官方设置费用限额。") },
         confirmButton = { TextButton(onClick = { keyHelp = false }) { Text("知道了") } })
 }

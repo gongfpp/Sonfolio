@@ -136,7 +136,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings).generate(config, system, user) }
             SummaryMode.LOCAL -> localMutex.withLock {
                 val file = app.summarySettings.modelFile(config)
-                require(file?.isFile == true) { "请先在设置中下载 GGUF 总结模型" }
+                require(file?.isFile == true) { "请先在设置中下载总结模型" }
                 LocalSummaryTransport(app).withSession(file, block)
             }
             SummaryMode.BASIC -> error("请先在设置中选择 AI 总结方式")

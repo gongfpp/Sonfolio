@@ -368,7 +368,7 @@ private fun TodayScreen(
         item(key = "header") {
             Text("声迹", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                if (recordingStatus.isRecording) "采集状态见下方 · 原音保存在本机" else "本地保存 · 按日期回看",
+                if (recordingStatus.isRecording) "正在记录 · 原音保存在本机" else "你的记录保存在本机 · 按日期回看",
                 color = InkSoft, fontSize = 14.sp,
             )
         }
