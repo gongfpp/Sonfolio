@@ -50,9 +50,9 @@ class ConversationEditIntegrationTest {
             dao.insertMarker(MarkerEntity("mark", base + 500, 1_000, 0, null))
             repository.rebuildFromTranscripts()
             assertTrue(repository.observeTimeline().first().single().isMarked)
-            // 再次 rebuild 后用户数据依然完好
+            // 再次 rebuild 后用户数据依然完好：标题保留，已清空的备注不得被带回
             assertEquals("投产准备", repository.observeConversation(id).first()?.titleOverride)
-            assertEquals("记得核对回滚", repository.observeConversation(id).first()?.note)
+            assertNull(repository.observeConversation(id).first()?.note)
             repository.removeMarkerForConversation(id)
             assertFalse(repository.observeTimeline().first().single().isMarked)
 

@@ -61,7 +61,8 @@ internal class MemoryBackup(private val context: Context, private val database: 
             require(!row.isNull("endedAtMillis")) { "仍有录音未收尾，请返回首页恢复现场后再备份" }
             val id = safeId(row.getString("id"))
             val wavPath = row.getString("localPath")
-            val compressedPath = row.optString("compressedPath").takeIf { it.isNotBlank() }
+            // JSONObject.NULL 经 optString 会变成字面量 "null"；必须先判断 isNull。
+            val compressedPath = if (row.isNull("compressedPath")) null else row.optString("compressedPath").takeIf { it.isNotBlank() }
             if (row.getString("processingState") != "AUDIO_DELETED") {
                 when {
                     wavPath.isNotBlank() && File(wavPath).isFile -> {
@@ -130,14 +131,18 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     val row = chunks.getJSONObject(index)
                     val id = safeId(row.getString("id"))
                     require(ids.add(id) && !row.isNull("endedAtMillis")) { "备份包含重复或未完成的录音" }
-                    // 压缩音与原始 WAV 都可能成为备份中的可播放文件，扩展名以清单为准。
-                    val extension = if (row.optString("compressedPath").length > 0 && row.optString("localPath").isEmpty()) "m4a" else "wav"
+                    // 备份中可播放文件的扩展名以清单条目为准（wav 或 m4a）。
+                    val extension = if (row.optString("backupAudio", "").endsWith(".m4a")) "m4a" else "wav"
                     val file = File(directory, "$id.$extension")
                     row.put("localPath", if (extension == "wav") file.path else "")
                     if (extension == "m4a") row.put("compressedPath", file.path)
                     if (row.getString("processingState") != "AUDIO_DELETED") {
                         require(row.getString("backupAudio") == "audio/$id.$extension" && row.getLong("backupBytes") >= 44) { "原音清单无效" }
                         expected[row.getString("backupAudio")] = row
+                    } else {
+                        // 已清理的切片不指向任何存在的文件。
+                        row.put("localPath", "")
+                        if (!row.isNull("compressedPath")) row.put("compressedPath", "")
                     }
                 }
                 val required = expected.values.fold(0L) { total, row -> Math.addExact(total, row.getLong("backupBytes")) }
