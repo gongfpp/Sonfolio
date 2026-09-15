@@ -42,9 +42,6 @@ internal data class DayTimeline(
     val savedMillis: Long,
     val gapMillis: Long,
 ) {
-    val failedCount get() = chunks.count { it.processingState.endsWith("FAILED") }
-    val pendingCount get() = chunks.count { it.processingState !in setOf("ASR_READY", "AUDIO_DELETED", "RECORDING") && !it.processingState.endsWith("FAILED") }
-
     companion object {
         fun build(
             date: LocalDate,

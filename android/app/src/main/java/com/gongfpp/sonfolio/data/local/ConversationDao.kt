@@ -153,29 +153,6 @@ interface ConversationDao {
             t.originalText AS originalText,
             a.localPath AS localPath,
             a.startedAtMillis AS chunkStartedAtMillis,
-            0 AS isMarked,
-            a.recordedZoneId
-        FROM transcripts t
-        JOIN speech_segments s ON s.id = t.speechSegmentId
-        JOIN audio_chunks a ON a.id = s.audioChunkId
-        WHERE t.processingState = 'ASR_READY'
-          AND t.text <> ''
-        ORDER BY t.startedAtMillis ASC, t.id ASC
-        """,
-    )
-    suspend fun getReadyTranscriptRows(): List<TranscriptAudioRow>
-
-    @Query(
-        """
-        SELECT
-            t.id AS transcriptId,
-            t.conversationId AS conversationId,
-            t.startedAtMillis AS startedAtMillis,
-            t.endedAtMillis AS endedAtMillis,
-            t.text AS text,
-            t.originalText AS originalText,
-            a.localPath AS localPath,
-            a.startedAtMillis AS chunkStartedAtMillis,
             a.recordedZoneId,
             CASE WHEN EXISTS (
                 SELECT 1
@@ -194,18 +171,6 @@ interface ConversationDao {
         """,
     )
     fun observeTranscriptRows(conversationId: String): Flow<List<TranscriptAudioRow>>
-
-    @Query("UPDATE transcripts SET conversationId = NULL WHERE conversationId LIKE 'auto-%'")
-    suspend fun clearGeneratedConversationLinks()
-
-    @Query("DELETE FROM conversations WHERE id LIKE 'auto-%'")
-    suspend fun deleteGeneratedConversations()
-
-    @Query("DELETE FROM conversations WHERE id LIKE 'demo-%'")
-    suspend fun deleteDemoConversations()
-
-    @Query("DELETE FROM daily_journals WHERE id LIKE 'journal-%'")
-    suspend fun deleteGeneratedDailyJournals()
 
     @Query("UPDATE transcripts SET conversationId = :conversationId WHERE id = :transcriptId")
     suspend fun attachTranscript(transcriptId: String, conversationId: String)

@@ -87,7 +87,6 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
                 repository.rebuildFromTranscripts()
                 sonfolioApplication.preferences.completeAssemblyMigration()
             }
-            sonfolioApplication.database.conversationDao().deleteDemoConversations()
         }
     }
 

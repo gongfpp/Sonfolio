@@ -71,7 +71,6 @@ class RecordingRepository(
             RecordingStatus(
                 isRecording = health.serviceActive,
                 startedAtMillis = if (health.serviceActive) preferences?.recordingSessionStartedAtMillis ?: chunk?.startedAtMillis else chunk?.startedAtMillis,
-                activeChunkId = chunk?.id,
                 health = health,
                 interruptionPending = gaps.any { it.endedAtMillis == null },
             )

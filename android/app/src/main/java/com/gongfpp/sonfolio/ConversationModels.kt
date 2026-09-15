@@ -1,19 +1,11 @@
 package com.gongfpp.sonfolio
 
-enum class ConversationType {
-    Release,
-    Lunch,
-    Game,
-    Unknown,
-}
-
 /** 展示标题：用户手工标题优先，其次才是自动生成标题。 */
 val com.gongfpp.sonfolio.data.local.ConversationEntity.displayTitle: String
     get() = titleOverride ?: generatedTitle
 
 data class ConversationPreview(
     val id: String,
-    val type: ConversationType,
     val time: String,
     val title: String,
     val duration: String,

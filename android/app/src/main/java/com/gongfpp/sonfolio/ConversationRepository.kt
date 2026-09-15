@@ -150,7 +150,7 @@ class ConversationRepository(
             val groupZone = rowZone(group.first())
             ConversationEntity(
                 id = id,
-                kind = ConversationType.Unknown.name,
+                kind = "Unknown",
                 startedAtMillis = start,
                 endedAtMillis = end,
                 zoneId = groupZone.id,
@@ -395,12 +395,9 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
     val durationMillis = endedAtMillis - startedAtMillis
     val durationMinutes = Duration.ofMillis(durationMillis).toMinutes()
     val durationLabel = if (durationMinutes == 0L) "不足1分钟" else "${durationMinutes}分钟"
-    val type = runCatching { ConversationType.valueOf(kind) }
-        .getOrDefault(ConversationType.Unknown)
 
     return ConversationPreview(
         id = id,
-        type = type,
         time = start.format(DateTimeFormatter.ofPattern("M月d日 HH:mm")),
         title = displayTitle,
         duration = durationLabel,

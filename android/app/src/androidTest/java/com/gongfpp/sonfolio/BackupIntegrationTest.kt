@@ -34,7 +34,7 @@ class BackupIntegrationTest {
             val restored = target.recordingDao().getChunk("backup-test")!!
             assertNotEquals(file.path, restored.localPath)
             assertArrayEquals(audio, File(restored.localPath).readBytes())
-            assertEquals("备份测试资料", target.conversationDao().getReadyTranscriptRows().single().text)
+            assertEquals("备份测试资料", target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().text)
             assertEquals("mark", target.conversationDao().getMarkers().single().id)
             assertTrue(runCatching { MemoryBackup(context, target, fixtureMutex).restore(archive) }.isFailure)
             assertArrayEquals(audio, File(restored.localPath).readBytes())
@@ -96,8 +96,8 @@ class BackupIntegrationTest {
             assertEquals("手改标题", conversation.generatedTitle)
             assertNull(conversation.titleOverride)
             assertNull(conversation.note)
-            assertNull(target.conversationDao().getReadyTranscriptRows().single().originalText)
-            assertEquals("旧版本备份资料", target.conversationDao().getReadyTranscriptRows().single().text)
+            assertNull(target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().originalText)
+            assertEquals("旧版本备份资料", target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().text)
 
             // 缺失非空且无默认值的列仍然拒绝，不静默导入残缺数据。
             source.conversationDao().insertAll(listOf(ConversationEntity("second", "Unknown", 3_000, 4_000, "Asia/Shanghai", "标题", null, "摘要", "BRIEF", "READY", null)))

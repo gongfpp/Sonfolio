@@ -308,22 +308,16 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                         onExportSelected = { ids, uri -> viewModel.exportChunksZip(uri, ids) },
                     )
                     is AppScreen.Conversation -> {
-                        if (current.id != null) {
-                            val canonicalId = aliases.firstOrNull { it.oldId == current.id }?.canonicalId ?: current.id
-                            val conversation by remember(canonicalId) { viewModel.observeConversation(canonicalId) }.collectAsStateWithLifecycle(initialValue = null)
-                            RealConversationScreen(
-                                conversation = conversation,
-                                conversationId = canonicalId,
-                                initialTranscriptId = current.transcriptId,
-                                searchQuery = current.query,
-                                viewModel = viewModel,
-                                onBack = goBack,
-                            )
-                        } else if (current.type == ConversationType.Game) {
-                            GameSummaryScreen(onBack = goBack)
-                        } else {
-                            ConversationScreen(current.type, onBack = goBack)
-                        }
+                        val canonicalId = aliases.firstOrNull { it.oldId == current.id }?.canonicalId ?: current.id
+                        val conversation by remember(canonicalId) { viewModel.observeConversation(canonicalId) }.collectAsStateWithLifecycle(initialValue = null)
+                        RealConversationScreen(
+                            conversation = conversation,
+                            conversationId = canonicalId,
+                            initialTranscriptId = current.transcriptId,
+                            searchQuery = current.query,
+                            viewModel = viewModel,
+                            onBack = goBack,
+                        )
                     }
                 }
             }
@@ -425,7 +419,7 @@ private fun TodayScreen(
         }
         items(day.conversations, key = { "conversation:${it.id}" }) { conversation ->
             Column {
-                TimelineCard(conversation) { onOpen(AppScreen.Conversation(type = conversation.type, id = conversation.id)) }
+                TimelineCard(conversation) { onOpen(AppScreen.Conversation(id = conversation.id)) }
                 if (conversation.startedAtMillis < window.start || conversation.endedAtMillis > window.end) {
                     Text("跨日对话 · 打开后可查看及回听完整内容", Modifier.padding(start = 22.dp, top = 3.dp), color = InkSoft, fontSize = 11.sp)
                 }
@@ -1198,35 +1192,6 @@ private fun formatPlaybackTime(millis: Long): String {
 }
 
 @Composable
-private fun ConversationScreen(type: ConversationType, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
-    val info = when (type) {
-        ConversationType.Release -> Triple("与同事讨论系统投产", "09:32–09:44 · 12分钟", "确认今晚十点开始投产，先完成数据库备份，再按回滚方案逐项复核。双方确认由我负责上线前检查。")
-        ConversationType.Lunch -> Triple("午饭多人聊天", "12:11–12:39 · 28分钟", "午饭时聊了最近的工作节奏和周末安排，整体是轻松的日常交流，没有需要跟进的明确事项。")
-        ConversationType.Unknown -> Triple("与未知人物对话", "18:20–18:27 · 7分钟", "围绕晚餐和回家时间进行了简短交流，内容以确认今晚安排为主。")
-        ConversationType.Game -> Triple("游戏机制讨论", "14:40–15:18 · 38分钟", "")
-    }
-    val fields = when (type) {
-        ConversationType.Release -> listOf("讨论主题" to "投产安排与回滚准备", "已确认" to "十点开始；先备份数据库", "后续关注" to "上线前再检查一次回滚方案")
-        ConversationType.Lunch -> listOf("交流主题" to "工作节奏与周末安排", "主要内容" to "分享最近的工作状态", "后续关注" to "暂无明确后续事项")
-        ConversationType.Unknown -> listOf("交流主题" to "晚餐与回家时间", "已确认" to "今晚的回家安排", "后续关注" to "暂无明确后续事项")
-        ConversationType.Game -> emptyList()
-    }
-    var transcriptOpen by rememberSaveable { mutableStateOf(false) }
-    var playing by rememberSaveable { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp)) {
-        DetailTopBar(info.first, info.second, onBack)
-        Spacer(Modifier.height(15.dp))
-        SummaryCard(info.third, fields)
-        Spacer(Modifier.height(16.dp))
-        TranscriptSection(transcriptOpen, { transcriptOpen = !transcriptOpen }, type)
-        Spacer(Modifier.height(12.dp))
-        AudioPlayer(playing = playing, onToggle = { playing = !playing })
-    }
-}
-
-@Composable
 private fun SummaryCard(summary: String, fields: List<Pair<String, String>>, origin: String = "本地基础整理") {
     Surface(shape = RoundedCornerShape(15.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
@@ -1250,98 +1215,6 @@ private fun SummaryCard(summary: String, fields: List<Pair<String, String>>, ori
     }
 }
 
-@Composable
-private fun TranscriptSection(expanded: Boolean, onToggle: () -> Unit, type: ConversationType) {
-    Column {
-        Surface(Modifier.fillMaxWidth().height(1.dp), color = Line) {}
-        Row(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(19.dp))
-            Text("原始转写", modifier = Modifier.padding(start = 9.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Icon(if (expanded) Icons.Default.ExpandMore else Icons.Default.ExpandMore, contentDescription = null, tint = Ink)
-        }
-        if (expanded) {
-            val rows = when (type) {
-                ConversationType.Release -> listOf("09:32" to "我们今晚十点可以开始投产。", "09:35" to "先把数据库备份好。", "★ 09:38" to "然后按回滚方案逐项复核。", "09:41" to "没问题，我来负责上线前的检查。")
-                ConversationType.Lunch -> listOf("12:11" to "最近工作节奏还好吗？", "12:18" to "这周比较忙，周末想安排一点轻松的活动。", "★ 12:31" to "那周末再看看天气，找时间一起吃饭。")
-                ConversationType.Unknown -> listOf("18:20" to "晚饭已经准备好了吗？", "18:23" to "还没有，回去路上再决定吃什么。", "★ 18:26" to "好，那到家再联系。")
-                ConversationType.Game -> emptyList()
-            }
-            rows.forEach { (time, text) ->
-                Row(Modifier.padding(vertical = 4.dp)) {
-                    Text(time, modifier = Modifier.width(55.dp), color = if (time.startsWith("★")) Amber else InkSoft, fontSize = 12.sp)
-                    Text(text, color = Color(0xFF3E4A42), fontSize = 12.5.sp, lineHeight = 18.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AudioPlayer(playing: Boolean, onToggle: () -> Unit) {
-    Surface(shape = RoundedCornerShape(14.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(9.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onToggle, modifier = Modifier.size(36.dp).clip(CircleShape).background(Green)) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (playing) "暂停" else "播放", tint = Color.White)
-            }
-            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Waveform(accent = Color(0xFF53966C), modifier = Modifier.fillMaxWidth())
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(if (playing) "00:07" else "00:00", color = InkSoft, fontSize = 10.sp)
-                    Text("12:00", color = InkSoft, fontSize = 10.sp)
-                }
-            }
-            Text("1.0x", color = InkSoft, fontSize = 11.sp)
-        }
-    }
-}
-
-@Composable
-private fun Waveform(accent: Color, modifier: Modifier = Modifier) {
-    Row(modifier.height(24.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-        repeat(26) { index ->
-            val barHeight = (5 + ((index * 7) % 17)).dp
-            Box(Modifier.width(2.dp).height(barHeight).clip(CircleShape).background(accent))
-        }
-    }
-}
-
-@Composable
-private fun GameSummaryScreen(onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
-    var transcriptOpen by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp)) {
-        DetailTopBar("游戏机制讨论", "14:40–15:18 · 38分钟", onBack)
-        Row(Modifier.padding(top = 15.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("详细总结", fontWeight = FontWeight.Bold, fontSize = 22.sp, modifier = Modifier.weight(1f))
-            Surface(shape = CircleShape, color = AmberPale) { Text("信息量较大", color = Color(0xFF7C5D11), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            StructuredCard("讨论主题", "电梯断电时如何让玩家先感知危险", Icons.AutoMirrored.Filled.List)
-            StructuredCard("关键观点", "• 先用继电器断开的声音建立预警\n• 黑暗中保留短暂的方向提示", Icons.Default.Lightbulb)
-            StructuredCard("共识与决定", "声音提示先于画面提示，作为第一版实验方案", Icons.Default.CheckCircle, PaleGreenStrong)
-            StructuredCard("未决问题", "不同电梯材质是否需要不同音色", Icons.AutoMirrored.Filled.HelpOutline, Color(0xFFEDF3E6))
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp).clickable { transcriptOpen = true },
-            shape = RoundedCornerShape(13.dp),
-            color = PaleGreen,
-        ) {
-            Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (transcriptOpen) "已展开原始转写" else "展开全部转写", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Green)
-            }
-        }
-        if (transcriptOpen) {
-            Spacer(Modifier.height(10.dp))
-            TranscriptSection(expanded = true, onToggle = { transcriptOpen = !transcriptOpen }, type = ConversationType.Game)
-        }
-        Text("已从 38 分钟语音中提炼", modifier = Modifier.fillMaxWidth().padding(top = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = InkSoft, fontSize = 11.sp)
-    }
-}
-
-/**
- * 结构化要点：每条要点可点击定位到最接近的原句，方便逐条核对，而不是只给一句「请结合原文核对」。
- */
 @Composable
 private fun SummaryPointsCard(summary: ConversationSummaryEntity, lines: List<TranscriptLine>, onLocate: (String) -> Unit) {
     val sections = listOf(
@@ -1604,7 +1477,7 @@ internal fun SearchResultsPanel(
                         trailing = formatClock(hit.startedAtMillis),
                         query = query,
                     ) {
-                        onOpen(AppScreen.Conversation(ConversationType.Unknown, hit.conversationId, hit.transcriptId, query))
+                        onOpen(AppScreen.Conversation(id = hit.conversationId, transcriptId = hit.transcriptId, query = query))
                     }
                 }
                 if (results.hasMore) {
