@@ -33,6 +33,14 @@ data class TranscriptSearchRow(
 
 data class CalendarSpan(val start: Long, val end: Long, val organized: Boolean)
 
+/** 修正转写时定位受影响的时间窗与所属对话。 */
+data class TranscriptRef(
+    @ColumnInfo(name = "id") val id: String,
+    @ColumnInfo(name = "conversationId") val conversationId: String?,
+    @ColumnInfo(name = "startedAtMillis") val startedAtMillis: Long,
+    @ColumnInfo(name = "endedAtMillis") val endedAtMillis: Long,
+)
+
 @Dao
 interface ConversationDao {
     @Query("""SELECT MIN(startedAtMillis) AS `start`, MAX(COALESCE(endedAtMillis, startedAtMillis + 1)) AS `end`, 0 AS organized
@@ -233,6 +241,9 @@ interface ConversationDao {
     /** 修正转写：首次修正时把原文字存进 originalText，之后只改 text，原始版本始终保留。 */
     @Query("UPDATE transcripts SET originalText = CASE WHEN originalText IS NULL THEN text ELSE originalText END, text = :text WHERE id = :id")
     suspend fun updateTranscriptText(id: String, text: String)
+
+    @Query("SELECT id, conversationId, startedAtMillis, endedAtMillis FROM transcripts WHERE id = :id LIMIT 1")
+    suspend fun getTranscriptWindow(id: String): TranscriptRef?
 
     /** 撤销标记：删除时间窗与这段对话重叠的标记。 */
     @Query("DELETE FROM markers WHERE markedAtMillis + windowAfterMillis >= :start AND markedAtMillis - windowBeforeMillis <= :end")

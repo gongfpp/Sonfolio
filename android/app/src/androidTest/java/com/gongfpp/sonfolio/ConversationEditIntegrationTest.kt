@@ -63,10 +63,18 @@ class ConversationEditIntegrationTest {
             assertEquals(resetEntity.generatedTitle, resetEntity.displayTitle)
 
             // 修正转写：保留原始版本，二次修正不覆盖原始版本
+            val conversationDao = database.conversationDao()
+            val dayKey = "day:${localDateAt(base)}"
+            conversationDao.saveSummaryRun(com.gongfpp.sonfolio.data.local.SummaryRunEntity("conversation:$id", "old", "REMOTE", "m@e", "{\"title\":\"旧结论\"}", "READY", null, System.currentTimeMillis()))
+            conversationDao.saveSummaryRun(com.gongfpp.sonfolio.data.local.SummaryRunEntity(dayKey, "old", "REMOTE", "m@e", "{\"title\":\"旧结论\"}", "READY", null, System.currentTimeMillis()))
             repository.updateTranscriptText("t-1", "先完成测试，再复核回滚方案。")
             val corrected = repository.observeTranscript(id).first().single()
             assertEquals("先完成测试，再复核回滚方案。", corrected.text)
             assertEquals("先完成测试，再检查回滚方案。", corrected.originalText)
+            // 失效传播：基础小结按修正后的文字重建，关联 AI 总结被标记 STALE
+            assertTrue(conversationDao.getConversation(id)!!.briefSummary.contains("复核回滚方案"))
+            assertEquals("STALE", conversationDao.getSummaryRun("conversation:$id")?.state)
+            assertEquals("STALE", conversationDao.getSummaryRun(dayKey)?.state)
 
             repository.updateTranscriptText("t-1", "先完成测试，再复核回滚方案并确认。")
             val reCorrected = repository.observeTranscript(id).first().single()

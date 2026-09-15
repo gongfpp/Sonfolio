@@ -300,11 +300,37 @@ class ConversationRepository(
         conversationDao.deleteMarkersOverlapping(conversation.startedAtMillis, conversation.endedAtMillis)
     }
 
-    /** 修正单条转写文字；原始识别版本会被保留在 originalText。 */
+    /**
+     * 修正单条转写文字；原始识别版本保留在 originalText。
+     * 修正是对原始记录的编辑，派生数据必须同步失效：重建受影响区间的基础小结与每日回顾，
+     * 并把关联的 AI 总结标记为 STALE，防止“原文改了，总结还是旧的”。
+     */
     suspend fun updateTranscriptText(transcriptId: String, text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
+        val row = conversationDao.getTranscriptWindow(transcriptId) ?: return
         conversationDao.updateTranscriptText(transcriptId, trimmed)
+        val zone = ZoneId.systemDefault()
+        val keys = buildSet {
+            row.conversationId?.let { raw -> add("conversation:${conversationDao.resolveAlias(raw) ?: raw}") }
+            val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(zone).toLocalDate()
+            val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(zone).toLocalDate()
+            generateSequence(first) { it.plusDays(1) }.takeWhile { it <= last }.forEach { add("day:$it") }
+        }
+        keys.forEach { key ->
+            val run = conversationDao.getSummaryRun(key) ?: return@forEach
+            if (run.state !in listOf("QUEUED", "RUNNING")) {
+                conversationDao.updateSummaryRun(key, "STALE", "转写已修正，请重新生成 AI 总结", System.currentTimeMillis())
+            }
+        }
+        try {
+            rebuildFromTranscripts(row.startedAtMillis, row.endedAtMillis)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // 文字已保存；整理遇到并发更新失败时留给下一次整理合并，不吞掉已确认的用户输入。
+            android.util.Log.e("ConversationRepository", "转写修正后的整理未完成，待下次合并", error)
+        }
     }
 }
 
