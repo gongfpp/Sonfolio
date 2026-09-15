@@ -83,7 +83,10 @@ data class ConversationEntity(
     val startedAtMillis: Long,
     val endedAtMillis: Long,
     val zoneId: String,
-    val title: String,
+    /** 自动生成的标题；AI 和规则只能写这个字段，永远不覆盖用户输入。 */
+    val generatedTitle: String,
+    /** 用户手动修改过的标题；为空表示仍在使用自动标题。 */
+    val titleOverride: String? = null,
     val briefSummary: String,
     val summaryLevel: String,
     val processingState: String,

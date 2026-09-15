@@ -219,8 +219,13 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id) LIMIT 1")
     suspend fun getConversation(id: String): ConversationEntity?
 
-    @Query("UPDATE conversations SET title = :title WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
+    /** 用户修改标题写入 titleOverride；自动生成的 generatedTitle 不被触碰。 */
+    @Query("UPDATE conversations SET titleOverride = :title WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
     suspend fun updateConversationTitle(id: String, title: String)
+
+    /** 用户放弃手工标题，回到自动标题。 */
+    @Query("UPDATE conversations SET titleOverride = NULL WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
+    suspend fun resetConversationTitle(id: String)
 
     @Query("UPDATE conversations SET note = :note WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
     suspend fun updateConversationNote(id: String, note: String?)

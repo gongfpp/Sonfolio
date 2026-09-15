@@ -72,6 +72,8 @@ class ConversationRepository(
         val rows = conversationDao.getReadyRowsInWindow(rangeStart, rangeEnd)
         val gaps = database.recordingDao().getGapsInWindow(rangeStart, rangeEnd)
         val oldEntities = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
+        // 重建只允许写自动生成字段；用户标题与备注从这里原样带回。
+        val oldById = oldEntities.associateBy { it.id }
         val summaryKeys = if (startedAt == null || endedAt == null) null else {
             val firstDay = Instant.ofEpochMilli(rangeStart).atZone(zone).toLocalDate()
             val lastDay = Instant.ofEpochMilli(rangeEnd - 1).atZone(zone).toLocalDate()
@@ -119,16 +121,22 @@ class ConversationRepository(
             usedIds += id
             val summary = summaries.getValue(group.first().transcriptId)
             val ai = cached("conversation:$id", group.map { it.copy(conversationId = id) })
+            // 用户数据所有权：本组原对话的用户标题/备注优先保留；合并时从并入的对话继承。
+            val olds = group.mapNotNull { row -> row.conversationId?.let(oldById::get) }.distinctBy { it.id }
+            val survivor = olds.firstOrNull { it.id == id }
+            val inherited = olds.filter { it.id != id }
             ConversationEntity(
                 id = id,
                 kind = ConversationType.Unknown.name,
                 startedAtMillis = start,
                 endedAtMillis = end,
                 zoneId = zone.id,
-                title = ai?.title ?: summary.title,
+                generatedTitle = ai?.title ?: summary.title,
+                titleOverride = survivor?.titleOverride ?: inherited.firstNotNullOfOrNull { it.titleOverride },
                 briefSummary = ai?.brief ?: summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
                 processingState = "READY",
+                note = survivor?.note ?: inherited.firstNotNullOfOrNull { it.note },
             )
         }
         val newSummaries = (
@@ -197,7 +205,6 @@ class ConversationRepository(
                 markers != database.recordingDao().getMarkersInWindow(rangeStart, rangeEnd) ||
                 aiRuns != scopedSummaryRuns() ||
                 filterSnapshot != (preferences.minimumSpeechSeconds to preferences.minimumTextCharacters)) return@withTransaction false
-            val oldById = oldEntities.associateBy { it.id }
             // A previously merged ID can reappear after a split/filter change. A live ID must
             // never redirect to another conversation through an obsolete alias.
             entities.map { it.id }.chunked(400).forEach { conversationDao.removeAliasesForCanonicalIds(it) }
@@ -269,11 +276,16 @@ class ConversationRepository(
     fun observeConversationSummary(conversationId: String): Flow<ConversationSummaryEntity?> =
         conversationDao.observeConversationSummary(conversationId)
 
-    /** 用户修改对话标题（去掉首尾空白，限 30 字）。 */
+    /** 用户修改对话标题（去掉首尾空白，限 30 字）；写入 titleOverride，自动标题不被触碰。 */
     suspend fun updateConversationTitle(conversationId: String, title: String) {
         val trimmed = title.trim().take(30)
         if (trimmed.isEmpty()) return
         conversationDao.updateConversationTitle(conversationId, trimmed)
+    }
+
+    /** 用户放弃手工标题，回到自动生成标题。 */
+    suspend fun resetConversationTitle(conversationId: String) {
+        conversationDao.resetConversationTitle(conversationId)
     }
 
     /** 用户写/清空简短备注（限 200 字）。 */
@@ -337,7 +349,7 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         id = id,
         type = type,
         time = start.format(DateTimeFormatter.ofPattern("M月d日 HH:mm")),
-        title = title,
+        title = displayTitle,
         duration = durationLabel,
         summary = briefSummary,
         summaryLevel = summaryLevel,
@@ -345,5 +357,6 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         endedAtMillis = endedAtMillis,
         isMarked = isMarked,
         note = note,
+        titleOverride = titleOverride,
     )
 }

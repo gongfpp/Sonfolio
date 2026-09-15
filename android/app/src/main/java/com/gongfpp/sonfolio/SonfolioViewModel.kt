@@ -133,6 +133,10 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.updateConversationTitle(conversationId, title) }
     }
 
+    fun resetConversationTitle(conversationId: String) {
+        viewModelScope.launch { repository.resetConversationTitle(conversationId) }
+    }
+
     fun updateConversationNote(conversationId: String, note: String?) {
         viewModelScope.launch { repository.updateConversationNote(conversationId, note) }
     }

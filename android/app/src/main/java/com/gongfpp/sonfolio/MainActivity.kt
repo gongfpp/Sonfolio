@@ -1034,7 +1034,16 @@ private fun RealConversationScreen(
             AlertDialog(
                 onDismissRequest = { titleDraft = null },
                 title = { Text("修改对话标题") },
-                text = { OutlinedTextField(value, { value = it }, singleLine = true, label = { Text("标题（最多 30 字）") }) },
+                text = { Column {
+                    OutlinedTextField(value, { value = it }, singleLine = true, label = { Text("标题（最多 30 字）") })
+                    if (conversation?.titleOverride != null) {
+                        Text("已手工命名；后台整理不会覆盖你写的标题。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                        TextButton(onClick = {
+                            viewModel.resetConversationTitle(conversationId)
+                            titleDraft = null
+                        }) { Text("恢复自动标题", fontSize = 12.sp) }
+                    }
+                } },
                 confirmButton = { TextButton(onClick = { viewModel.updateConversationTitle(conversationId, value); titleDraft = null }) { Text("保存") } },
                 dismissButton = { TextButton(onClick = { titleDraft = null }) { Text("取消") } },
             )

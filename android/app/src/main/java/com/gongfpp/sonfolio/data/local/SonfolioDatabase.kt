@@ -18,7 +18,7 @@ import androidx.room.RoomDatabase
         SummaryRunEntity::class,
         ConversationAliasEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -26,6 +26,27 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun recordingDao(): RecordingDao
 
     companion object {
+        // 0.2.1 数据一致性：把用户手工输入与自动生成字段分开。
+        // 存量 title 一律视为 AI 生成（迁移语义 B），titleOverride 为空表示尚未手工编辑。
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("PRAGMA defer_foreign_keys = TRUE")
+                db.execSQL(
+                    "CREATE TABLE conversations_new (id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, " +
+                        "startedAtMillis INTEGER NOT NULL, endedAtMillis INTEGER NOT NULL, zoneId TEXT NOT NULL, " +
+                        "generatedTitle TEXT NOT NULL, titleOverride TEXT, briefSummary TEXT NOT NULL, " +
+                        "summaryLevel TEXT NOT NULL, processingState TEXT NOT NULL, note TEXT)",
+                )
+                db.execSQL(
+                    "INSERT INTO conversations_new (id, kind, startedAtMillis, endedAtMillis, zoneId, generatedTitle, briefSummary, summaryLevel, processingState, note) " +
+                        "SELECT id, kind, startedAtMillis, endedAtMillis, zoneId, title, briefSummary, summaryLevel, processingState, note FROM conversations",
+                )
+                db.execSQL("DROP TABLE conversations")
+                db.execSQL("ALTER TABLE conversations_new RENAME TO conversations")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_conversations_startedAtMillis ON conversations (startedAtMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_conversations_processingState ON conversations (processingState)")
+            }
+        }
         val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE conversations ADD COLUMN note TEXT")
@@ -61,7 +82,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { database -> instance = database }
             }
     }
 }

@@ -42,7 +42,7 @@ internal data class SearchQuery(
             if (error != null || noCriteria) conditions += "0 = 1"
             else terms.forEach { term ->
                 val literal = "%${term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%"
-                conditions += "(t.text LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\')"
+                conditions += "(t.text LIKE ? ESCAPE '\\' OR COALESCE(c.titleOverride, c.generatedTitle) LIKE ? ESCAPE '\\')"
                 args += literal
                 args += literal
             }
@@ -62,7 +62,8 @@ internal data class SearchQuery(
             return SearchQuery(
                 """
                 SELECT t.id AS transcriptId, c.id AS conversationId,
-                    t.startedAtMillis, t.endedAtMillis, c.title, t.text,
+                    t.startedAtMillis, t.endedAtMillis,
+                    COALESCE(c.titleOverride, c.generatedTitle) AS title, t.text,
                     CASE WHEN $MARKED_SQL THEN 1 ELSE 0 END AS isMarked
                 FROM transcripts t JOIN conversations c ON c.id = t.conversationId
                 WHERE ${conditions.joinToString(" AND ")}
