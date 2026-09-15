@@ -1,0 +1,151 @@
+{
+  "name": "sonfolio-summary-quality-set",
+  "version": 1,
+  "description": "固定总结质量集：每更换本地模型或提示词后运行一次。期望事实只要求在总结输出中出现（子串匹配）；forbidden 内容绝对不能出现在输出里。含否定句、条件句、疑问句、多人讨论、决定与建议、待办与猜测、前后修正七类场景。",
+  "metric": {
+    "factHitRate": "expectKeyPhrases 命中数 / 总数（在 title/brief/keyPoints/decisions/followUps 中查找）",
+    "forbiddenHits": "forbidden 短语在全部输出字段中的出现次数，必须为 0"
+  },
+  "cases": [
+    {
+      "id": "negation-01",
+      "category": "negation",
+      "dialogue": ["明天不要上线新版本。", "对，明天不上线，先回滚数据库配置。"],
+      "expectKeyPhrases": ["不上线", "回滚数据库配置"],
+      "forbidden": ["决定上线", "明天上线", "上线新版本是"]
+    },
+    {
+      "id": "negation-02",
+      "category": "negation",
+      "dialogue": ["周五的评审我参加不了。", "那周五评审取消，材料发群里大家自己看。"],
+      "expectKeyPhrases": ["评审取消", "材料发群里"],
+      "forbidden": ["参加评审", "按时参加"]
+    },
+    {
+      "id": "condition-01",
+      "category": "condition",
+      "dialogue": ["如果压测通过我们再发布。", "好，只有压测通过才发布，否则继续修。"],
+      "expectKeyPhrases": ["压测通过才发布"],
+      "forbidden": ["决定发布", "明天发布"]
+    },
+    {
+      "id": "condition-02",
+      "category": "condition",
+      "dialogue": ["要是预算批不下来就不出差了。", "对，预算不批就不出差，视频会议代替。"],
+      "expectKeyPhrases": ["视频会议代替"],
+      "forbidden": ["决定出差", "订机票"]
+    },
+    {
+      "id": "question-01",
+      "category": "question",
+      "dialogue": ["这个按钮要不要放到首页？", "再想想吧，先看看用户反馈。"],
+      "expectKeyPhrases": ["先看看用户反馈"],
+      "forbidden": ["决定把按钮放到首页", "按钮已放到首页"]
+    },
+    {
+      "id": "question-02",
+      "category": "question",
+      "dialogue": ["为什么这次的崩溃率突然升高？", "可能是新加的初始化逻辑，还没确认。"],
+      "expectKeyPhrases": ["崩溃率", "还没确认", "可能"],
+      "forbidden": ["确认是初始化逻辑导致", "已定位原因"]
+    },
+    {
+      "id": "multiparty-01",
+      "category": "multiparty",
+      "dialogue": ["老王负责接口，小李负责界面。", "我自己负责数据库迁移，下周各自对齐。", "接口进度老王周三前给结论。"],
+      "expectKeyPhrases": ["接口", "界面", "周三前"],
+      "forbidden": ["小李负责接口"]
+    },
+    {
+      "id": "multiparty-02",
+      "category": "multiparty",
+      "dialogue": ["今天三个人开了发布会筹备会。", "场地定在二楼会议室，时间是周四下午两点。", "主持人由张三担任，李四负责设备。"],
+      "expectKeyPhrases": ["周四下午两点", "张三"],
+      "forbidden": ["周三", "由李四担任主持人"]
+    },
+    {
+      "id": "decision-vs-suggestion-01",
+      "category": "decision_vs_suggestion",
+      "dialogue": ["我建议把首页改成深色。", "这个先记下来，暂不改，本期只修崩溃。"],
+      "expectKeyPhrases": ["本期只修崩溃", "暂不改"],
+      "forbidden": ["决定改深色", "首页改成深色是"]
+    },
+    {
+      "id": "decision-vs-suggestion-02",
+      "category": "decision_vs_suggestion",
+      "dialogue": ["要不我们把接口超时改到五秒？", "先不改超时，观察一周再说。"],
+      "expectKeyPhrases": ["先不改超时", "观察一周"],
+      "forbidden": ["决定把超时改到五秒", "超时改到五秒，已"]
+    },
+    {
+      "id": "todo-vs-guess-01",
+      "category": "todo_vs_guess",
+      "dialogue": ["记得明天把体检报告发给张三。", "好，明天发。"],
+      "expectKeyPhrases": ["体检报告", "张三"],
+      "forbidden": ["猜测"]
+    },
+    {
+      "id": "todo-vs-guess-02",
+      "category": "todo_vs_guess",
+      "dialogue": ["下次回家前记得给爸妈订高铁票。", "嗯，下周一之前订好。"],
+      "expectKeyPhrases": ["高铁票", "下周一"],
+      "forbidden": []
+    },
+    {
+      "id": "correction-01",
+      "category": "correction",
+      "dialogue": ["会议改到周三下午三点。", "不对，我刚看错了，会议是周四下午三点。", "好，按周四算。"],
+      "expectKeyPhrases": ["周四下午三点"],
+      "forbidden": ["周三下午三点定", "定在周三"]
+    },
+    {
+      "id": "correction-02",
+      "category": "correction",
+      "dialogue": ["预算是十二万。", "等等，是二十万，我刚才说错了。", "二十万，明白。"],
+      "expectKeyPhrases": ["二十万"],
+      "forbidden": ["预算是十二万确定", "确定十二万"]
+    },
+    {
+      "id": "release-01",
+      "category": "decision",
+      "dialogue": ["我们决定周五凌晨两点发布新版本。", "好，周五凌晨两点发布，提前一天冻结代码。"],
+      "expectKeyPhrases": ["周五凌晨两点", "冻结代码"],
+      "forbidden": []
+    },
+    {
+      "id": "release-02",
+      "category": "decision",
+      "dialogue": ["回滚方案确定了吗？", "确定了，出问题先切回旧版本镜像，再排查数据库。"],
+      "expectKeyPhrases": ["切回旧版本镜像", "排查数据库"],
+      "forbidden": []
+    },
+    {
+      "id": "lunch-01",
+      "category": "casual",
+      "dialogue": ["中午去楼下那家新开的餐厅吃个饭？", "可以，十二点下楼。"],
+      "expectKeyPhrases": ["餐厅", "十二点"],
+      "forbidden": []
+    },
+    {
+      "id": "lunch-02",
+      "category": "casual",
+      "dialogue": ["晚上一起点外卖吧，我想吃面。", "行，帮我带一碗牛肉面，不要香菜。"],
+      "expectKeyPhrases": ["牛肉面", "不要香菜"],
+      "forbidden": ["香菜多加"]
+    },
+    {
+      "id": "family-01",
+      "category": "casual",
+      "dialogue": ["周末带孩子去趟动物园。", "好，周六上午出发，妈妈也一起去。"],
+      "expectKeyPhrases": ["动物园", "周六上午"],
+      "forbidden": []
+    },
+    {
+      "id": "family-02",
+      "category": "casual",
+      "dialogue": ["爸妈下周过来住几天。", "让他们坐高铁来，我去车站接。"],
+      "expectKeyPhrases": ["高铁", "车站接"],
+      "forbidden": []
+    }
+  ]
+}
