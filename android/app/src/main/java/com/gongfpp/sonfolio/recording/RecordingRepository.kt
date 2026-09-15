@@ -220,22 +220,53 @@ class RecordingRepository(
 
     suspend fun retryProcessing(chunkId: String) {
         val chunk = recordingDao.getChunk(chunkId) ?: return
-        if (chunk.endedAtMillis == null || chunk.processingState.endsWith("RUNNING")) return
-        if (chunk.processingState in setOf("ASSEMBLY_PENDING", "ASSEMBLY_FAILED")) {
+        if (chunk.endedAtMillis == null) return
+        var state = chunk.processingState
+        if (state.endsWith("RUNNING")) {
+            // WorkManager 会自行恢复被中断的任务；只有在确认没有未完成任务时才允许重置。
+            val scheduler = processingScheduler ?: return
+            if (scheduler.hasUnfinishedProcessingWork(chunkId)) return
+            when (state) {
+                "VAD_RUNNING" -> recordingDao.updateProcessingState(chunkId, "RECORDED", "应用退出后等待重新处理")
+                "ASR_RUNNING" -> {
+                    recordingDao.updateProcessingState(chunkId, "VAD_READY", "应用退出后等待重新处理")
+                    recordingDao.resetInterruptedSpeechSegmentsFor(chunkId)
+                }
+            }
+            state = recordingDao.getChunk(chunkId)?.processingState ?: return
+        }
+        if (state in setOf("ASSEMBLY_PENDING", "ASSEMBLY_FAILED")) {
             recordingDao.updateProcessingState(chunkId, "ASSEMBLY_PENDING", "文字已保存，等待整理")
             processingScheduler?.enqueueAssembly(chunkId)
-        } else if (chunk.processingState in setOf("ASR_FAILED", "VAD_READY")) {
+        } else if (state in setOf("ASR_FAILED", "VAD_READY")) {
             recordingDao.updateProcessingState(chunkId, "VAD_READY", null)
             processingScheduler?.enqueueAsr(chunkId)
-        } else if (chunk.processingState in setOf("VAD_FAILED", "FAILED", "RECORDED", "RECOVERED")) {
+        } else if (state in setOf("VAD_FAILED", "FAILED", "RECORDED", "RECOVERED")) {
             recordingDao.updateProcessingState(chunkId, "RECORDED", null)
             processingScheduler?.enqueueVad(chunkId)
         }
     }
 
-    suspend fun resetInterruptedProcessing() {
-        recordingDao.resetInterruptedProcessing()
-        recordingDao.resetInterruptedSpeechSegments()
+    /**
+     * 应用启动时清理孤儿 RUNNING 状态：WorkManager 会自行恢复被中断的任务，因此只有在确认
+     * 该切片已没有未完成的 VAD/ASR 任务（例如任务被强停清空）时，才把状态回退并重新入队。
+     */
+    suspend fun recoverOrphanedRunningStates() {
+        recordingDao.getChunksInRunningStates().forEach { chunk ->
+            val scheduler = processingScheduler ?: return
+            if (scheduler.hasUnfinishedProcessingWork(chunk.id)) return@forEach
+            when (chunk.processingState) {
+                "VAD_RUNNING" -> {
+                    recordingDao.updateProcessingState(chunk.id, "RECORDED", "应用退出后等待重新处理")
+                    processingScheduler?.enqueueVad(chunk.id)
+                }
+                "ASR_RUNNING" -> {
+                    recordingDao.updateProcessingState(chunk.id, "VAD_READY", "应用退出后等待重新处理")
+                    recordingDao.resetInterruptedSpeechSegmentsFor(chunk.id)
+                    processingScheduler?.enqueueAsr(chunk.id)
+                }
+            }
+        }
     }
 
     suspend fun enqueuePendingAsr() {

@@ -93,6 +93,14 @@ class ProcessingScheduler(context: Context) {
         }
     }
 
+    /** 该切片是否仍有未完成的 VAD/ASR 任务；用于区分正在执行的 RUNNING 状态与进程被杀后的孤儿状态。 */
+    suspend fun hasUnfinishedProcessingWork(audioChunkId: String): Boolean = withContext(Dispatchers.IO) {
+        val manager = WorkManager.getInstance(appContext)
+        val vad = manager.getWorkInfosForUniqueWork("sonfolio-vad-$audioChunkId").get()
+        val asr = manager.getWorkInfosByTag("sonfolio-asr-chunk-$audioChunkId").get()
+        (vad + asr).any { !it.state.isFinished }
+    }
+
     private fun constraints() = Constraints.Builder()
         .setRequiresCharging(SonfolioPreferences(appContext).chargeOnly)
         .build()

@@ -1655,7 +1655,7 @@ private fun SettingsScreen(
                             app.recordingRepository.enqueuePendingAsr()
                             if (value) "等待中的任务改为充电时执行" else "已解除等待任务的充电限制，系统将继续调度"
                         } catch (error: kotlinx.coroutines.CancellationException) { throw error }
-                        catch (_: Exception) { "设置已保存，但队列更新失败；重新打开应用会重试" }
+                        catch (error: Exception) { "设置已保存，但队列更新失败（${error.message ?: error.javaClass.simpleName}）；重新打开应用会重试" }
                     }
                 }
                 Text("包括人声检测、转写和自动 AI 总结。关闭后，已等待的任务也可在未充电时继续。开启不主动打断当前一轮；正在运行的旧任务若遇系统限制，下一轮按新设置执行。手动 AI 总结不要求充电。录音不受影响。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp))
@@ -1717,7 +1717,7 @@ private fun RawRecordingsScreen(
                 if (ids.isEmpty()) operationMessage = "没有符合条件的原音，无需清理" else cleanupIds = ids
             }
             catch (error: kotlinx.coroutines.CancellationException) { throw error }
-            catch (_: Exception) { operationMessage = "读取清理清单失败，未删除任何文件" }
+            catch (error: Exception) { operationMessage = "读取清理清单失败（${error.message ?: error.javaClass.simpleName}），未删除任何文件" }
             finally { operationBusy = false }
         }
     }
@@ -1744,7 +1744,7 @@ private fun RawRecordingsScreen(
                 }
             } }; operationMessage = "原始录音已导出" }
             catch (error: kotlinx.coroutines.CancellationException) { throw error }
-            catch (_: Exception) { operationMessage = "导出失败，目标可能是不完整文件，请重新导出" }
+            catch (error: Exception) { operationMessage = "导出失败（${error.message ?: error.javaClass.simpleName}），目标可能是不完整文件，请重新导出" }
             finally { operationBusy = false }
         }
     }
@@ -1945,7 +1945,7 @@ private fun RawRecordingRow(
                 Text("${formatBytes(chunk.byteSize)} · ${file.name}", color = InkSoft, fontSize = 11.sp)
                 chunk.errorMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp) }
                 if (!selectionMode) Row {
-                    if (chunk.processingState.endsWith("FAILED") || chunk.processingState in setOf("RECORDED", "RECOVERED", "VAD_READY", "ASSEMBLY_PENDING")) TextButton(enabled = enabled, onClick = onRetry) { Text("继续处理") }
+                    if (chunk.processingState.endsWith("FAILED") || chunk.processingState in setOf("RECORDED", "RECOVERED", "VAD_READY", "ASSEMBLY_PENDING", "VAD_RUNNING", "ASR_RUNNING")) TextButton(enabled = enabled, onClick = onRetry) { Text("继续处理") }
                     TextButton(onClick = onExport, enabled = enabled && chunk.endedAtMillis != null && file.exists()) { Text("导出") }
                 }
             }

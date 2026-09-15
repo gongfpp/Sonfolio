@@ -199,30 +199,21 @@ interface RecordingDao {
 
     @Query(
         """
-        UPDATE audio_chunks
-        SET processingState = CASE
-                WHEN processingState = 'VAD_RUNNING' THEN 'RECORDED'
-                WHEN processingState = 'ASR_RUNNING' THEN 'VAD_READY'
-                ELSE processingState
-            END,
-            errorMessage = CASE
-                WHEN processingState IN ('VAD_RUNNING', 'ASR_RUNNING')
-                    THEN '应用退出后等待重新处理'
-                ELSE errorMessage
-            END
+        SELECT * FROM audio_chunks
         WHERE processingState IN ('VAD_RUNNING', 'ASR_RUNNING')
+        ORDER BY startedAtMillis ASC
         """,
     )
-    suspend fun resetInterruptedProcessing()
+    suspend fun getChunksInRunningStates(): List<AudioChunkEntity>
 
     @Query(
         """
         UPDATE speech_segments
         SET processingState = 'VAD_READY'
-        WHERE processingState = 'ASR_RUNNING'
+        WHERE audioChunkId = :audioChunkId AND processingState = 'ASR_RUNNING'
         """,
     )
-    suspend fun resetInterruptedSpeechSegments()
+    suspend fun resetInterruptedSpeechSegmentsFor(audioChunkId: String)
 
     @Query("DELETE FROM speech_segments WHERE audioChunkId = :audioChunkId")
     suspend fun deleteSpeechSegments(audioChunkId: String)

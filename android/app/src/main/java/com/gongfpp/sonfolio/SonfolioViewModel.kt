@@ -79,6 +79,7 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
             // WorkManager 自行恢复被中断任务，打开页面不能重置仍在执行的任务。
             sonfolioApplication.processingScheduler.refreshConstraints()
             sonfolioApplication.summaryCoordinator.refreshConstraints()
+            recordingRepository.recoverOrphanedRunningStates()
             recordingRepository.enqueuePendingVad()
             recordingRepository.enqueuePendingAsr()
             // 压缩与保留策略是存储层面的后台整理；文字与总结永远不受影响。
