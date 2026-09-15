@@ -18,7 +18,7 @@ class DayTimelineTest {
 
     @Test fun cleanedAudioNoLongerCountsOnHomeButConversationRemains() {
         val audio = chunk("removed", midnight, 1_000, "AUDIO_DELETED").copy(byteSize = 0)
-        val conversation = ConversationPreview("c", ConversationType.Unknown, "00:00", "保留文字", "1秒", "摘要", "BRIEF", midnight, midnight + 1_000)
+        val conversation = ConversationPreview("c", "00:00", "保留文字", "1秒", "摘要", "BRIEF", midnight, midnight + 1_000)
         val day = DayTimeline.build(date, listOf(conversation), listOf(audio), emptyList(), zone)
         assertTrue(day.chunks.isEmpty())
         assertEquals(0L, day.savedMillis)
@@ -27,7 +27,7 @@ class DayTimelineTest {
 
     @Test fun crossMidnightAudioAndConversationAppearOnBothDaysWithClippedTotals() {
         val audio = chunk("cross", midnight - 60_000, 180_000)
-        val conversation = ConversationPreview("c", ConversationType.Unknown, "23:59", "跨日讨论", "3分钟", "摘要", "BRIEF", audio.startedAtMillis, audio.endedAtMillis!!)
+        val conversation = ConversationPreview("c", "23:59", "跨日讨论", "3分钟", "摘要", "BRIEF", audio.startedAtMillis, audio.endedAtMillis!!)
         val gap = RecordingGapEntity("gap", midnight - 10_000, midnight + 10_000, "测试中断", false)
         val before = DayTimeline.build(date.minusDays(1), listOf(conversation), listOf(audio), listOf(gap), zone)
         val after = DayTimeline.build(date, listOf(conversation), listOf(audio), listOf(gap), zone)
@@ -53,7 +53,6 @@ class DayTimelineTest {
         val day = DayTimeline.build(date, emptyList(), listOf(audio), emptyList(), zone)
         assertEquals(listOf(audio), day.chunks)
         assertEquals(0L, day.savedMillis)
-        assertEquals(0, day.pendingCount)
     }
 
     @Test fun audioEndingExactlyAtMidnightBelongsOnlyToPreviousDay() {
@@ -72,7 +71,7 @@ class DayTimelineTest {
         assertEquals(30_000L, day.gapMillis)
     }
 
-    @Test fun countsOnlyPendingAndFailedChunksFromSelectedDay() {
+    @Test fun onlyChunksFromSelectedDayAreIncluded() {
         val audio = listOf(
             chunk("old", midnight - 60_000, 1_000, "VAD_FAILED"),
             chunk("ready", midnight, 1_000),
@@ -81,8 +80,6 @@ class DayTimelineTest {
         )
         val day = DayTimeline.build(date, emptyList(), audio, emptyList(), zone)
         assertEquals(3, day.chunks.size)
-        assertEquals(1, day.pendingCount)
-        assertEquals(1, day.failedCount)
     }
 
     @Test fun savedDurationRespectsActualSampleRateAndChannels() {

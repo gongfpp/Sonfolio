@@ -8,9 +8,9 @@ internal sealed interface AppScreen {
     data object Settings : AppScreen
     data class Daily(val date: String = LocalDate.now().toString()) : AppScreen
     data class RawRecordings(val date: String? = null) : AppScreen
+    /** 详情页只按真实会话 ID 打开；id 由时间线或搜索结果提供。 */
     data class Conversation(
-        val type: ConversationType,
-        val id: String? = null,
+        val id: String,
         val transcriptId: String? = null,
         val query: String? = null,
     ) : AppScreen
@@ -25,15 +25,11 @@ internal fun AppScreen.toSavedRoute(): String = when (this) {
     AppScreen.Settings -> "settings"
     is AppScreen.Daily -> "daily:$date"
     is AppScreen.RawRecordings -> date?.let { "raw-recordings:$it" } ?: "raw-recordings"
-    is AppScreen.Conversation -> if (id != null) {
-        buildString {
-            append("conversation-id:")
-            append(id)
-            if (transcriptId != null) append("|").append(transcriptId)
-            if (query != null) append("^").append(query)
-        }
-    } else {
-        "conversation:${type.name}"
+    is AppScreen.Conversation -> buildString {
+        append("conversation-id:")
+        append(id)
+        if (transcriptId != null) append("|").append(transcriptId)
+        if (query != null) append("^").append(query)
     }
 }
 
@@ -55,15 +51,15 @@ internal fun appScreenFromSavedRoute(route: String): AppScreen = when {
         val caret = afterBar.indexOf('^')
         val transcriptId = if (caret >= 0) afterBar.substring(0, caret) else afterBar
         val query = if (caret >= 0) afterBar.substring(caret + 1) else ""
-        AppScreen.Conversation(
-            ConversationType.Unknown,
-            id.takeIf { it.isNotBlank() },
+        val conversationId = id.takeIf { it.isNotBlank() }
+        if (conversationId == null) AppScreen.Today else AppScreen.Conversation(
+            conversationId,
             transcriptId.takeIf { it.isNotBlank() },
             query.takeIf { it.isNotBlank() },
         )
     }
-    else -> ConversationType.entries.firstOrNull { it.name == route.substringAfter("conversation:", "") }
-        ?.let { AppScreen.Conversation(it) } ?: AppScreen.Today
+    // 旧版本会话路由与未知格式一律回到首页；真实对话仍通过 conversation-id 恢复。
+    else -> AppScreen.Today
 }
 
 /** 返回只移除当前详情，不把搜索、日期及滚动状态一并重置。 */

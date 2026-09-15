@@ -13,12 +13,8 @@ class AppScreenStateTest {
             AppScreen.Daily("2026-09-12"),
             AppScreen.RawRecordings(),
             AppScreen.RawRecordings("2026-09-11"),
-            AppScreen.Conversation(ConversationType.Release),
-            AppScreen.Conversation(ConversationType.Lunch),
-            AppScreen.Conversation(ConversationType.Game),
-            AppScreen.Conversation(ConversationType.Unknown),
-            AppScreen.Conversation(ConversationType.Unknown, "auto-test-conversation"),
-            AppScreen.Conversation(ConversationType.Unknown, "auto-test-conversation", "transcript-search-hit"),
+            AppScreen.Conversation("auto-test-conversation"),
+            AppScreen.Conversation("auto-test-conversation", "transcript-search-hit"),
         )
 
         screens.forEach { screen ->
@@ -30,6 +26,7 @@ class AppScreenStateTest {
     fun unknownRouteFallsBackToToday() {
         assertEquals(AppScreen.Today, appScreenFromSavedRoute("unknown"))
         assertEquals(AppScreen.Today, appScreenFromSavedRoute("conversation:Missing"))
+        assertEquals(AppScreen.Today, appScreenFromSavedRoute("conversation-id:"))
     }
 
     @Test
@@ -43,7 +40,7 @@ class AppScreenStateTest {
     @Test
     fun searchDetailReturnsToSearchAndKeepsHitRoute() {
         val search = AppNavigation().selectTab(AppScreen.Search)
-        val detail = search.open(AppScreen.Conversation(ConversationType.Unknown, "conversation-1", "hit-2"))
+        val detail = search.open(AppScreen.Conversation("conversation-1", "hit-2"))
         assertEquals(search, detail.back())
         assertEquals(detail, AppNavigation(detail.stack.map { appScreenFromSavedRoute(it.toSavedRoute()) }))
         assertEquals(AppScreen.Today, detail.back().back().current)

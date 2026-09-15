@@ -37,7 +37,7 @@ class SearchResultsUiTest {
         ui.onNodeWithText("测试标题1").assertDoesNotExist()
         ui.onNodeWithTag("search-results").performScrollToNode(hasText("测试标题105"))
         ui.onNodeWithText("测试标题105").performClick()
-        assertEquals(AppScreen.Conversation(ConversationType.Unknown, "c-105", "t-105", "测试"), opened)
+        assertEquals(AppScreen.Conversation("c-105", "t-105", "测试"), opened)
         ui.onNodeWithText("加载更多").assertDoesNotExist()
     }
 }

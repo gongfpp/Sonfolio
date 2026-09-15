@@ -114,7 +114,7 @@ class SummaryIntegrationTest {
             val key = "conversation:$id"
             val dayKey = "day:2026-09-12"
             suspend fun save(keyToSave: String) {
-                dao.saveSummaryRun(SummaryRunEntity(keyToSave, summaryInput(keyToSave, dao.getReadyTranscriptRows(), dao.getMarkers()).fingerprint,
+                dao.saveSummaryRun(SummaryRunEntity(keyToSave, summaryInput(keyToSave, dao.getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE), dao.getMarkers()).fingerprint,
                     "REMOTE", "fixture-model", valid.json(), "READY", null, base))
             }
             save(key); save(dayKey)
