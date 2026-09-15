@@ -18,7 +18,7 @@ import androidx.room.RoomDatabase
         SummaryRunEntity::class,
         ConversationAliasEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -26,6 +26,13 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun recordingDao(): RecordingDao
 
     companion object {
+        // 0.2.1 存储模型：整理完成后异步生成 AAC 压缩音；原始 WAV 按保留策略清理。
+        val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE audio_chunks ADD COLUMN compressedPath TEXT")
+                db.execSQL("ALTER TABLE audio_chunks ADD COLUMN compressedBytes INTEGER")
+            }
+        }
         // 0.2.1 时间模型：保存录音发生时的时区/偏移/当地日期，日期归属不再随设备时区漂移。
         // 历史行留空（''），消费端按设备时区回退。
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -92,7 +99,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { database -> instance = database }
             }
     }
 }

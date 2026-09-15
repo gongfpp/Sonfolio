@@ -60,13 +60,27 @@ internal class MemoryBackup(private val context: Context, private val database: 
             val row = chunks.getJSONObject(index)
             require(!row.isNull("endedAtMillis")) { "仍有录音未收尾，请返回首页恢复现场后再备份" }
             val id = safeId(row.getString("id"))
-            val source = File(row.getString("localPath"))
-            row.put("localPath", "")
+            val wavPath = row.getString("localPath")
+            val compressedPath = row.optString("compressedPath").takeIf { it.isNotBlank() }
             if (row.getString("processingState") != "AUDIO_DELETED") {
-                require(source.isFile) { "部分原音丢失，无法制作完整备份；已有数据未改动" }
-                val name = "audio/$id.wav"
-                row.put("backupAudio", name).put("backupBytes", source.length()).put("backupSha256", hash(source))
-                files[name] = source
+                when {
+                    wavPath.isNotBlank() && File(wavPath).isFile -> {
+                        val name = "audio/$id.wav"
+                        row.put("localPath", "").put("compressedPath", JSONObject.NULL)
+                        row.put("backupAudio", name).put("backupBytes", File(wavPath).length()).put("backupSha256", hash(File(wavPath)))
+                        files[name] = File(wavPath)
+                    }
+                    compressedPath != null && File(compressedPath).isFile -> {
+                        // 原始 WAV 已按保留策略删除时，备份压缩音；文字始终完整。
+                        val name = "audio/$id.m4a"
+                        row.put("localPath", "").put("compressedPath", "")
+                        row.put("backupAudio", name).put("backupBytes", File(compressedPath).length()).put("backupSha256", hash(File(compressedPath)))
+                        files[name] = File(compressedPath)
+                    }
+                    else -> error("部分原音丢失，无法制作完整备份；已有数据未改动")
+                }
+            } else {
+                row.put("localPath", "").put("compressedPath", JSONObject.NULL)
             }
         }
         manifest.put("tables", tables)
@@ -116,10 +130,13 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     val row = chunks.getJSONObject(index)
                     val id = safeId(row.getString("id"))
                     require(ids.add(id) && !row.isNull("endedAtMillis")) { "备份包含重复或未完成的录音" }
-                    val file = File(directory, "$id.wav")
-                    row.put("localPath", file.path)
+                    // 压缩音与原始 WAV 都可能成为备份中的可播放文件，扩展名以清单为准。
+                    val extension = if (row.optString("compressedPath").length > 0 && row.optString("localPath").isEmpty()) "m4a" else "wav"
+                    val file = File(directory, "$id.$extension")
+                    row.put("localPath", if (extension == "wav") file.path else "")
+                    if (extension == "m4a") row.put("compressedPath", file.path)
                     if (row.getString("processingState") != "AUDIO_DELETED") {
-                        require(row.getString("backupAudio") == "audio/$id.wav" && row.getLong("backupBytes") >= 44) { "原音清单无效" }
+                        require(row.getString("backupAudio") == "audio/$id.$extension" && row.getLong("backupBytes") >= 44) { "原音清单无效" }
                         expected[row.getString("backupAudio")] = row
                     }
                 }
@@ -129,7 +146,8 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     ensureActive()
                     val entry = zip.nextEntry ?: break
                     val row = expected.remove(entry.name) ?: error("备份包含未知或重复文件")
-                    val target = File(row.getString("localPath"))
+                    // 压缩音条目的目标是 compressedPath；原始 WAV 目标仍是 localPath。
+                    val target = File(if (entry.name.endsWith(".m4a")) row.getString("compressedPath") else row.getString("localPath"))
                     val digest = MessageDigest.getInstance("SHA-256")
                     var count = 0L
                     FileOutputStream(target).use { output ->

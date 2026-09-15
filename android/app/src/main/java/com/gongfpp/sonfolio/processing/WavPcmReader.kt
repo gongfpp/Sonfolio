@@ -6,7 +6,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 internal object WavPcmReader {
-    private const val HEADER_BYTES = 44L
+    internal const val HEADER_BYTES = 44L
 
     private data class WavMetadata(
         val dataOffset: Long,
