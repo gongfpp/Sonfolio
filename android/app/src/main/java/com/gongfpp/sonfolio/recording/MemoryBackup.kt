@@ -25,7 +25,13 @@ internal class MemoryBackup(private val context: Context, private val database: 
     private val audioFileMutex: kotlinx.coroutines.sync.Mutex = AudioFileAccess.mutex) {
     suspend fun export(uri: Uri): String = withContext(Dispatchers.IO) { audioFileMutex.withLock {
         requireIdle()
-        val manifest = JSONObject().put("format", "sonfolio-memory").put("version", 1).put("schema", 4)
+        // 三个概念分开：formatVersion 是备份格式自身版本，databaseSchema 是导出时的 Room 版本，
+        // appVersion 只做追溯记录；恢复兼容旧 formatVersion，而不是要求 schema 相等。
+        val manifest = JSONObject()
+            .put("format", "sonfolio-memory")
+            .put("formatVersion", FORMAT_VERSION)
+            .put("databaseSchema", database.openHelper.readableDatabase.version)
+            .put("appVersion", buildAppVersion())
         val tables = JSONObject()
         database.withTransaction {
             val sql = database.openHelper.readableDatabase
@@ -97,7 +103,10 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     require(bytes.size() + n <= MAX_METADATA) { "备份文字数据过大" }; bytes.write(buffer, 0, n)
                 }
                 val manifest = JSONObject(bytes.toString("UTF-8"))
-                require(manifest.getString("format") == "sonfolio-memory" && manifest.getInt("version") == 1 && manifest.getInt("schema") == 4) { "不支持此备份版本，请使用相应版本的声迹" }
+                require(manifest.getString("format") == "sonfolio-memory") { "不是声迹完整备份文件，普通原音导出不能用于恢复" }
+                // 旧版 manifest 写的是 "version"；新版分开 formatVersion 与 databaseSchema。
+                val formatVersion = manifest.optInt("formatVersion", manifest.optInt("version", 0))
+                require(formatVersion in 1..FORMAT_VERSION) { "不支持此备份版本，请使用相应版本的声迹" }
                 val tables = manifest.getJSONObject("tables")
                 require(tables.keys().asSequence().toSet() == TABLES.toSet()) { "备份表不完整" }
                 val chunks = tables.getJSONArray("audio_chunks")
@@ -140,7 +149,18 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     requireEmpty(); requireIdle()
                     val sql = database.openHelper.writableDatabase
                     TABLES.forEach { table ->
-                        val columns = sql.query("PRAGMA table_info($table)").use { c -> buildSet { while (c.moveToNext()) add(c.getString(c.getColumnIndexOrThrow("name"))) } }
+                        val columnInfo = sql.query("PRAGMA table_info($table)").use { c ->
+                            buildMap {
+                                while (c.moveToNext()) {
+                                    val name = c.getString(c.getColumnIndexOrThrow("name"))
+                                    put(name, ColumnRule(
+                                        notNull = c.getInt(c.getColumnIndexOrThrow("notnull")) == 1,
+                                        hasDefault = !c.isNull(c.getColumnIndexOrThrow("dflt_value")),
+                                    ))
+                                }
+                            }
+                        }
+                        val columns = columnInfo.keys
                         val rows = tables.getJSONArray(table)
                         for (index in 0 until rows.length()) {
                             val row = rows.getJSONObject(index)
@@ -152,9 +172,17 @@ internal class MemoryBackup(private val context: Context, private val database: 
                                 }
                             }
                             if (table == "summary_runs" && row.getString("state") in listOf("RUNNING", "QUEUED")) row.put("state", "CANCELLED").put("message", "备份已恢复，请重新配置总结方式后手动生成")
-                            require(row.keys().asSequence().toSet() == columns) { "备份字段与当前版本不匹配" }
+                            // 旧格式备份的列名迁移（如 conversations.title → generatedTitle）。
+                            if (formatVersion == 1) LEGACY_RENAMES[table].orEmpty().forEach { (from, to) ->
+                                if (row.has(from)) { row.put(to, row.get(from)); row.remove(from) }
+                            }
+                            val rowKeys = row.keys().asSequence().toSet()
+                            require(columns.containsAll(rowKeys)) { "备份字段与当前版本不匹配" }
+                            // 缺失列仅允许旧备份尚未包含的可空/有默认值列（如 note、originalText），其余拒绝。
+                            val missing = columns - rowKeys
+                            require(missing.all { val rule = columnInfo.getValue(it); !rule.notNull || rule.hasDefault }) { "备份字段与当前版本不匹配" }
                             val values = ContentValues()
-                            columns.forEach { name -> when (val value = row.get(name)) {
+                            rowKeys.forEach { name -> when (val value = row.get(name)) {
                                 JSONObject.NULL -> values.putNull(name)
                                 is String -> values.put(name, value)
                                 is Int -> values.put(name, value)
@@ -193,5 +221,15 @@ internal class MemoryBackup(private val context: Context, private val database: 
         private val TABLES = listOf("audio_chunks", "speech_segments", "conversations", "transcripts", "markers", "recording_gaps", "conversation_summaries", "daily_journals", "summary_runs", "conversation_aliases")
         private const val MAX_METADATA = 64 * 1024 * 1024
         private const val RESERVE = 512L * 1024 * 1024
+        private const val FORMAT_VERSION = 2
+        /** formatVersion 1 备份在恢复时改名到当前列名；缺失的可空列按默认值导入。 */
+        private val LEGACY_RENAMES = mapOf("conversations" to mapOf("title" to "generatedTitle"))
+
+        private data class ColumnRule(val notNull: Boolean, val hasDefault: Boolean)
     }
+
+    private fun buildAppVersion(): String = runCatching {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        info.versionName ?: "unknown"
+    }.getOrDefault("unknown")
 }
