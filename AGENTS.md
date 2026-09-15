@@ -7,3 +7,25 @@
 - 连接失效、手机锁屏或安装被系统拦截时，明确告知用户，请用户解锁或允许安装；不通过更改锁屏、安全设置或清除应用数据绕过。
 - 覆盖安装前核对录音状态并备份必要元数据和原音哈希。不得卸载个人使用的主应用以绕过签名不一致。
 - 主机上的编译、静态检查和 JVM 单元测试与真机运行验收分开记录，不能作为真机通过的替代证据。
+<!-- aki-agent-kit:bootstrap:start -->
+## Personal Development Baseline
+
+Project profile: `project`
+
+在每个新会话进行实质性规划或修改之前：
+
+1. 读取项目开发原则：
+   https://github.com/gongfpp/aki-agent-kit/blob/main/principles/project-development.md?raw=1
+2. 如果 profile 为 `game`，额外读取：
+   https://github.com/gongfpp/aki-agent-kit/blob/main/principles/game-development.md?raw=1
+3. 需要产生 Git 修改时读取：
+   https://github.com/gongfpp/aki-agent-kit/blob/main/principles/git.md?raw=1
+4. 只有在精简、清理、架构收敛或删除无用复杂度的任务中读取：
+   https://github.com/gongfpp/aki-agent-kit/blob/main/principles/simplification.md?raw=1
+   如果 profile 为 `game`，同时读取：
+   https://github.com/gongfpp/aki-agent-kit/blob/main/principles/game-simplification.md?raw=1
+
+必须实际读取成功后再声称使用了最新版原则。远程读取失败时明确指出失败项，并继续遵循当前项目已有事实、契约和用户指令。
+
+这些内容是个人开发偏好，不覆盖项目自身的真实契约或更高优先级指令。
+<!-- aki-agent-kit:bootstrap:end -->
