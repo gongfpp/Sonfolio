@@ -9,6 +9,13 @@ import java.io.File
 import java.util.UUID
 import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 
 class AsrWorker(
@@ -53,8 +60,9 @@ class AsrWorker(
             }
             val texts = when {
                 segments.isEmpty() -> emptyList()
-                config.mode == TranscriptionMode.REMOTE -> RemoteSpeechTransport(app.transcriptionSettings)
-                    .transcribe(file, windows, config, chunk.id, chunk.startedAtMillis, language)
+                config.mode == TranscriptionMode.REMOTE -> remoteTranscribe(
+                    app, dao, file, segments, config, chunk.id, chunk.startedAtMillis, language,
+                )
                 else -> InferenceClient(applicationContext).transcribe(file, windows, language)
             }
             check(segments.size == texts.size) { "转写片段数量不完整，原音保留，请重试" }
@@ -102,8 +110,83 @@ class AsrWorker(
         }
     }
 
+    /**
+     * 远程转写：并发上传各人声窗口，避免逐窗口串行等待。已由相同模型+提供商转写过的窗口直接
+     * 复用现有文字；部分窗口失败时，把已成功的文字落库并把状态置为 ASR_FAILED，重试只上传
+     * 缺失片段，不会对已计费的窗口重复请求。
+     */
+    private suspend fun remoteTranscribe(
+        app: SonfolioApplication,
+        dao: com.gongfpp.sonfolio.data.local.RecordingDao,
+        file: File,
+        segments: List<com.gongfpp.sonfolio.data.local.SpeechSegmentEntity>,
+        config: TranscriptionConfig,
+        chunkId: String,
+        startedAt: Long,
+        language: String,
+    ): List<String> {
+        val transport = RemoteSpeechTransport(app.transcriptionSettings)
+        val versionTag = "remote:${config.provider.name}:vad-window-v1"
+        val reusable = dao.getTranscriptsForChunk(chunkId)
+            .filter { it.modelName == config.model && it.modelVersion == versionTag }
+            .associateBy { it.speechSegmentId }
+        val pending = segments.filter { it.id !in reusable }
+        val results = coroutineScope {
+            val permits = Semaphore(REMOTE_CONCURRENCY)
+            pending.map { segment ->
+                async {
+                    permits.withPermit {
+                        segment to runCatching {
+                            transport.transcribeWindow(
+                                file,
+                                DetectedSpeechWindow(segment.startOffsetMillis, segment.endOffsetMillis),
+                                config, chunkId, startedAt, language,
+                            )
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        // 用户停止或系统取消时不允许把取消当成转写失败落库。
+        currentCoroutineContext().ensureActive()
+        val failures = results.filter { it.second.isFailure }
+        if (failures.isNotEmpty()) {
+            val succeeded = results.mapNotNull { (segment, result) -> result.getOrNull()?.let { segment to it } }
+            app.database.withTransaction {
+                dao.deleteTranscriptsForChunk(chunkId)
+                reusable.values.forEach { dao.insertTranscript(it) }
+                succeeded.forEach { (segment, text) ->
+                    if (text.isNotBlank()) {
+                        dao.insertTranscript(
+                            TranscriptEntity(
+                                id = "transcript-${segment.id}",
+                                speechSegmentId = segment.id,
+                                conversationId = null,
+                                startedAtMillis = startedAt + segment.startOffsetMillis,
+                                endedAtMillis = startedAt + segment.endOffsetMillis,
+                                text = text,
+                                languageTag = if (config.provider == SpeechProvider.SILICONFLOW) "auto" else language,
+                                modelName = config.model,
+                                modelVersion = versionTag,
+                                processingState = "ASR_READY",
+                                errorMessage = null,
+                            ),
+                        )
+                    }
+                    dao.updateSpeechSegmentState(segment.id, "ASR_READY")
+                }
+            }
+            error("${failures.size}/${pending.size} 个片段转写失败：${failures.first().second.exceptionOrNull()?.message}；已完成的文字已保留，重试只处理剩余片段")
+        }
+        val textBySegment = reusable.mapValues { it.value.text }.toMutableMap()
+        results.forEach { (segment, result) -> textBySegment[segment.id] = result.getOrThrow() }
+        return segments.map { textBySegment.getValue(it.id) }
+    }
+
     companion object {
         const val AUDIO_CHUNK_ID = "audio_chunk_id"
         const val TAG = "sonfolio-asr"
+        /** 远程窗口并发上传数；过高容易触发提供商限流（429），过低失去并行收益。 */
+        private const val REMOTE_CONCURRENCY = 3
     }
 }

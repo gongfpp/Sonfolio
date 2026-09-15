@@ -41,7 +41,8 @@ class SenseVoiceAsrProcessor(
                     useInverseTextNormalization = true,
                 ),
                 tokens = tokens.absolutePath,
-                numThreads = 1,
+                // int8 SenseVoice 对线程数近乎线性加速；留 2 个核给录音、VAD 与系统。
+                numThreads = minOf(4, Runtime.getRuntime().availableProcessors()).coerceAtLeast(1),
                 debug = false,
                 provider = "cpu",
             ),

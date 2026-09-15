@@ -5,6 +5,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 static std::string bytes(JNIEnv *env, jbyteArray input) {
@@ -33,7 +34,10 @@ Java_com_gongfpp_sonfolio_summary_LocalSummaryNative_generate(JNIEnv *env, jobje
         if (!model) throw std::runtime_error("model");
         const auto *vocab = llama_model_get_vocab(model.get());
         auto cp = llama_context_default_params();
-        cp.n_ctx = 4096; cp.n_batch = 256; cp.n_ubatch = 128; cp.n_threads = 2; cp.n_threads_batch = 2;
+        // 大核数不确定时取 4；0.5B Q4 在 4 线程比 2 线程明显更快，录音进程不受此影响（独立 :summary 进程）。
+        unsigned int hw = std::thread::hardware_concurrency();
+        int threads = hw >= 4 ? 4 : (int)std::max(1u, hw);
+        cp.n_ctx = 4096; cp.n_batch = 256; cp.n_ubatch = 128; cp.n_threads = threads; cp.n_threads_batch = threads;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(150);
         cp.abort_callback = [](void *data) { return std::chrono::steady_clock::now() > *static_cast<std::chrono::steady_clock::time_point *>(data); };
         cp.abort_callback_data = &deadline;

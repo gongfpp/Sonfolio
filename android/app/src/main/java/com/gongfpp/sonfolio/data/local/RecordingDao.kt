@@ -227,6 +227,16 @@ interface RecordingDao {
 
     @Query(
         """
+        SELECT * FROM transcripts
+        WHERE speechSegmentId IN (
+            SELECT id FROM speech_segments WHERE audioChunkId = :audioChunkId
+        )
+        """,
+    )
+    suspend fun getTranscriptsForChunk(audioChunkId: String): List<TranscriptEntity>
+
+    @Query(
+        """
         DELETE FROM transcripts
         WHERE speechSegmentId IN (
             SELECT id FROM speech_segments WHERE audioChunkId = :audioChunkId
