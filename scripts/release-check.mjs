@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 const run = (command, args) => execFileSync(command, args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 run('git', ['diff', '--check']);
 if (!readFileSync('LICENSE', 'utf8').includes('GNU GENERAL PUBLIC LICENSE')) throw Error('缺少 GPL 许可');
@@ -27,7 +28,14 @@ for (const path of current) {
 }
 console.log(`源码规则检查通过：历史文本对象 ${checked} 个；不代表完成专业安全审计。`);
 if (!process.argv.includes('--source-only')) {
-  const apk = process.argv[2] || 'android/app/build/outputs/apk/release/app-release.apk';
+  let apk = process.argv[2] || 'android/app/build/outputs/apk/release/app-release.apk';
+  if (!existsSync(apk)) {
+    // 无签名配置的构建产物是 app-release-unsigned.apk；按目录里实际的 apk 解析。
+    const directory = 'android/app/build/outputs/apk/release';
+    const candidates = existsSync(directory) ? readdirSync(directory).filter(name => name.endsWith('.apk')) : [];
+    if (candidates.length === 0) throw Error('未找到 release 构建产物 APK');
+    apk = join(directory, candidates[0]);
+  }
   if (statSync(apk).size > 80_000_000) throw Error('APK 超过 80 MB，请检查大模型是否误打包');
   const listing = run('unzip', ['-Z1', apk]);
   if (/\.gguf$|sense-voice-model\.int8\.onnx$/m.test(listing)) throw Error('APK 中包含应按需下载的大模型');
