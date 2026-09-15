@@ -174,15 +174,16 @@ class RecordingService : Service() {
             .setBufferSizeInBytes(bufferSize)
             .build()
 
-        check(recorder.state == AudioRecord.STATE_INITIALIZED) {
-            "AudioRecord 初始化失败"
-        }
         val callback = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
                 configs.firstOrNull { it.clientAudioSessionId == recorder.audioSessionId }?.let(::updateInputConfiguration)
             }
         }
         try {
+            // 状态检查必须在 try 内：构建成功但未初始化时也要走 finally 释放 native 资源。
+            check(recorder.state == AudioRecord.STATE_INITIALIZED) {
+                "AudioRecord 初始化失败"
+            }
             runCatching { recorder.registerAudioRecordingCallback(mainExecutor, callback) }
                 .onFailure { Log.w(TAG, "系统音频状态监测不可用，继续保存原音", it) }
             recorder.startRecording()

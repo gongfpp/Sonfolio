@@ -90,7 +90,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         for (date in dates) enqueue("day:$date", automatic = true)
     }
 
-    suspend fun cancelAll() {
+    suspend fun cancelAll() = enqueueMutex.withLock {
         work.cancelAllWorkByTag(TAG).result.get()
         dao.getSummaryRuns().filter { it.state in listOf("QUEUED", "RUNNING") }.forEach {
             dao.updateSummaryRun(it.sourceKey, "CANCELLED", "配置改变或用户取消，已有小结保留", System.currentTimeMillis())

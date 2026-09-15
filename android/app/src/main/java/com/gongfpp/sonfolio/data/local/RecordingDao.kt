@@ -41,6 +41,10 @@ interface RecordingDao {
     @Query("UPDATE audio_chunks SET compressedPath = :path, compressedBytes = :bytes WHERE id = :id AND compressedPath IS NULL AND processingState = 'ASR_READY'")
     suspend fun setCompressedAudio(id: String, path: String, bytes: Long): Int
 
+    /** 压缩失败只提示仍处于 ASR_READY 的行；已被清理（AUDIO_DELETED）的行不得被覆盖回可备份状态。 */
+    @Query("UPDATE audio_chunks SET errorMessage = :errorMessage WHERE id = :id AND processingState = 'ASR_READY'")
+    suspend fun noteCompressionFailure(id: String, errorMessage: String): Int
+
     /** 原始 WAV 已按保留策略删除；压缩音继续保留，文字不受影响。 */
     @Query("UPDATE audio_chunks SET byteSize = 0, localPath = '' WHERE id = :id AND compressedPath IS NOT NULL AND localPath <> ''")
     suspend fun markWavRetired(id: String)
@@ -199,30 +203,21 @@ interface RecordingDao {
 
     @Query(
         """
-        UPDATE audio_chunks
-        SET processingState = CASE
-                WHEN processingState = 'VAD_RUNNING' THEN 'RECORDED'
-                WHEN processingState = 'ASR_RUNNING' THEN 'VAD_READY'
-                ELSE processingState
-            END,
-            errorMessage = CASE
-                WHEN processingState IN ('VAD_RUNNING', 'ASR_RUNNING')
-                    THEN '应用退出后等待重新处理'
-                ELSE errorMessage
-            END
+        SELECT * FROM audio_chunks
         WHERE processingState IN ('VAD_RUNNING', 'ASR_RUNNING')
+        ORDER BY startedAtMillis ASC
         """,
     )
-    suspend fun resetInterruptedProcessing()
+    suspend fun getChunksInRunningStates(): List<AudioChunkEntity>
 
     @Query(
         """
         UPDATE speech_segments
         SET processingState = 'VAD_READY'
-        WHERE processingState = 'ASR_RUNNING'
+        WHERE audioChunkId = :audioChunkId AND processingState = 'ASR_RUNNING'
         """,
     )
-    suspend fun resetInterruptedSpeechSegments()
+    suspend fun resetInterruptedSpeechSegmentsFor(audioChunkId: String)
 
     @Query("DELETE FROM speech_segments WHERE audioChunkId = :audioChunkId")
     suspend fun deleteSpeechSegments(audioChunkId: String)
