@@ -96,7 +96,7 @@ import kotlinx.coroutines.*
                             app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed)
                             app.recordingRepository.enqueuePendingAsr()
                         }
-                        key = ""; message = "转文字设置已保存。已有文字不重做；外部识别不会自动上传历史录音。"
+                        key = ""; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) { message = error.message ?: "设置保存失败，请重试" }
                     finally { busy = false }

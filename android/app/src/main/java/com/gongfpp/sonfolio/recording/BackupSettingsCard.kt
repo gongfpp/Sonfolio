@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
         }
     }
     if (restoring) AlertDialog(onDismissRequest = { restoring = false }, title = { Text("恢复到空数据库") },
-        text = { Text("仅选择你信任的声迹完整备份。已有记录时会拒绝恢复，不删除现有数据。恢复后需重新下载模型，外部 API 不会自动启用。") },
+        text = { Text("仅选择你信任的声迹完整备份。已有记录时会拒绝恢复，不删除现有数据。恢复后需重新下载模型，在线识别不会自动启用。") },
         confirmButton = { TextButton(onClick = { restoring = false; restore.launch(arrayOf("application/zip", "application/octet-stream")) }) { Text("选择完整备份") } },
         dismissButton = { TextButton(onClick = { restoring = false }) { Text("取消") } })
 }

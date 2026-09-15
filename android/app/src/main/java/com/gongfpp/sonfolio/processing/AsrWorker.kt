@@ -36,7 +36,7 @@ class AsrWorker(
             return Result.success()
         }
         if (segments.isNotEmpty() && config.mode == TranscriptionMode.LOCAL && com.gongfpp.sonfolio.models.ModelCatalog.file(applicationContext.filesDir, model).length() != model.bytes) {
-            dao.updateProcessingState(chunkId, "VAD_READY", "等待语音识别模型：请打开设置 → 转文字方式，下载模型后继续转写；也可选择外部 API")
+            dao.updateProcessingState(chunkId, "VAD_READY", "等待语音识别模型：请打开设置 → 转文字方式，下载模型后继续转写；也可选择在线识别")
             return Result.success()
         }
         val file = File(chunk.localPath)

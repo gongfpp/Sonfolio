@@ -168,7 +168,7 @@ internal fun SummarySettingsCard() {
             }) { Text("保存总结设置") }
             if (saved.mode != SummaryMode.BASIC) {
                 OutlinedButton(enabled = !busy, onClick = { action { app.summaryCoordinator.test(app.summarySettings.read()) } }) { Text("测试已保存配置") }
-                Text("测试只使用固定样例，不读取真实转写；外部 API 测试也可能计费。", fontSize = 11.sp)
+                Text("测试只使用固定样例，不读取真实转写；在线总结测试也可能计费。", fontSize = 11.sp)
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             message?.let { Text(it, fontSize = 12.sp) }
@@ -191,7 +191,7 @@ internal fun SummaryAction(sourceKey: String) {
     val pending = run?.state in listOf("QUEUED", "RUNNING")
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Text(when {
-            run?.state == "READY" && run?.outputJson != null -> "AI 总结 · ${if (run?.provider == "LOCAL") "手机本地" else "外部 API"} · 请结合原文核对"
+            run?.state == "READY" && run?.outputJson != null -> "AI 总结 · ${if (run?.provider == "LOCAL") "在手机上" else "在线"} · 请结合原文核对"
             run?.message != null -> run!!.message!!
             config.mode == SummaryMode.BASIC -> "本地基础整理 · 如需 AI 总结，可在设置中选择方式"
             else -> "已选择${config.mode.label} · 尚未生成本份 AI 总结"
