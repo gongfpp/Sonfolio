@@ -11,39 +11,55 @@
   th, td { border: 1px solid #E6E5DE; padding: 9px 12px; text-align: left; vertical-align: top; }
   th { background: #E3F0DE; }
   a { color: #1E7046; font-weight: 600; }
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 14px; }
   .card { background:#FFFEFA; border:1px solid #E6E5DE; border-radius: 14px; padding: 16px; }
   .card b { display:block; margin-bottom: 6px; }
   .card p { font-size: 13px; color:#626B65; margin: 0; }
+  .card.new { border-color: #A9D8B4; }
+  .card .mk { display:inline-block; margin-top:8px; background:#F6EEDC; color:#694E00; border-radius:999px; padding:2px 9px; font-size:11px; }
   .tip { font-size: 13px; color:#626B65; }
+  .deprecated { opacity: .55; }
 </style>
 </head>
 <body>
-<h1>声迹首页重构 · 三方案对比</h1>
-<p class="tip">点击各方案打开完整手机原型（含逐条方案说明）。</p>
+<h1>声迹首页重构 · 方案对比（第一轮 + 第二轮）</h1>
+<p class="tip">点击各方案打开完整手机原型（含逐条方案说明）。第二轮（B2/D/E/F）全部把「标记刚才」（3/10/20 分钟回溯标记）放回一级位置。</p>
+
 <div class="cards">
-  <div class="card"><b><a href="proposal-A-timeline.html">A · 时间轴优先</a></b>
-    <p>一天是一条时间轴。时间刻度竖排、卡片按时间锚定、缺口即虚线；录音/停止为底部 Dock 主按钮。适合重回看、重上下文。</p></div>
-  <div class="card"><b><a href="proposal-B-dashboard.html">B · 状态仪表优先</a></b>
-    <p>统计三格、录音主卡、处理进度条、两周热力常驻首屏。适合长期挂着录音、最关心“还在录吗、处理到哪了”的用户。</p></div>
-  <div class="card"><b><a href="proposal-C-recorder.html">C · 录音优先</a></b>
-    <p>首屏是录音驾驶舱：超大计时器、实时波形、恢复/缺口辅助键、3/10/20 分钟标记直达。回看列表下移为轻量feed。</p></div>
+  <div class="card deprecated"><b><a href="proposal-A-timeline.html">A · 时间轴优先</a>（第一轮）</b>
+    <p>一天是一条时间轴。时间刻度竖排、卡片按时间锚定、缺口即虚线；录音/停止为底部 Dock 主按钮。<br>标记：无直达入口（第二轮弃权原因）。</p></div>
+  <div class="card deprecated"><b><a href="proposal-B-dashboard.html">B · 状态仪表优先</a>（第一轮）</b>
+    <p>统计三格、录音主卡、处理进度条、两周热力常驻首屏。<br>标记：缺失——已被 <a href="proposal-B2-dashboard-markers.html">B2 修订版</a> 取代。</p></div>
+  <div class="card deprecated"><b><a href="proposal-C-recorder.html">C · 录音优先</a>（第一轮）</b>
+    <p>首屏录音驾驶舱：计时器、波形、标记直达、回看是轻量 feed。<br>标记：首屏直达（三键横排）。</p></div>
+
+  <div class="card new"><b><a href="proposal-B2-dashboard-markers.html">B2 · 状态仪表 + 标记直达</a> ★第二轮</b>
+    <p>保留 B 的统计/进度/热力，录音主卡下半部并入「标记刚才」区（★3分主键 + 10/20分圆键），反馈内联显示。</p><span class="mk">含标记直达</span></div>
+  <div class="card new"><b><a href="proposal-D-journal.html">D · 日记优先</a> ★第二轮</b>
+    <p>首页先读「今日故事」卡，对话按壹/贰/叁章节展开；标记做成吸附在录音键上方的琥珀色悬浮条，任何滚动位置可及。</p><span class="mk">含标记悬浮条</span></div>
+  <div class="card new"><b><a href="proposal-E-chat.html">E · 对话流</a> ★第二轮</b>
+    <p>聊天线程心智：录音是置顶「正在进行的线程」，标记 = 线程内快捷回复条（★3分/10分/20分），对话预览引述原话。</p><span class="mk">标记=快捷回复条</span></div>
+  <div class="card new"><b><a href="proposal-F-minimal.html">F · 极简录音条</a> ★第二轮</b>
+    <p>白底极简列表；录音时底部浮出深色条：红点计时 + ★3/10/20分标记键 + 停止，录/标/停收进一根条。</p><span class="mk">录标停一根条</span></div>
 </div>
+
 <h2>维度对比</h2>
 <table>
-  <tr><th>维度</th><th>A 时间轴</th><th>B 状态仪表</th><th>C 录音舱</th></tr>
-  <tr><td>首屏第一眼</td><td>今天发生的事</td><td>今天的全貌与系统状态</td><td>录音本身</td></tr>
-  <tr><td>录音操作位置</td><td>底部常驻 Dock</td><td>主卡大按钮</td><td>首屏正中（最大）</td></tr>
-  <tr><td>处理进度可见性</td><td>卡片内小标签</td><td>独立进度面板（最强）</td><td>列表内pending卡</td></tr>
-  <tr><td>历史回看效率</td><td>高（按时间扫读）</td><td>中（热力→日期）</td><td>中（轻量日期条）</td></tr>
-  <tr><td>信息密度</td><td>低</td><td>高</td><td>中</td></tr>
-  <tr><td>实现改动量</td><td>中：重做列表布局</td><td>中：新增统计/进度聚合组件</td><td>中偏大：录音页组件重排</td></tr>
+  <tr><th>维度</th><th>B2 仪表+标记</th><th>D 日记</th><th>E 对话流</th><th>F 极简条</th></tr>
+  <tr><td>首屏第一眼</td><td>今天全貌与系统状态</td><td>今天的故事（总结）</td><td>正在录 + 最近对话</td><td>正在录 + 列表</td></tr>
+  <tr><td>标记刚才的位置</td><td>录音主卡内（固定）</td><td>底部悬浮条（随滚动常驻）</td><td>线程内快捷条（置顶线程）</td><td>深色录音条内（随滚动常驻）</td></tr>
+  <tr><td>处理进度可见性</td><td>独立进度面板（最强）</td><td>章节卡 pending 样式</td><td>线程虚线 + 灰字</td><td>行内副标题（最弱）</td></tr>
+  <tr><td>历史回看效率</td><td>中（热力→日期）</td><td>中（日历链接）</td><td>高（按线程扫读）</td><td>高（纯列表扫读）</td></tr>
+  <tr><td>信息密度</td><td>高</td><td>中</td><td>中</td><td>低</td></tr>
+  <tr><td>实现改动量</td><td>小（在现有仪表布局上加标记区）</td><td>中（新增故事卡+章节列表）</td><td>中（列表换线程样式+引语）</td><td>中偏大（新增深色录音条与轻主题）</td></tr>
 </table>
+
 <h2>决策提示</h2>
 <ul class="tip">
-  <li>三者可组合：例如「B 的处理进度面板 + A 的时间轴列表」或「C 的驾驶舱 + A 的列表」。</li>
-  <li>选定后下一步：确认要保留/舍弃的旧元素（DateNavigator、已保存时长卡、处理摘要卡），再进入 Compose 实现。</li>
-  <li>实现范围只动首页（TodayScreen 及子组件），详情页/搜索/设置维持现状。</li>
+  <li>你说「B 还行但缺标记」→ <b>B2 就是 B 的直接答案</b>，改动量也最小（只加标记区与内联反馈）。</li>
+  <li>若想要标记在任何滚动位置都够得着（录着音翻历史时标记），D 的悬浮条 / F 的深色条比 B2 的卡内固定位置更顺手。</li>
+  <li>仍可组合：如「B2 的仪表上半部 + F 的深色录音条」。</li>
+  <li>选定后下一步：确认保留/舍弃的旧元素（DateNavigator、已保存时长卡、处理摘要卡），再进入 Compose 实现（只动 TodayScreen 及子组件）。</li>
 </ul>
 </body>
 </html>

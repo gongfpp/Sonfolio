@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 E · 对话流 — 声迹首页重构提案</title>
+<style>
+  :root {
+    --ink: #17201C; --ink-soft: #626B65; --line: #E6E5DE;
+    --green: #1E7046; --pale-green: #E3F0DE; --card: #FFFEFA; --bg: #F4F3EE;
+    --amber-deep: #694E00; --amber-pale: #F6EEDC;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Noto Sans SC", sans-serif; background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; align-items: center; padding: 40px 16px; gap: 28px; }
+  h1 { font-size: 20px; }
+  .phone { width: 390px; height: 820px; background: var(--bg); border: 1px solid var(--line); border-radius: 36px;
+    box-shadow: 0 18px 50px rgba(23,32,28,.14); overflow: hidden; display: flex; flex-direction: column; }
+  .statusbar { display: flex; justify-content: space-between; padding: 12px 22px 4px; font-size: 12px; color: var(--ink-soft); }
+  .topbar { padding: 8px 20px 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .topbar .title { font-size: 17px; font-weight: 700; }
+  .daypill { display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700; }
+  .daypill span { color: var(--ink-soft); font-weight: 400; }
+  .scroll { flex: 1; overflow-y: auto; padding: 4px 14px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* 录音 = 一个置顶的「正在进行的线程」 */
+  .thread-live { border: 1.5px solid var(--green); border-radius: 16px; background: #F4FAF3; padding: 12px 14px; }
+  .tl-head { display: flex; align-items: center; gap: 8px; }
+  .tl-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); animation: p 1.6s infinite; }
+  @keyframes p { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .tl-head b { font-size: 14px; }
+  .tl-head .t { margin-left: auto; font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .tl-bubble { margin-top: 9px; background: #fff; border: 1px solid var(--line); border-radius: 4px 14px 14px 14px;
+    padding: 9px 12px; font-size: 12.5px; color: var(--ink-soft); }
+  /* 标记 = 线程内的快捷回复条（像聊天表情快捷条） */
+  .quick-marks { display: flex; gap: 7px; margin-top: 10px; }
+  .qm { border: 1px solid #EAD9AC; background: var(--amber-pale); color: var(--amber-deep); border-radius: 999px;
+    padding: 8px 14px; font-size: 13px; font-weight: 700; display: inline-flex; gap: 5px; align-items: center; }
+  .qm.main { background: var(--amber-deep); color: #FFF6DF; border-color: var(--amber-deep); }
+  .qm-hint { font-size: 10.5px; color: var(--ink-soft); margin-top: 6px; }
+  .tl-stop { margin-top: 10px; width: 100%; border: none; background: var(--green); color: #fff; border-radius: 12px;
+    padding: 10px; font-size: 14px; font-weight: 700; }
+
+  .daymark { text-align: center; font-size: 11px; color: var(--ink-soft); display: flex; align-items: center; gap: 10px; }
+  .daymark::before, .daymark::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+
+  .thread { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; }
+  .th-head { display: flex; align-items: baseline; gap: 8px; }
+  .th-head .th-title { font-weight: 700; font-size: 15px; flex: 1; }
+  .th-head .th-meta { font-size: 11px; color: var(--ink-soft); }
+  .th-quote { margin-top: 8px; background: #F7F7F2; border-radius: 4px 12px 12px 12px; padding: 8px 11px; font-size: 12.5px;
+    color: var(--ink); border-left: 3px solid var(--green); }
+  .th-quote.more::after { content: " ···"; color: var(--ink-soft); }
+  .th-points { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { background: var(--pale-green); color: var(--green); border-radius: 999px; padding: 3px 10px; font-size: 11px; }
+  .tag.amber { background: var(--amber-pale); color: var(--amber-deep); }
+  .th-foot { margin-top: 9px; display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); }
+  .th-foot .play { color: var(--green); font-weight: 700; }
+  .thread.pending { border-style: dashed; }
+  .mark-flag { margin-top: 8px; background: var(--amber-pale); border-radius: 10px; padding: 6px 10px;
+    font-size: 11px; color: var(--amber-deep); display: flex; gap: 6px; align-items: center; }
+  .note { max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; }
+  .note h2 { font-size: 16px; margin-bottom: 8px; }
+  .note li { font-size: 13px; color: var(--ink-soft); margin: 5px 0 5px 18px; }
+</style>
+</head>
+<body>
+<h1>方案 E · 对话流 —— 「像聊天记录一样回看这一天」</h1>
+
+<div class="phone">
+  <div class="statusbar"><span>9:41</span><span>●●●</span></div>
+  <div class="topbar">
+    <span class="title">声迹</span>
+    <span class="daypill">今天 9月16日 <span>‹ ›</span></span>
+    <span style="font-size:13px;color:var(--ink-soft)">一日回顾 ›</span>
+  </div>
+  <div class="scroll">
+
+    <div class="thread-live">
+      <div class="tl-head"><span class="tl-dot"></span><b>正在进行的记录</b><span class="t">02:14:37</span></div>
+      <div class="tl-bubble">已保存 4 段原音 · 当前切片还剩 1:23 自动落盘；人声检测在本机进行。</div>
+      <div class="quick-marks">
+        <span class="qm main">★ 标记 3分</span>
+        <span class="qm">10分</span>
+        <span class="qm">20分</span>
+      </div>
+      <div class="qm-hint">标记刚才：把往前 N 分钟划为重点，涉及对话高亮保留 ★</div>
+      <button class="tl-stop">停止记录</button>
+    </div>
+
+    <div class="daymark">今天 · 5 场对话 · 2:09</div>
+
+    <div class="thread">
+      <div class="th-head"><span class="th-title">投产安排与回滚检查</span><span class="th-meta">09:12 · 38分</span></div>
+      <div class="th-quote">……回滚预案就由值班同学盯，明早九点我们过一遍清单</div>
+      <div class="th-points"><span class="tag amber">★ 10:02 标记</span><span class="tag">安排 · 明早</span><span class="tag">要点 ×3</span></div>
+      <div class="th-foot"><span>3 段原音 · 24 行转写</span><span class="play">▶ 对照回听</span></div>
+    </div>
+
+    <div class="thread pending">
+      <div class="th-head"><span class="th-title" style="color:var(--ink-soft)">午前灵感：播客选题</span><span class="th-meta">10:26 · 6分</span></div>
+      <div class="th-quote more" style="color:var(--ink-soft)">转写排队中（第 2/7 段）· 原音已保存</div>
+      <div class="th-foot"><span>查看原音</span></div>
+    </div>
+
+    <div class="thread">
+      <div class="th-head"><span class="th-title">午餐后散步闲聊</span><span class="th-meta">昨天 14:05 · 22分</span></div>
+      <div class="th-quote">周末要不去看那个新开的展览？</div>
+      <div class="mark-flag">★ 14:31 往前 10 分钟已标记</div>
+      <div class="th-foot"><span>2 段原音</span><span class="play">▶ 回听</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <h2>方案说明</h2>
+  <ul>
+    <li><b>结构：</b>借手机用户最熟悉的「聊天线程」心智：录音是置顶的「正在进行的线程」，每场对话是一个气泡线程，引述一句最关键的转写原文当预览。</li>
+    <li><b>标记 = 快捷回复条：</b>「★ 标记 3分 / 10分 / 20分」做成线程输入条位置的琥珀色快捷按钮——就像聊天里的表情快捷条，肌肉记忆零成本，且天然只在录音线程里出现。</li>
+    <li><b>标记回显：</b>被标记的线程内出现琥珀色旗标行；引述气泡保留转写原文，突出「这是原话」的产品事实。</li>
+    <li><b>处理状态：</b>pending 线程用虚线 + 灰字表达「排队中」，不打断流的连续感。</li>
+    <li><b>适合：</b>以「找回聊过什么」为主的用户；把转写当对话记录读。</li>
+    <li><b>代价：</b>统计/存储/热力完全没有（需藏到设置或日历页）；引语只取一句，长对话预览信息量低于纯摘要式。</li>
+  </ul>
+</div>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 F · 极简录音条 — 声迹首页重构提案</title>
+<style>
+  :root {
+    --ink: #17201C; --ink-soft: #626B65; --line: #E6E5DE;
+    --green: #1E7046; --pale-green: #E3F0DE; --card: #FFFEFA; --bg: #FFFFFF;
+    --amber-deep: #694E00; --amber-pale: #F6EEDC;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Noto Sans SC", sans-serif; background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; align-items: center; padding: 40px 16px; gap: 28px; }
+  h1 { font-size: 20px; }
+  .phone { width: 390px; height: 820px; background: var(--bg); border: 1px solid var(--line); border-radius: 36px;
+    box-shadow: 0 18px 50px rgba(23,32,28,.14); overflow: hidden; display: flex; flex-direction: column; position: relative; }
+  .statusbar { display: flex; justify-content: space-between; padding: 12px 22px 4px; font-size: 12px; color: var(--ink-soft); }
+  .header { padding: 14px 22px 2px; display: flex; align-items: baseline; justify-content: space-between; }
+  .header .date { font-size: 22px; font-weight: 800; letter-spacing: .5px; }
+  .header .sub { font-size: 11px; color: var(--ink-soft); }
+  .scroll { flex: 1; overflow-y: auto; padding: 10px 18px 150px; display: flex; flex-direction: column; gap: 4px; }
+
+  .row { display: flex; align-items: center; gap: 12px; padding: 13px 4px; border-bottom: 1px solid #F0F0EA; }
+  .row:last-child { border-bottom: none; }
+  .row .r-time { width: 44px; font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; flex: none; }
+  .row .r-body { flex: 1; min-width: 0; }
+  .row .r-title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .r-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .star { flex: none; font-size: 13px; color: var(--amber-deep); background: var(--amber-pale); border-radius: 8px; padding: 3px 7px; }
+  .row.pending .r-title, .row.pending .r-sub { color: var(--ink-soft); }
+  .row.live { border-bottom: none; background: var(--pale-green); margin: 0 -10px; padding: 12px 14px; border-radius: 14px; }
+  .row.live .r-title { color: var(--green); font-weight: 700; }
+
+  /* 底部录音条：计时 + 标记三键 + 停止，录音时一根条全搞定 */
+  .recbar { position: absolute; left: 14px; right: 14px; bottom: 20px; background: #17201C; border-radius: 20px;
+    padding: 10px 14px; color: #fff; display: flex; align-items: center; gap: 10px; box-shadow: 0 14px 30px rgba(23,32,28,.35); }
+  .recbar .rb-dot { width: 9px; height: 9px; border-radius: 50%; background: #FF6B5E; animation: p 1.6s infinite; }
+  @keyframes p { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .recbar .rb-time { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .recbar .rb-spacer { flex: 1; }
+  .recbar .mk { border: 1px solid rgba(255,233,184,.45); background: transparent; color: #FFE9B8; border-radius: 999px;
+    padding: 8px 12px; font-size: 12.5px; font-weight: 700; }
+  .recbar .mk.main { background: var(--amber-pale); color: var(--amber-deep); border-color: transparent; }
+  .recbar .stop { width: 40px; height: 40px; border-radius: 50%; background: #fff; color: #17201C; border: none;
+    font-size: 13px; font-weight: 800; flex: none; }
+  .recbar .hint { position: absolute; top: -24px; left: 14px; font-size: 10.5px; color: var(--ink-soft); background: var(--bg);
+    padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+
+  .empty-top { padding: 6px 4px 2px; font-size: 12px; color: var(--ink-soft); }
+  .note { max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; }
+  .note h2 { font-size: 16px; margin-bottom: 8px; }
+  .note li { font-size: 13px; color: var(--ink-soft); margin: 5px 0 5px 18px; }
+</style>
+</head>
+<body>
+<h1>方案 F · 极简录音条 —— 「一根深色条，装下录/标/停」</h1>
+
+<div class="phone">
+  <div class="statusbar"><span>9:41</span><span>●●●</span></div>
+  <div class="header">
+    <span class="date">今天</span>
+    <span class="sub">9月16日 · 5 场对话 · ‹ 历史日期 ›</span>
+  </div>
+  <div class="scroll">
+    <div class="empty-top">标记过的对话会带 ★；点击任意一行回看与回听。</div>
+
+    <div class="row live">
+      <span class="r-time" style="color:var(--green)">现在</span>
+      <div class="r-body">
+        <div class="r-title">正在记录 · 已保存 4 段原音</div>
+        <div class="r-sub">当前切片 1:23 后自动落盘 · 人声检测在本机</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="r-time">14:05</span>
+      <div class="r-body">
+        <div class="r-title">午餐后散步闲聊</div>
+        <div class="r-sub">周末想去看新开的展览 · 22 分钟 · 转写排队中</div>
+      </div>
+    </div>
+    <div class="row">
+      <span class="r-time">10:26</span>
+      <div class="r-body">
+        <div class="r-title">午前灵感：播客选题</div>
+        <div class="r-sub">「本地优先工具」的三个论点 · 6 分钟</div>
+      </div>
+    </div>
+    <div class="row">
+      <span class="r-time">09:12</span>
+      <div class="r-body">
+        <div class="r-title">投产安排与回滚检查</div>
+        <div class="r-sub">回滚预案由值班同学负责 · 38 分钟 · 2 个安排</div>
+      </div>
+      <span class="star">★ 10:02</span>
+    </div>
+    <div class="row pending">
+      <span class="r-time">昨天</span>
+      <div class="r-body">
+        <div class="r-title">晚间复盘</div>
+        <div class="r-sub">18 分钟 · 已转写</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="recbar">
+    <span class="hint">标记刚才 → 高亮保留最近的对话</span>
+    <span class="rb-dot"></span>
+    <span class="rb-time">2:14:37</span>
+    <span class="rb-spacer"></span>
+    <button class="mk main">★3分</button>
+    <button class="mk">10分</button>
+    <button class="mk">20分</button>
+    <button class="stop">停止</button>
+  </div>
+</div>
+
+<div class="note">
+  <h2>方案说明</h2>
+  <ul>
+    <li><b>结构：</b>白底极简列表（时间 + 标题 + 一行摘要），顶部「今天」，正在录音是列表第一行的浅绿卡。没有统计、热力、进度面板——处理状态只在行内以副标题表达。</li>
+    <li><b>标记：</b>录音时底部浮出一根深色录音条：红点 + 计时 + <b>★3分 / 10分 / 20分 三个标记键</b> + 停止键。「录、标、停」三个高频动作全部收进这一根条，任何滚动位置可及；未录音时整条收起，只剩一个绿色「开始」圆钮。</li>
+    <li><b>标记回显：</b>列表行右侧琥珀色 ★ 徽标；高对比深色条让琥珀色标记键在录音时成为最醒目的元素。</li>
+    <li><b>适合：</b>讨厌面板和卡片密度的人；一天打开次数多、每次停留短。</li>
+    <li><b>代价：</b>信息量最少（无存储/进度/热力/一日回顾入口，全部收进二级页）；摘要只有一行，与现有「简报」气质差异最大，视觉需要重做一套轻量主题。</li>
+  </ul>
+</div>
+</body>
+</html>
