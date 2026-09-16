@@ -1,4 +1,6 @@
-# 总结质量评测集（P1③）
+# 质量评测集
+
+## 总结质量评测集（P1③）
 
 Sonfolio 的总结很容易在否定句、条件句、疑问句、多人讨论、“决定 vs 建议”、“待办 vs 猜测”、前后修正这些场景出错。
 本目录保存一份**固定质量集**，用于回答“换模型值不值得”，而不是靠肉眼感觉。
@@ -33,6 +35,41 @@ Sonfolio 的总结很容易在否定句、条件句、疑问句、多人讨论�
 - 数据集只追加、不修改历史 case；确需修正措辞时，在 PR 说明中注明并对新旧引擎各重跑一次留档。
 - 每次 0.2.x 版本更换模型或提示词后，把结果记录在本文件末尾。
 
+## 中英文离线识别质量集（ASR）
+
+本地识别可选 SenseVoice（默认，239 MB）与 Qwen3-ASR 0.6B int8（约 987 MB，中英混说与方言更强）。
+`asr-zh-en-set.json` 固定一组中文、英文与粤语素材，`Qwen3AsrZhEnQualityTest` 在真机上对每个样例
+计算字错率（CER，去掉空白与标点后按字符编辑距离），回答“这个模型值不值得下载”。
+
+### 文件
+
+- `asr-zh-en-set.json`：权威素材集（中文 4 例、粤语 1 例、英文 1 例）。
+- `android/app/src/androidTest/assets/asr-zh-en-set.json`：真机评测使用的同一份副本；
+  JVM 测试 `AsrZhEnSetTest` 保证两份完全一致，改动必须同时更新。
+
+素材取自 sherpa-onnx Qwen3-ASR 模型仓库自带的 `test_wavs`（Apache-2.0 仓库），不进入本仓库，
+由脚本按固定 URL 拉取后推送到手机应用私有目录，便于随时替换成更严格的公司/个人素材。
+
+### 如何运行
+
+1. 在设置 → 转文字方式中下载 Qwen3-ASR 模型，并选择该引擎。
+2. 连接 TCP ADB 后拉取并推送素材：
+   ```
+   node scripts/prepare-asr-eval.mjs
+   ```
+3. 真机运行评测：
+   ```
+   adb shell am instrument -e class com.gongfpp.sonfolio.Qwen3AsrZhEnQualityTest \
+     -w com.gongfpp.sonfolio.test/androidx.test.runner.AndroidJUnitRunner
+   ```
+   输出每个样例的期望、实际与 CER，并按 `maxCer` 上限断言。更换模型或引擎后各跑一次对照。
+
+### 更新约定
+
+- 素材只追加、不修改历史样例；`maxCer` 是首轮上限，跑出更优结果后再收紧并在此记录。
+- 个人词汇（热词）是否真正改善中英混说，可在同一素材上分别以空 hotwords 与个人词汇 hotwords 各跑一次对照。
+
 ## 结果记录
 
-（暂无：首个验收模型 Qwen2.5-0.5B 的结果待真机验收时补充。）
+（总结：暂无：首个验收模型 Qwen2.5-0.5B 的结果待真机验收时补充。）
+（ASR：暂无：Qwen3-ASR 0.6B int8 的中英文 CER 待真机验收时补充。）

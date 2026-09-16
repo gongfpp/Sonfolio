@@ -21,7 +21,10 @@
 - **按日期回看**：浏览对话主题、本段小结和一日回顾，查看当天已保存的录音与处理状态。
 - **对照原音**：在对话详情里展开转写，点击某一行跳到对应录音；底部播放器支持暂停续播和拖动进度。
 - **留下重点**：录音时使用默认 3／10／20 分钟回溯标记，按钮直接显示分钟数，三个时长均可在设置中修改；高亮涉及的连续对话，目前按时间连续性判断，不是语义主题识别。
-- **搜索与筛选**：用关键词搜索标题和转写，按今天、本周或仅标记筛选；短录音可按有效人声时长与文字量共同过滤，隐藏不等于删除原音。
+- **搜索与筛选**：用关键词搜索标题和转写，按今天、本周或仅标记筛选；结果按「每场对话」一张卡片展示最匹配的一句与命中句数，未输入关键词时列出最新对话；短录音可按有效人声时长与文字量共同过滤，隐藏不等于删除原音。
+- **处理状态可见**：录音处理分「保存原音 → 找人声 → 转写 → 整理对话」四步；首页时间线按每场对话出卡，卡片右上角用状态灯显示进度，还没整理完的录音按同一场对话规则临时成组显示，并可在「最近两周」卡片查看当日整理进度与中断缺口。
+- **可选本地识别引擎**：在设置里按需下载 SenseVoice（239 MB，默认）或 Qwen3-ASR 0.6B int8（约 987 MB，中英混说与方言更强），两者可随时切换，互不替换。
+- **个人词汇（热词）**：修正转写时出现的专有名词会进入候选，你确认或多次命中后加入个人词汇，用于本地 Qwen3-ASR 的识别提示；不会自动写入，也不上传。
 
 ## 安装与开始使用
 
@@ -50,7 +53,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 | 方式 | 如何开始 | 音频去向 |
 | --- | --- | --- |
-| 手机本地识别（默认） | 在卡片内下载约 239 MB 的 SenseVoice int8 模型 | 本机离线处理，不上传 |
+| 手机本地识别（默认） | 在卡片内选择并下载本地识别引擎：SenseVoice int8（239 MB）或 Qwen3-ASR 0.6B int8（约 987 MB） | 本机离线处理，不上传 |
 | 外部 API 识别 | 下拉选择千问或硅基流动及语音模型，点击官方 API Key 链接创建密钥，填入并确认上传 | 本机先检测人声，再把短人声片段发送给所选提供商，可能产生费用 |
 
 外部识别只自动处理保存设置之后开始的录音，历史音频需在原音列表逐份点击“继续处理”并确认。不会因启用外部文字总结而获得音频上传授权。当前云端时间戳采用本地人声窗口，并非逐字对齐；硅基流动接口自动判断语言，不支持强制指定主要语言。云端接口接入不等于已经对各服务识别质量作出保证。
@@ -81,7 +84,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 当前重点是录音长期运行可靠性、减少历史数据增长带来的整理与查询开销，以及完善用户可控的原音管理和备份恢复。说话人识别、声纹定向识别、语义搜索和自然语言历史问答尚未实现，嘈杂环境下的识别效果也仍需改进。若遇到问题，欢迎在 [GitHub Issues](https://github.com/gongfpp/Sonfolio/issues) 提供手机型号、Android 版本、应用版本和复现步骤；公开反馈不需要附上私人录音、完整转写或 API Key。
 
-Android 客户端使用 Kotlin、Jetpack Compose、Room 和 WorkManager，语音链路采用 Silero VAD、SenseVoice 与 sherpa-onnx，本地生成式总结通过 llama.cpp 接入。技术选择与架构见 [技术说明](docs/technical-selection.md)，已验证的范围和剩余问题见 [0.2.1 验收记录](docs/开发验收-0.2.1.md)，详细版本变更保留在 `docs/` 下的开发验收文档中。若只想查看网页交互原型，可在仓库根目录运行 `python3 -m http.server 4173` 后访问 `http://127.0.0.1:4173`；该页面只用于设计参考，不代表手机功能已完成验收。
+Android 客户端使用 Kotlin、Jetpack Compose、Room 和 WorkManager，语音链路采用 Silero VAD、SenseVoice／Qwen3-ASR 与 sherpa-onnx，本地生成式总结通过 llama.cpp 接入。技术选择与架构见 [技术说明](docs/technical-selection.md)，中英文识别质量集见 [评测目录](docs/evaluation/README.md)，已验证的范围和剩余问题见 [0.2.1 验收记录](docs/开发验收-0.2.1.md)，详细版本变更保留在 `docs/` 下的开发验收文档中。若只想查看网页交互原型，可在仓库根目录运行 `python3 -m http.server 4173` 后访问 `http://127.0.0.1:4173`；该页面只用于设计参考，不代表手机功能已完成验收。
 
 ## 许可证
 
@@ -91,4 +94,4 @@ Android 客户端使用 Kotlin、Jetpack Compose、Room 和 WorkManager，语音
 
 第三方代码、模型和运行库保留各自的许可证与归属，不因本项目采用 GPL 而被重新许可。随应用提供的许可文本位于 [许可证目录](android/app/src/main/assets/licenses)；贡献方式与许可边界见 [CONTRIBUTING.md](CONTRIBUTING.md)。正式 Release 发布前仍需完成第三方许可与源码对应关系检查，以及功能和隐私验收；指定许可证不代表这些验收已经完成。
 
-SenseVoice 权重是用户可选下载的独立组件，适用 [FunASR 模型协议](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)，含使用限制，不属于客户端的 GPL-3.0 许可；其代码 MIT 许可不能代替权重许可。应用下载前会展示并要求接受该独立协议。Qwen2.5 下载模型采用其上游 Apache-2.0 许可。
+SenseVoice 权重是用户可选下载的独立组件，适用 [FunASR 模型协议](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)，含使用限制，不属于客户端的 GPL-3.0 许可；其代码 MIT 许可不能代替权重许可。Qwen3-ASR 0.6B 权重来自 [Qwen/Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B)，采用 Apache-2.0 许可。应用下载前会展示并要求接受对应模型许可。Qwen2.5 下载模型采用其上游 Apache-2.0 许可。

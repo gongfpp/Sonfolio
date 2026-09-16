@@ -32,7 +32,7 @@ AudioChunk -> SpeechSegment -> Transcript -> Conversation -> DailyJournal
 
 当前实现使用 Room 2.7.2/SQLite 保存元数据，Schema 已推进到版本 8，版本 1–8 的 JSON 均保留在 `android/app/schemas/` 作为迁移测试基线。Room 官方说明 2.7 开始以 Kotlin 2.0 为目标并推荐 KSP2，2.7.2 又修复了 Schema 导出问题，因此它与现有 Kotlin 2.0.21/KSP2 工具链边界一致。没有采用 2.8.4，是因为实测该版本在当前旧 KSP 插件下首次生成 Schema 能成功、第二次读取 Schema 却出现 `kotlinx.serialization` ABI 冲突；可重复构建优先于追逐较新的版本。等 Android Gradle Plugin、Kotlin 和 KSP 整体升级时再一起评估 Room 2.8 或 Room 3。录音写入应用私有目录，用户导出时选择副本的保存位置；数据库只保存路径、时间、大小、处理状态和摘要等元数据。搜索第一版先使用 SQLite `LIKE` 实现可用的全文关键词匹配并跳到对应 Conversation/时间点，后续再评估中文全文索引；语义向量搜索留到后续版本。
 
-搜索在 `0.1.6` 改用由代码构造条件、参数绑定的 Room `@RawQuery`，用于处理可变数量的关键词，并显式观察转写、对话和标记三个表；官方说明这种可观察查询需要声明 `observedEntities`，不能依赖固定 SQL 的编译期验证，因此另外用 SQLite 内存库执行生产查询，并已在 Android 真机的 Room 集成测试中验证映射与变更通知。[Room RawQuery 文档](https://developer.android.com/reference/androidx/room/RawQuery)。关键词只作为参数值传入，`%`、`_` 和反斜杠先转义为字面匹配，排序增加转写 ID 作为同一时间戳的稳定次序。每次比当前展示范围多读取一条判断是否还有内容，用户点击“加载更多”时扩大范围；这避免原先 100 条后的内容无入口，但尚未实现游标分页、全文索引或跨转写行的语义匹配，也不需要迁移数据库。桌面测试用的 SQLite JDBC 只加入测试依赖，不进入 APK。
+搜索在 `0.1.6` 改用由代码构造条件、参数绑定的 Room `@RawQuery`，用于处理可变数量的关键词，并显式观察转写、对话和标记三个表；官方说明这种可观察查询需要声明 `observedEntities`，不能依赖固定 SQL 的编译期验证，因此另外用 SQLite 内存库执行生产查询，并已在 Android 真机的 Room 集成测试中验证映射与变更通知。[Room RawQuery 文档](https://developer.android.com/reference/androidx/room/RawQuery)。关键词只作为参数值传入，`%`、`_` 和反斜杠先转义为字面匹配。0.2.2 起结果按「每场对话」聚合而不是逐句平铺：一场对话一张卡片，返回标题、正文命中句数、最匹配的一句片段和标记状态，排序为标题命中 > 正文命中句数 > 最近命中时间；空关键词时按最新对话列出（仍以 100 条为一批）。高亮与查询共用同一套拆词规则，多个关键词都会标出。每次比当前展示范围多读取一条判断是否还有内容，用户点击“加载更多”时扩大范围；这避免原先 100 条后的内容无入口，但尚未实现游标分页、全文索引或跨转写行的语义匹配，也不需要迁移数据库。桌面测试用的 SQLite JDBC 只加入测试依赖，不进入 APK。
 
 ## 录音链路与处理链路
 
@@ -47,6 +47,8 @@ WorkManager 或本地任务队列只处理已经落盘的 chunk。任务顺序�
 ## 模型选择
 
 V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 Android 本地运行，覆盖中文语音场景，并且模型运行时与模型文件可以独立替换。Silero VAD 负责降低静音和环境声带来的 ASR 成本；SenseVoice 负责带时间戳的中文语音识别；sherpa-onnx 作为统一的端侧推理运行时，减少直接绑定单一模型框架的风险。模型版本、语言、采样率、耗时、内存峰值和失败原因需要写入处理记录，便于比较模型升级是否影响历史结果。
+
+0.2.2 起本地识别引擎可插拔：`ModelCatalog` 用多文件模型条目登记 SenseVoice（239 MB）与 Qwen3-ASR 0.6B int8（约 987 MB，conv-frontend + encoder + decoder + tokenizer），`LocalAsrEngine` 决定下载与推理使用哪一个，默认仍是 SenseVoice；两者是并列备选而不是替换关系。转录记录写入实际使用的 `modelName`／`modelVersion`。Qwen3-ASR 的 LLM 提示支持 hotwords，因此新增「个人词汇」：用户修正转写时按「原识别 → 修正」抽取候选词，达到确认阈值后进入候选列表，用户确认或多次命中后加入，转写时拼接为热词串；只影响本地 Qwen3-ASR，不上传、不自动改写历史文字。中英文素材与字错率验收见 `docs/evaluation/`。
 
 第一版不做说话人识别，不把“未知人物”误判为具体联系人；也不把摘要按钮扩展成 Todo 管理器。每段对话保留一份小总结，信息量高的对话再生成结构化大总结，一日总结以日记式回顾为主，辅助列出少量值得记住和可能需要处理的事项。
 
