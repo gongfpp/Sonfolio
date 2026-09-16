@@ -37,6 +37,9 @@ class Qwen3AsrProcessor(
                     encoder = File(root, ENCODER).absolutePath,
                     decoder = File(root, DECODER).absolutePath,
                     tokenizer = File(root, TOKENIZER_DIR).absolutePath,
+                    // 官方示例用 512；默认 128 对较长窗口可能截断。
+                    maxTotalLen = 512,
+                    maxNewTokens = 512,
                     hotwords = hotwords.trim().take(MAX_HOTWORDS_CHARS),
                 ),
                 numThreads = minOf(4, Runtime.getRuntime().availableProcessors()).coerceAtLeast(1),

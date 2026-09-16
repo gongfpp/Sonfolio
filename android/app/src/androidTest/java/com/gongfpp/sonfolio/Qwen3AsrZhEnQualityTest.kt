@@ -56,7 +56,9 @@ class Qwen3AsrZhEnQualityTest {
     }
 
     private fun loadCases(): List<Case> {
-        val root = JSONObject(context.assets.open("asr-zh-en-set.json").bufferedReader().use { it.readText() })
+        // 素材清单随测试 APK 打包，必须从 instrumentation 上下文读取，而不是被测应用。
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        val root = JSONObject(assets.open("asr-zh-en-set.json").bufferedReader().use { it.readText() })
         val array = root.getJSONArray("cases")
         return (0 until array.length()).map { index ->
             val case = array.getJSONObject(index)

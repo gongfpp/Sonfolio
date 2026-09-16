@@ -48,7 +48,7 @@ WorkManager 或本地任务队列只处理已经落盘的 chunk。任务顺序�
 
 V0.1 使用 Silero VAD、SenseVoice 和 sherpa-onnx，原因是三者可以在 Android 本地运行，覆盖中文语音场景，并且模型运行时与模型文件可以独立替换。Silero VAD 负责降低静音和环境声带来的 ASR 成本；SenseVoice 负责带时间戳的中文语音识别；sherpa-onnx 作为统一的端侧推理运行时，减少直接绑定单一模型框架的风险。模型版本、语言、采样率、耗时、内存峰值和失败原因需要写入处理记录，便于比较模型升级是否影响历史结果。
 
-0.2.2 起本地识别引擎可插拔：`ModelCatalog` 用多文件模型条目登记 SenseVoice（239 MB）与 Qwen3-ASR 0.6B int8（约 987 MB，conv-frontend + encoder + decoder + tokenizer），`LocalAsrEngine` 决定下载与推理使用哪一个，默认仍是 SenseVoice；两者是并列备选而不是替换关系。转录记录写入实际使用的 `modelName`／`modelVersion`。Qwen3-ASR 的 LLM 提示支持 hotwords，因此新增「个人词汇」：用户修正转写时按「原识别 → 修正」抽取候选词，达到确认阈值后进入候选列表，用户确认或多次命中后加入，转写时拼接为热词串；只影响本地 Qwen3-ASR，不上传、不自动改写历史文字。中英文素材与字错率验收见 `docs/evaluation/`。
+0.2.2 起本地识别引擎可插拔：`ModelCatalog` 用多文件模型条目登记 SenseVoice（239 MB）与 Qwen3-ASR 0.6B int8（约 987 MB，conv-frontend + encoder + decoder + tokenizer），`LocalAsrEngine` 决定下载与推理使用哪一个，默认仍是 SenseVoice；两者是并列备选而不是替换关系。转录记录写入实际使用的 `modelName`／`modelVersion`。Qwen3-ASR 的 LLM 提示支持 hotwords，因此新增「个人词汇」：用户修正转写时按「原识别 → 修正」抽取候选词，达到确认阈值后进入候选列表，用户确认或多次命中后加入，转写时拼接为热词串；只影响本地 Qwen3-ASR，不上传、不自动改写历史文字。中英文素材与字错率验收见 `docs/evaluation/`。截至 2026-09-17 的真机验收，Qwen3-ASR 在 Redmi Note 8 Pro 上整段返回空文字（模型 SHA-256 与随包原生库都正常，根因待查），因此已加「整段为空即报错」的防护并保留 SenseVoice 为默认可用引擎，Qwen3 作为待修复的实验性选项。
 
 第一版不做说话人识别，不把“未知人物”误判为具体联系人；也不把摘要按钮扩展成 Todo 管理器。每段对话保留一份小总结，信息量高的对话再生成结构化大总结，一日总结以日记式回顾为主，辅助列出少量值得记住和可能需要处理的事项。
 

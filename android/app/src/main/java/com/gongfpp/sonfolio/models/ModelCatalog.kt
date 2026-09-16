@@ -3,8 +3,10 @@ package com.gongfpp.sonfolio.models
 import java.io.File
 import java.security.MessageDigest
 
-/** 模型仓库中的一个文件；Qwen3-ASR 这类模型由多个文件（含 tokenizer 目录）组成。 */
-data class ModelFile(val relativePath: String, val bytes: Long, val sha256: String, val url: String)
+/** 模型仓库中的一个文件；Qwen3-ASR 这类模型由多个文件（含 tokenizer 目录）组成。
+ * urls 按优先级排列：默认第一个是大陆可访问的镜像，最后回退到上游 Hugging Face。
+ * 无论从哪个源下载，都必须通过 sha256 校验后才会启用。 */
+data class ModelFile(val relativePath: String, val bytes: Long, val sha256: String, val urls: List<String>)
 
 enum class ModelKind(val label: String) { SPEECH("语音识别"), SUMMARY("文字总结") }
 
@@ -25,8 +27,16 @@ object ModelCatalog {
     // Qwen3-ASR ONNX 导出的固定版本，避免上游改动导致校验失败。
     private const val QWEN3_REVISION = "68818b2313fe77bd06f6a7c5068ff3ef59d02b8a"
     private const val QWEN3_PREFIX = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
-    private fun qwen3(path: String) =
-        "https://huggingface.co/csukuangfj2/$QWEN3_PREFIX/resolve/$QWEN3_REVISION/$path"
+
+    /**
+     * 同一份文件的可访问源，镜像优先。默认走 hf-mirror（大陆可访问），上游只作回退；
+     * 每个文件都会做 SHA-256 校验，所以从镜像下载同样可靠。
+     */
+    private fun sources(path: String): List<String> = listOf(
+        "https://hf-mirror.com/$path",
+        "https://huggingface.co/$path",
+    )
+    private fun qwen3(path: String) = sources("csukuangfj2/$QWEN3_PREFIX/resolve/$QWEN3_REVISION/$path")
 
     val senseVoice = ModelArtifact(
         id = "sensevoice",
@@ -35,7 +45,7 @@ object ModelCatalog {
         files = listOf(
             ModelFile("speech/sense-voice-model.int8.onnx", 239233841,
                 "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
-                "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx"),
+                sources("csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx")),
         ),
         license = ModelLicense(
             "SenseVoice 权重受独立的 FunASR 模型许可约束，含使用限制，不属于客户端的 GPL-3.0 许可。",
@@ -80,7 +90,7 @@ object ModelCatalog {
         files = listOf(
             ModelFile("summary/qwen2.5-0.5b-instruct-q4_k_m.gguf", 491400032,
                 "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
-                "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf"),
+                sources("Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf")),
         ),
     )
 

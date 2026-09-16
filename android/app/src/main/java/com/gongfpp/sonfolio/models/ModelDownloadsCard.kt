@@ -33,7 +33,7 @@ import androidx.work.*
                     info?.state == WorkInfo.State.RUNNING -> info.progress.getString("message") ?: "正在准备下载"
                     running -> if (info?.constraints?.requiredNetworkType == NetworkType.UNMETERED) "等待非计费网络；手机热点可能仍被系统视为计费网络" else "等待网络与系统调度"
                     info?.state == WorkInfo.State.CANCELLED -> "已取消，重新下载会尝试续传"
-                    else -> info?.outputData?.getString("message") ?: "尚未下载；来源为上游 Hugging Face 仓库"
+                    else -> info?.outputData?.getString("message") ?: "尚未下载；优先使用大陆可访问镜像，下载后按 SHA-256 校验"
                 }, fontSize = 11.sp)
                 if (running) {
                     LinearProgressIndicator(progress = { (info!!.progress.getLong("bytes", 0).toFloat() / model.bytes).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
@@ -48,7 +48,7 @@ import androidx.work.*
                     }) { Text("使用已下载的总结模型") }
                 }
             message?.let { Text(it, fontSize = 11.sp) }
-            Text("统一保存在应用私有目录 files/models/，卸载应用会移除。模型首次下载需联网，不上传录音；下载源不可达时会报错，不会自动改用不明来源。", fontSize = 11.sp)
+            Text("统一保存在应用私有目录 files/models/，卸载应用会移除。首选大陆可访问镜像，失败时才回退上游，且每个文件都用 SHA-256 校验通过后才启用；下载不上传录音。", fontSize = 11.sp)
         }
     confirm?.let { model -> AlertDialog(onDismissRequest = { confirm = null },
         title = { Text("下载 ${model.bytes / 1_000_000} MB 模型？") },

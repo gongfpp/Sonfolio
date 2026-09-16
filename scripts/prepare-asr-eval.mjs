@@ -2,7 +2,7 @@
 // 拉取 docs/evaluation/asr-zh-en-set.json 里的中英文素材并推送到真机，
 // 供 Qwen3AsrZhEnQualityTest 做字错率验收。仅需联网与 TCP ADB，不改动应用数据。
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const [serial] = process.argv.slice(2);
@@ -19,8 +19,8 @@ function run(args, options = {}) {
   return result.stdout;
 }
 
-// HF 直连不稳时退回镜像；素材是公开模型仓库里的固定文件。
-const mirrors = url => [url, url.replace('https://huggingface.co/', 'https://hf-mirror.com/')];
+// 素材是公开模型仓库里的固定文件；大陆优先走镜像，失败再回退上游。
+const mirrors = url => [url.replace('https://huggingface.co/', 'https://hf-mirror.com/'), url];
 
 for (const item of manifest.cases) {
   const target = join(staging, item.file);
@@ -46,9 +46,24 @@ for (const item of manifest.cases) {
 
 const deviceArgs = serial ? ['-s', serial] : [];
 if (run([...deviceArgs, 'get-state']).trim() !== 'device') throw new Error('TCP ADB 未就绪，请先连接真机');
+
+// 生产链路只处理 16 kHz 单声道 PCM16（录音格式），评测素材必须先转成同一格式。
+// ffmpeg 优先，macOS 自带 afconvert 作回退。
+function toProductionFormat(file) {
+  const temporary = `${file}.16k.wav`;
+  const ffmpeg = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-ac', '1', '-ar', '16000', '-sample_fmt', 's16', temporary], { encoding: 'utf8' });
+  if (ffmpeg.status === 0 && existsSync(temporary)) { renameSync(temporary, file); return 'ffmpeg'; }
+  const afconvert = spawnSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', file, temporary], { encoding: 'utf8' });
+  if (afconvert.status === 0 && existsSync(temporary)) { renameSync(temporary, file); return 'afconvert'; }
+  throw new Error(`无法把 ${file} 转成 16 kHz 单声道；请安装 ffmpeg 后重试`);
+}
+
 run([...deviceArgs, 'shell', 'mkdir', '-p', remoteDirectory]);
 for (const item of manifest.cases) {
-  run([...deviceArgs, 'push', join(staging, item.file), `${remoteDirectory}/${item.file}`, '-f']);
+  const local = join(staging, item.file);
+  const tool = toProductionFormat(local);
+  run([...deviceArgs, 'push', local, `${remoteDirectory}/${item.file}`]);
+  console.log(`已推送：${item.file}（已用 ${tool} 转为 16 kHz 单声道）`);
 }
 console.log(`已推送 ${manifest.cases.length} 份素材到 ${remoteDirectory}`);
 console.log(`在手机上运行：adb shell am instrument -e class com.gongfpp.sonfolio.Qwen3AsrZhEnQualityTest -w ${pkg}.test/androidx.test.runner.AndroidJUnitRunner`);
