@@ -36,7 +36,9 @@ class InferenceService : Service() {
                         val starts = requireNotNull(input.getLongArray("starts"))
                         val ends = requireNotNull(input.getLongArray("ends"))
                         require(starts.size == ends.size)
-                        val texts = SenseVoiceAsrProcessor(this, input.getString("language") ?: "zh").use { processor ->
+                        val engine = LocalAsrEngine.fromName(input.getString("engine"))
+                        val hotwords = input.getString("hotwords").orEmpty()
+                        val texts = createAsrProcessor(this, engine, input.getString("language") ?: "zh", hotwords).use { processor ->
                             starts.indices.map { index -> processor.transcribe(file, starts[index], ends[index]) }
                         }
                         Bundle().apply { putStringArrayList("texts", ArrayList(texts)) }

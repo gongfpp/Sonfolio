@@ -24,6 +24,7 @@ data class TranscriptionConfig(
     val mode: TranscriptionMode = TranscriptionMode.LOCAL,
     val provider: SpeechProvider = SpeechProvider.QWEN,
     val model: String = SpeechProvider.QWEN.models.first(),
+    val localEngine: LocalAsrEngine = LocalAsrEngine.DEFAULT,
     val hasKey: Boolean = false,
     val revision: String = "initial",
     val allowedAfterMillis: Long = Long.MAX_VALUE,
@@ -41,12 +42,20 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
         return TranscriptionConfig(
             mode = runCatching { TranscriptionMode.valueOf(prefs.getString("mode", "LOCAL")!!) }.getOrDefault(TranscriptionMode.LOCAL),
             provider = provider, model = prefs.getString("model", provider.models.first()).orEmpty(),
+            localEngine = LocalAsrEngine.fromName(prefs.getString("local-engine", null)),
             hasKey = !prefs.getString("secret", null).isNullOrBlank(), revision = prefs.getString("revision", "initial").orEmpty(),
             allowedAfterMillis = prefs.getLong("allowed-after", Long.MAX_VALUE),
         )
     }
 
-    @Synchronized fun save(mode: TranscriptionMode, provider: SpeechProvider, model: String, key: String, consent: Boolean) {
+    @Synchronized fun save(
+        mode: TranscriptionMode,
+        provider: SpeechProvider,
+        model: String,
+        key: String,
+        consent: Boolean,
+        localEngine: LocalAsrEngine = read().localEngine,
+    ) {
         val old = read()
         require(model in provider.models) { "请选择提供商支持的语音模型" }
         require(key.length <= 4096 && key.trim().all { it.code in 33..126 }) { "API Key 不能包含空白或控制字符" }
@@ -55,6 +64,7 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
             require(key.isNotBlank() || (old.provider == provider && old.hasKey)) { "请填写此提供商的 API Key" }
         }
         val edit = prefs.edit().putString("mode", mode.name).putString("provider", provider.name).putString("model", model)
+            .putString("local-engine", localEngine.name)
             .putString("revision", UUID.randomUUID().toString())
             .putLong("allowed-after", if (mode == TranscriptionMode.REMOTE) System.currentTimeMillis() else Long.MAX_VALUE)
             .remove("granted-chunks")

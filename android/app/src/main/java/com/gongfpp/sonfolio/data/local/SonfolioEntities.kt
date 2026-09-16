@@ -170,3 +170,26 @@ data class DailyJournalEntity(
     val modelVersion: String?,
     val processingState: String,
 )
+
+/**
+ * 个人词汇：用户修正转写时抽取的候选词，确认后作为 Qwen3-ASR 的 hotwords。
+ * status: CANDIDATE（待确认）/ ACCEPTED（已加入，参与热词）/ IGNORED（用户忽略，不再提示）。
+ */
+@Entity(
+    tableName = "personal_vocabulary",
+    indices = [Index(value = ["term"], unique = true), Index("status")],
+)
+data class PersonalVocabularyEntity(
+    @PrimaryKey val id: String,
+    val term: String,
+    val status: String,
+    /** 同一候选被不同纠正命中的次数；达到阈值后自动加入。 */
+    val seenCount: Int,
+    val firstSeenAtMillis: Long,
+    val lastSeenAtMillis: Long,
+    val acceptedAtMillis: Long?,
+    /** 最近一次命中的原始识别文字，供用户判断候选是否可信。 */
+    val sourceOriginal: String?,
+    /** 最近一次命中的用户修正文字。 */
+    val sourceCorrected: String?,
+)

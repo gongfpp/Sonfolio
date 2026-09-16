@@ -29,6 +29,7 @@ import kotlinx.coroutines.*
     var mode by rememberSaveable { mutableStateOf(saved.mode) }
     var provider by rememberSaveable { mutableStateOf(saved.provider) }
     var model by rememberSaveable { mutableStateOf(saved.model) }
+    var localEngine by rememberSaveable { mutableStateOf(saved.localEngine) }
     var key by remember { mutableStateOf("") }
     var consent by remember(mode, provider) { mutableStateOf(false) }
     var providerMenu by remember { mutableStateOf(false) }
@@ -47,13 +48,24 @@ import kotlinx.coroutines.*
                     RadioButton(mode == option, onClick = null)
                     Column(Modifier.padding(start = 8.dp).weight(1f)) {
                         Text(option.label, fontSize = 14.sp)
-                        Text(if (option == TranscriptionMode.LOCAL) "默认 · 按需下载约 239 MB 模型，离线、不上传音频" else "无需本地识别模型，上传人声片段，可能产生费用", fontSize = 11.sp)
+                        Text(if (option == TranscriptionMode.LOCAL) "默认 · 按需下载本地模型，离线、不上传音频" else "无需本地识别模型，上传人声片段，可能产生费用", fontSize = 11.sp)
                     }
                 }
             }
             if (mode == TranscriptionMode.LOCAL) {
-                ModelDownloadControl(ModelCatalog.speech)
-                Text("尚未下载也能录音与回听；模型下载完成后处理等待中的录音。主要语言可在下方设置。", fontSize = 11.sp)
+                Text("本地识别引擎", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                LocalAsrEngine.entries.forEach { option ->
+                    val artifact = ModelCatalog.byId(option.artifactId) ?: return@forEach
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { localEngine = option }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(localEngine == option, onClick = null)
+                        Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                            Text("${option.displayName}${if (option.supportsHotwords) " · 支持个人词汇热词" else ""}", fontSize = 13.sp)
+                            Text(artifact.label, fontSize = 11.sp)
+                        }
+                    }
+                }
+                ModelDownloadControl(ModelCatalog.byId(localEngine.artifactId)!!)
+                Text("尚未下载也能录音与回听；模型下载完成后处理等待中的录音。默认 SenseVoice 体积小、速度快；Qwen3-ASR 中英混说更强但约 1 GB、速度更慢。主要语言可在下方设置。", fontSize = 11.sp)
             } else {
                 Box {
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("识别提供商：${provider.label} ▾") }
@@ -90,10 +102,11 @@ import kotlinx.coroutines.*
                 if (busy) return@Button
                 busy = true
                 val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val chosenKey = key; val allowed = consent
+                val chosenEngine = localEngine
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed)
+                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenEngine)
                             app.recordingRepository.enqueuePendingAsr()
                         }
                         key = ""; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"

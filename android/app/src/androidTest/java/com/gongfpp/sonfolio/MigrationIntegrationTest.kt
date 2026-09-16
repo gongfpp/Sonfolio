@@ -18,9 +18,9 @@ import org.junit.runner.RunWith
 class MigrationIntegrationTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
-    /** 用导出的 Schema JSON 重建版本 4–7 的旧库，迁移到 8 后核对原音与对话字段不丢失。 */
-    @Test fun upgradeFromVersion4Through7PreservesAudioAndConversationFields() = runBlocking {
-        for (oldVersion in listOf(4, 5, 6, 7)) {
+    /** 用导出的 Schema JSON 重建版本 4–8 的旧库，迁移到 9 后核对原音、对话字段与个人词汇表不丢失。 */
+    @Test fun upgradeFromVersion4Through8PreservesAudioAndConversationFields() = runBlocking {
+        for (oldVersion in listOf(4, 5, 6, 7, 8)) {
         val name = "migration-qa-${UUID.randomUUID()}.db"
         val schema = InstrumentationRegistry.getInstrumentation().context.assets
             .open("com.gongfpp.sonfolio.data.local.SonfolioDatabase/$oldVersion.json").bufferedReader().use { JSONObject(it.readText()).getJSONObject("database") }
@@ -59,10 +59,10 @@ class MigrationIntegrationTest {
                 old.version = oldVersion
             }
             val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name)
-                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8)
+                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9)
                 .build()
             try {
-                assertEquals(8, migrated.openHelper.writableDatabase.version)
+                assertEquals(9, migrated.openHelper.writableDatabase.version)
                 val chunk = migrated.recordingDao().getChunk("original")!!
                 assertEquals("/qa/original.wav", chunk.localPath)
                 assertEquals(364L, chunk.byteSize)
@@ -80,6 +80,9 @@ class MigrationIntegrationTest {
                 if (oldVersion >= 6) assertEquals("手工标题", conversation[1]) else assertNull(conversation[1])
                 if (oldVersion >= 5) assertEquals("用户备注", conversation[2]) else assertNull(conversation[2])
                 if (oldVersion >= 7) assertEquals("2026-09-15", conversation[3]) else assertEquals("", conversation[3])
+                // 9 起新增个人词汇表；迁移后必须可写且为空。
+                val vocab = migrated.vocabularyDao().acceptedTerms()
+                assertTrue(vocab.isEmpty())
             } finally { migrated.close() }
         } finally { context.deleteDatabase(name) }
         }

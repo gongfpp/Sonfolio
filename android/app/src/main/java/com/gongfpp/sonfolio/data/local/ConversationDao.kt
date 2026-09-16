@@ -43,6 +43,13 @@ data class TranscriptRef(
     @ColumnInfo(name = "endedAtMillis") val endedAtMillis: Long,
 )
 
+/** 修正前读取文本基线：originalText 非空表示此前已修正过，用它作为个人词汇的原始识别基线。 */
+data class TranscriptCorrectionRow(
+    @ColumnInfo(name = "id") val id: String,
+    @ColumnInfo(name = "text") val text: String,
+    @ColumnInfo(name = "originalText") val originalText: String?,
+)
+
 @Dao
 interface ConversationDao {
     @Query("""SELECT MIN(startedAtMillis) AS `start`, MAX(COALESCE(endedAtMillis, startedAtMillis + 1)) AS `end`, 0 AS organized
@@ -216,6 +223,9 @@ interface ConversationDao {
 
     @Query("SELECT id, conversationId, startedAtMillis, endedAtMillis FROM transcripts WHERE id = :id LIMIT 1")
     suspend fun getTranscriptWindow(id: String): TranscriptRef?
+
+    @Query("SELECT id, text, originalText FROM transcripts WHERE id = :id LIMIT 1")
+    suspend fun getTranscriptForCorrection(id: String): TranscriptCorrectionRow?
 
     /** 撤销标记：删除时间窗与这段对话重叠的标记。 */
     @Query("DELETE FROM markers WHERE markedAtMillis + windowAfterMillis >= :start AND markedAtMillis - windowBeforeMillis <= :end")

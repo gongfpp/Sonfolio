@@ -12,7 +12,10 @@ class SonfolioApplication : Application() {
     val database by lazy { SonfolioDatabase.getInstance(this) }
     val preferences by lazy { SonfolioPreferences(this) }
     val conversationRepository by lazy {
-        ConversationRepository(database, preferences)
+        ConversationRepository(database, preferences, vocabularyRepository)
+    }
+    val vocabularyRepository by lazy {
+        PersonalVocabularyRepository(database.vocabularyDao())
     }
     val processingScheduler by lazy { ProcessingScheduler(this) }
     val recordingRepository by lazy {

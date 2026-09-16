@@ -17,15 +17,25 @@ import androidx.room.RoomDatabase
         DailyJournalEntity::class,
         SummaryRunEntity::class,
         ConversationAliasEntity::class,
+        PersonalVocabularyEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
     abstract fun recordingDao(): RecordingDao
+    abstract fun vocabularyDao(): VocabularyDao
 
     companion object {
+        // 0.2.2 个人词汇：候选词来自用户对转写的修正，确认后作为本地 Qwen3-ASR 的热词。
+        val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS personal_vocabulary (id TEXT NOT NULL, term TEXT NOT NULL, status TEXT NOT NULL, seenCount INTEGER NOT NULL, firstSeenAtMillis INTEGER NOT NULL, lastSeenAtMillis INTEGER NOT NULL, acceptedAtMillis INTEGER, sourceOriginal TEXT, sourceCorrected TEXT, PRIMARY KEY(id))")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_personal_vocabulary_term ON personal_vocabulary (term)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_personal_vocabulary_status ON personal_vocabulary (status)")
+            }
+        }
         // 0.2.1 存储模型：整理完成后异步生成 AAC 压缩音；原始 WAV 按保留策略清理。
         val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -99,7 +109,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { database -> instance = database }
             }
     }
 }

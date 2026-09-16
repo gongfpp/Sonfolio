@@ -15,18 +15,23 @@ import java.nio.file.StandardCopyOption
 
 class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result = downloadMutex.withLock { withContext(Dispatchers.IO) {
-        val model = ModelCatalog.all.firstOrNull { it.id == inputData.getString("model") } ?: return@withContext Result.failure()
-        val target = ModelCatalog.file(applicationContext.filesDir, model)
-        val partial = File(target.parentFile, target.name + ".part")
+        val model = ModelCatalog.byId(inputData.getString("model") ?: "") ?: return@withContext Result.failure()
+        val filesDir = applicationContext.filesDir
         var connection: HttpURLConnection? = null
         try {
-            check(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs()) { "无法建立模型目录" }
-            if (!ModelCatalog.verify(target, model)) {
+            // 已完成文件计入总进度，续传与多文件共用同一进度口径。
+            var completed = model.files.filter { ModelCatalog.verify(ModelCatalog.file(filesDir, it), it) }.sumOf { it.bytes }
+            for (file in model.files) {
+                ensureActive()
+                val target = ModelCatalog.file(filesDir, file)
+                if (ModelCatalog.verify(target, file)) continue
+                check(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs()) { "无法建立模型目录" }
+                val partial = File(target.parentFile, target.name + ".part")
                 var offset = partial.takeIf { it.isFile }?.length() ?: 0L
-                if (offset > model.bytes) { check(partial.delete()); offset = 0 }
-                require(target.parentFile!!.usableSpace > model.bytes - offset + RESERVE) { "空间不足，请至少为录音额外保留 512 MB" }
-                if (offset < model.bytes) {
-                    var url = URL(model.url)
+                if (offset > file.bytes) { check(partial.delete()); offset = 0 }
+                require(target.parentFile!!.usableSpace > model.bytes - completed - offset + RESERVE) { "空间不足，请至少为录音额外保留 512 MB" }
+                if (offset < file.bytes) {
+                    var url = URL(file.url)
                     var opened: HttpURLConnection? = null
                     for (redirect in 0..5) {
                         require(url.protocol == "https") { "下载地址必须使用 HTTPS" }
@@ -46,19 +51,19 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
                     val resumed = response.responseCode == 206 && offset > 0
                     if (response.responseCode == 206) require(response.getHeaderField("Content-Range")?.startsWith("bytes $offset-") == true) { "下载续传位置不匹配" }
                     if (!resumed) offset = 0
-                    var total = offset; var lastUpdate = 0L
+                    var current = offset; var lastUpdate = 0L
                     response.inputStream.use { input ->
                         FileOutputStream(partial, resumed).use { output ->
                             val buffer = ByteArray(256 * 1024)
                             while (true) {
                                 ensureActive()
                                 val count = input.read(buffer); if (count < 0) break
-                                total += count
-                                require(total <= model.bytes) { "下载内容超过预期大小" }
+                                current += count
+                                require(current <= file.bytes) { "下载内容超过预期大小" }
                                 require(target.parentFile!!.usableSpace > RESERVE) { "剩余空间不足，下载已暂停，原音不受影响" }
                                 output.write(buffer, 0, count)
                                 if (System.currentTimeMillis() - lastUpdate > 700) {
-                                    setProgress(workDataOf("bytes" to total, "message" to "正在下载，可取消后续传"))
+                                    setProgress(workDataOf("bytes" to completed + current, "message" to "正在下载 ${target.name}，可取消后续传"))
                                     lastUpdate = System.currentTimeMillis()
                                 }
                             }
@@ -66,18 +71,20 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
                         }
                     }
                 }
-                setProgress(workDataOf("bytes" to partial.length(), "message" to "正在校验模型完整性"))
+                setProgress(workDataOf("bytes" to completed + partial.length(), "message" to "正在校验 ${target.name}"))
                 ensureActive()
-                if (!ModelCatalog.verify(partial, model)) {
-                    if (partial.length() == model.bytes) partial.delete()
+                if (!ModelCatalog.verify(partial, file)) {
+                    if (partial.length() == file.bytes) partial.delete()
                     error("模型尚不完整或校验失败，请重试；未启用该文件")
                 }
                 ensureActive()
                 Files.move(partial.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                completed += file.bytes
+                setProgress(workDataOf("bytes" to completed, "message" to "已下载 ${target.name}"))
             }
             val app = applicationContext as SonfolioApplication
             if (model.id == ModelCatalog.summary.id) app.summarySettings.useDownloadedModel(inputData.getString("activate-revision"))
-            if (model.id == ModelCatalog.speech.id) app.recordingRepository.enqueuePendingAsr()
+            if (model.kind == ModelKind.SPEECH) app.recordingRepository.enqueuePendingAsr()
             Result.success(workDataOf("message" to "下载与 SHA-256 校验完成"))
         } catch (error: CancellationException) { throw error }
         catch (error: Exception) { Result.failure(workDataOf("message" to (error.message?.take(160) ?: "下载失败，请检查网络后重试"))) }
@@ -89,7 +96,7 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
         private const val RESERVE = 512L * 1024 * 1024
         private val downloadMutex = Mutex()
         fun enqueue(context: Context, id: String, wifiOnly: Boolean, activateRevision: String? = null) {
-            require(ModelCatalog.all.any { it.id == id })
+            require(ModelCatalog.byId(id) != null) { "未知模型" }
             val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
                 .setInputData(workDataOf("model" to id, "activate-revision" to activateRevision)).addTag(TAG).addTag("model:$id").addTag("created:${System.currentTimeMillis()}")
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED).build()).build()

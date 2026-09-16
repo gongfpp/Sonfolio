@@ -19,18 +19,17 @@ import androidx.work.*
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val manager = remember { WorkManager.getInstance(context) }
     val work by remember { manager.getWorkInfosByTagFlow(ModelDownloadWorker.TAG) }.collectAsStateWithLifecycle(initialValue = emptyList())
-    var confirm by remember { mutableStateOf<ModelArtifact?>(null) }
+    var confirm by remember(model.id) { mutableStateOf<ModelArtifact?>(null) }
     var wifiOnly by remember { mutableStateOf(true) }
-    var acceptedLicense by remember { mutableStateOf(false) }
+    var acceptedLicense by remember(model.id) { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val info = work.filter { "model:${model.id}" in it.tags }.let { list -> list.firstOrNull { !it.state.isFinished } ?: list.maxByOrNull { info -> info.tags.firstOrNull { it.startsWith("created:") }?.substringAfter(':')?.toLongOrNull() ?: 0L } }
-                val target = ModelCatalog.file(context.filesDir, model)
-                val installed = target.isFile && target.length() == model.bytes
+                val installed = ModelCatalog.installed(context.filesDir, model)
                 val running = info != null && !info.state.isFinished
                 Text("${model.label} · ${model.bytes / 1_000_000} MB", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Text(when {
-                    installed -> if (model == ModelCatalog.summary) "总结模型已下载 · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) "已启用在手机上总结" else "点击下方按钮启用"}" else "已下载，可离线转写"
+                    installed -> if (model.kind == ModelKind.SUMMARY) "总结模型已下载 · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) "已启用在手机上总结" else "点击下方按钮启用"}" else "已下载，可离线转写"
                     info?.state == WorkInfo.State.RUNNING -> info.progress.getString("message") ?: "正在准备下载"
                     running -> if (info?.constraints?.requiredNetworkType == NetworkType.UNMETERED) "等待非计费网络；手机热点可能仍被系统视为计费网络" else "等待网络与系统调度"
                     info?.state == WorkInfo.State.CANCELLED -> "已取消，重新下载会尝试续传"
@@ -40,8 +39,8 @@ import androidx.work.*
                     LinearProgressIndicator(progress = { (info!!.progress.getLong("bytes", 0).toFloat() / model.bytes).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                     TextButton(onClick = { manager.cancelUniqueWork("download-model:${model.id}") }) { Text("取消下载") }
                 } else if (!installed) {
-                    OutlinedButton(onClick = { acceptedLicense = false; confirm = model }) { Text(if (model == ModelCatalog.summary) "下载总结模型" else "下载语音识别模型") }
-                } else if (model == ModelCatalog.summary && summary.mode != com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) {
+                    OutlinedButton(onClick = { acceptedLicense = false; confirm = model }) { Text(if (model.kind == ModelKind.SUMMARY) "下载总结模型" else "下载语音识别模型") }
+                } else if (model.kind == ModelKind.SUMMARY && summary.mode != com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) {
                     OutlinedButton(onClick = {
                         runCatching { app.summarySettings.useDownloadedModel(summary.revision) }
                             .onSuccess { message = "已启用在手机上总结；自动总结默认关闭，可在下方设置" }
@@ -56,14 +55,14 @@ import androidx.work.*
         text = { Column {
             Text("请预留模型空间及至少 512 MB 录音空间。总结模型用于文字总结，语音识别模型用于转写，互不替代。")
             Text("下载完成后即可离线生成总结；若期间切换了总结配置，不会覆盖你的新选择。", fontSize = 12.sp)
-            if (model == ModelCatalog.speech) {
-                Text("SenseVoice 权重受独立的 FunASR 模型许可约束，含使用限制，不属于客户端的 GPL-3.0 许可。", fontSize = 12.sp)
-                TextButton(onClick = { runCatching { uriHandler.openUri("https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE") } }) { Text("查看独立模型许可 ↗") }
+            model.license?.let { license ->
+                Text(license.notice, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                TextButton(onClick = { runCatching { uriHandler.openUri(license.url) } }) { Text("查看独立模型许可 ↗") }
                 Row { Checkbox(acceptedLicense, { acceptedLicense = it }); Text("我已阅读并接受独立模型许可", Modifier.padding(top = 13.dp), fontSize = 12.sp) }
             }
             Row { Checkbox(wifiOnly, { wifiOnly = it }); Text("仅在非计费网络下载（建议）", Modifier.padding(top = 13.dp)) }
             Text("关闭后可使用移动流量或手机热点。", fontSize = 12.sp)
         } },
-        confirmButton = { TextButton(enabled = model != ModelCatalog.speech || acceptedLicense, onClick = { ModelDownloadWorker.enqueue(context, model.id, wifiOnly, if (model == ModelCatalog.summary) summary.revision else null); confirm = null }) { Text("开始下载") } },
+        confirmButton = { TextButton(enabled = model.license == null || acceptedLicense, onClick = { ModelDownloadWorker.enqueue(context, model.id, wifiOnly, if (model.kind == ModelKind.SUMMARY) summary.revision else null); confirm = null }) { Text("开始下载") } },
         dismissButton = { TextButton(onClick = { confirm = null }) { Text("取消") } }) }
 }

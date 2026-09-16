@@ -1,0 +1,54 @@
+{
+  "name": "sonfolio-asr-zh-en-set",
+  "note": "中英文（含粤语）离线识别质量集。素材取自 sherpa-onnx Qwen3-ASR 模型仓库自带的 test_wavs（Apache-2.0 仓库）。用 scripts/prepare-asr-eval.mjs 拉取并推送到手机后运行 Qwen3AsrZhEnQualityTest。maxCer 是首轮真机验收的上限，跑出更优结果后再收紧。",
+  "cases": [
+    {
+      "id": "zh_fast",
+      "language": "zh",
+      "file": "fast1.wav",
+      "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/test_wavs/fast1.wav",
+      "reference": "蹦出来之后，左手、右手接一个慢动作，右边再直接拉到这上面之后，直接拉到这个轮胎上，上边再接过去之后，然后上边再直接拉到这个位置了之后，右边再直接这个位置接倒过去的之后，再倒一下，然后右边再直接抓住这个上边了之后，直接从这边上边过去了之后，直接抓住这个树杈，然后这个位置直接倒到这个树杈",
+      "maxCer": 0.45
+    },
+    {
+      "id": "zh_raokouling",
+      "language": "zh",
+      "file": "raokouling.wav",
+      "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/test_wavs/raokouling.wav",
+      "reference": "广西壮族自治区爱吃红鲤鱼与绿鲤鱼与驴的出租车司机，拉着苗族土家族自治州爱喝自制的刘奶奶榴莲牛奶的骨质疏松症患者，遇见别着喇叭的哑巴，打败咬死山前四十四棵紫色柿子树的四十四只石狮子之后，碰到年年恋牛娘的牛郎，念着灰黑灰化肥发黑会挥发，走出香港官方网站设置组，到广西壮族自治区首府南宁市民族医院就医。",
+      "maxCer": 0.4
+    },
+    {
+      "id": "zh_noise2",
+      "language": "zh",
+      "file": "noise2.wav",
+      "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/test_wavs/noise2.wav",
+      "reference": "拨号，请再说一次，请说出您要拨打的号码。幺三五八幺八八七五七。一三五八二八八八幺八八。纠正纠正。九六九。纠正纠正，不是九六。",
+      "maxCer": 0.25
+    },
+    {
+      "id": "zh_qiqiu1",
+      "language": "zh",
+      "file": "qiqiu1.wav",
+      "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/test_wavs/qiqiu1.wav",
+      "reference": "黑的白的红的粉的紫的绿的蓝的灰的，你的我的他的她的大的小的圆的扁的，好的坏的美的丑的新的旧的，各种款式各种花式，让我选择。飞得高喽，越远越好，天都沦陷，他就死掉，说明多能高兴就好，喜欢就好，没大不了，越变越小，越来越小，快要死掉也很骄傲。你不想说就别再说，我不想听不想再听，就把一切誓言当作气球一般随它而去，我不在意不会在意，随它而去随它而去。气球飘进眼里，飘进风里，结束生命。气球飘进爱里，飘进心里，慢慢死去。",
+      "maxCer": 0.3
+    },
+    {
+      "id": "yue_cantonese",
+      "language": "yue",
+      "file": "cantonese.wav",
+      "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/test_wavs/cantonese.wav",
+      "reference": "今次寻寻觅觅，终于揾到my princess，肯借个场俾我哋玩。你知啦，喺香港地喺繁忙时间要揾个场嚟拍嘢系非常之难嘅。再一次多谢你哋，亦都好多谢片入边嘅每一个人。下一次我哋斗啲咩好？喺下面留言话我哋知啦。拜拜。",
+      "maxCer": 0.6
+    },
+    {
+      "id": "en_f1_noise",
+      "language": "en",
+      "file": "f1_noise.wav",
+      "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/test_wavs/f1_noise.wav",
+      "reference": "Okay, Charles. It looks like we have a problem with the radio. What happened? Yeah, someone spilled water on their machine. I uh, yeah. Charles, can you hear us? Mamma mia.",
+      "maxCer": 0.35
+    }
+  ]
+}

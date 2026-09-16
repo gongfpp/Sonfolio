@@ -30,29 +30,30 @@ class AsrWorker(
         val app = applicationContext as SonfolioApplication
         val dao = app.database.recordingDao()
         val chunk = dao.getChunk(chunkId) ?: return Result.failure()
-        if (chunk.endedAtMillis == null || chunk.processingState == "AUDIO_DELETED") return Result.success()
-        if (chunk.processingState == "ASR_READY") return Result.success()
-        if (chunk.processingState in listOf("ASSEMBLY_PENDING", "ASSEMBLY_FAILED")) {
+        if (chunk.endedAtMillis == null || chunk.processingState == ChunkProcessing.AUDIO_DELETED) return Result.success()
+        if (chunk.processingState == ChunkProcessing.ASR_READY) return Result.success()
+        if (chunk.processingState in listOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) {
             AssemblyWorker.enqueue(applicationContext, chunkId); return Result.success()
         }
         val segments = dao.getSpeechSegments(chunkId)
         val config = app.transcriptionSettings.read()
-        val model = com.gongfpp.sonfolio.models.ModelCatalog.speech
+        val engine = config.localEngine
+        val model = requireNotNull(com.gongfpp.sonfolio.models.ModelCatalog.byId(engine.artifactId)) { "未知的本地识别引擎" }
         if (segments.isNotEmpty() && config.mode == TranscriptionMode.REMOTE && !app.transcriptionSettings.isAuthorized(config, chunk.id, chunk.startedAtMillis)) {
-            dao.updateProcessingState(chunkId, "VAD_READY", "尚未授权上传历史音频：在原始录音中点继续处理并确认，或在设置 → 转文字方式选择本地识别")
+            dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "尚未授权上传历史音频：在原始录音中点继续处理并确认，或在设置 → 转文字方式选择本地识别")
             return Result.success()
         }
-        if (segments.isNotEmpty() && config.mode == TranscriptionMode.LOCAL && com.gongfpp.sonfolio.models.ModelCatalog.file(applicationContext.filesDir, model).length() != model.bytes) {
-            dao.updateProcessingState(chunkId, "VAD_READY", "等待语音识别模型：请打开设置 → 转文字方式，下载模型后继续转写；也可选择在线识别")
+        if (segments.isNotEmpty() && config.mode == TranscriptionMode.LOCAL && !com.gongfpp.sonfolio.models.ModelCatalog.installed(applicationContext.filesDir, model)) {
+            dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "等待语音识别模型：请打开设置 → 转文字方式，下载模型后继续转写；也可选择在线识别")
             return Result.success()
         }
         val file = File(chunk.localPath)
         if (!file.exists() || file.length() <= 44L) {
-            dao.updateProcessingState(chunkId, "ASR_FAILED", "录音文件不存在或为空")
+            dao.updateProcessingState(chunkId, ChunkProcessing.ASR_FAILED, "录音文件不存在或为空")
             return Result.success()
         }
 
-        dao.updateProcessingState(chunkId, "ASR_RUNNING", null)
+        dao.updateProcessingState(chunkId, ChunkProcessing.ASR_RUNNING, null)
         return try {
             val language = app.preferences.preferredLanguage
             val windows = segments.map {
@@ -63,7 +64,11 @@ class AsrWorker(
                 config.mode == TranscriptionMode.REMOTE -> remoteTranscribe(
                     app, dao, file, segments, config, chunk.id, chunk.startedAtMillis, language,
                 )
-                else -> InferenceClient(applicationContext).transcribe(file, windows, language)
+                else -> {
+                    // 只有支持热词的引擎才读取个人词汇，避免每次本地转写都查库。
+                    val hotwords = if (engine.supportsHotwords) app.vocabularyRepository.hotwords() else ""
+                    InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords)
+                }
             }
             check(segments.size == texts.size) { "转写片段数量不完整，原音保留，请重试" }
             check(app.transcriptionSettings.read().revision == config.revision) { "转文字设置已改变，请继续处理以使用新设置" }
@@ -80,16 +85,19 @@ class AsrWorker(
                                 endedAtMillis = chunk.startedAtMillis + segment.endOffsetMillis,
                                 text = text,
                                 languageTag = if (config.mode == TranscriptionMode.REMOTE && config.provider == SpeechProvider.SILICONFLOW) "auto" else language,
-                                modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else "SenseVoice",
-                                modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else SenseVoiceAsrProcessor.MODEL_VERSION,
-                                processingState = "ASR_READY",
+                                modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else engine.displayName,
+                                modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else when (engine) {
+                                    LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
+                                    LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor.MODEL_VERSION
+                                },
+                                processingState = ChunkProcessing.ASR_READY,
                                 errorMessage = null,
                             ),
                         )
                     }
-                    dao.updateSpeechSegmentState(segment.id, "ASR_READY")
+                    dao.updateSpeechSegmentState(segment.id, ChunkProcessing.ASR_READY)
                 }
-                dao.updateProcessingState(chunkId, "ASSEMBLY_PENDING", "文字已保存，等待第 4 步整理对话")
+                dao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待第 4 步整理对话")
             }
             // Scheduling errors leave persisted text pending; opening the app can re-enqueue it.
             runCatching { AssemblyWorker.enqueue(applicationContext, chunkId) }
@@ -97,13 +105,13 @@ class AsrWorker(
         } catch (error: CancellationException) {
             throw error
         } catch (error: OutOfMemoryError) {
-            dao.updateProcessingState(chunkId, "ASR_FAILED", "ASR 内存不足")
+            dao.updateProcessingState(chunkId, ChunkProcessing.ASR_FAILED, "ASR 内存不足")
             // 失败已落库，队列本身成功结束这一项，避免取消后续其他录音。
             Result.success()
         } catch (error: Throwable) {
             dao.updateProcessingState(
                 chunkId,
-                "ASR_FAILED",
+                ChunkProcessing.ASR_FAILED,
                 error.message ?: error.javaClass.simpleName,
             )
             Result.success()
@@ -168,12 +176,12 @@ class AsrWorker(
                                 languageTag = if (config.provider == SpeechProvider.SILICONFLOW) "auto" else language,
                                 modelName = config.model,
                                 modelVersion = versionTag,
-                                processingState = "ASR_READY",
+                                processingState = ChunkProcessing.ASR_READY,
                                 errorMessage = null,
                             ),
                         )
                     }
-                    dao.updateSpeechSegmentState(segment.id, "ASR_READY")
+                    dao.updateSpeechSegmentState(segment.id, ChunkProcessing.ASR_READY)
                 }
             }
             error("${failures.size}/${pending.size} 个片段转写失败：${failures.first().second.exceptionOrNull()?.message}；已完成的文字已保留，重试只处理剩余片段")

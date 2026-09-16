@@ -1,32 +1,29 @@
 package com.gongfpp.sonfolio.processing
 
 import android.content.Context
+import com.gongfpp.sonfolio.models.ModelCatalog
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineQwen3AsrModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
-import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import java.io.File
-import com.gongfpp.sonfolio.models.ModelCatalog
 
 /**
- * A process-local SenseVoice recognizer. The model is deliberately created once per worker and
- * reused for all speech windows in that chunk; creating one native model per segment would waste
- * hundreds of megabytes and makes OOM much more likely on a phone.
+ * Qwen3-ASR 0.6B int8（conv-frontend + encoder + decoder + tokenizer）。相比 SenseVoice，
+ * 中英混说与方言更强，但模型约 987 MB，CPU 自回归解码更慢；因此和 SenseVoice 一样按需下载、
+ * 由用户选择，默认不启用。hotwords 由用户确认过的个人词汇拼接，仅在本地 Qwen3 引擎生效。
  */
-class SenseVoiceAsrProcessor(
+class Qwen3AsrProcessor(
     context: Context,
-    preferredLanguage: String = "zh",
+    hotwords: String = "",
 ) : AsrProcessor {
-    private val model = ModelCatalog.file(context.filesDir, ModelCatalog.senseVoice).also {
-        require(ModelCatalog.installed(context.filesDir, ModelCatalog.senseVoice)) { "请在设置的模型下载中下载 SenseVoice 模型" }
-    }
-    private val tokens = File(model.parentFile, TOKENS_ASSET).also { file ->
-        // Small bundled vocabulary is replaced atomically; a killed copy cannot poison later runs.
-        val temporary = File(file.parentFile, "$TOKENS_ASSET.tmp")
-        context.assets.open(TOKENS_ASSET).use { input -> java.io.FileOutputStream(temporary).use { output -> input.copyTo(output); output.fd.sync() } }
-        java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-    }
+    private val root = requireNotNull(ModelCatalog.byId(LocalAsrEngine.QWEN3_ASR.artifactId)) { "未登记 Qwen3-ASR 模型" }
+        .let { artifact ->
+            require(ModelCatalog.installed(context.filesDir, artifact)) { "请在设置的模型下载中下载 Qwen3-ASR 模型" }
+            ModelCatalog.file(context.filesDir, artifact).parentFile!!
+        }
+
     private val recognizer = OfflineRecognizer(
         null,
         OfflineRecognizerConfig(
@@ -35,13 +32,13 @@ class SenseVoiceAsrProcessor(
                 featureDim = 80,
             ),
             modelConfig = OfflineModelConfig(
-                senseVoice = OfflineSenseVoiceModelConfig(
-                    model = model.absolutePath,
-                    language = preferredLanguage.takeUnless { it == "auto" }.orEmpty(),
-                    useInverseTextNormalization = true,
+                qwen3Asr = OfflineQwen3AsrModelConfig(
+                    convFrontend = File(root, CONV_FRONTEND).absolutePath,
+                    encoder = File(root, ENCODER).absolutePath,
+                    decoder = File(root, DECODER).absolutePath,
+                    tokenizer = File(root, TOKENIZER_DIR).absolutePath,
+                    hotwords = hotwords.trim().take(MAX_HOTWORDS_CHARS),
                 ),
-                tokens = tokens.absolutePath,
-                // int8 SenseVoice 对线程数近乎线性加速；留 2 个核给录音、VAD 与系统。
                 numThreads = minOf(4, Runtime.getRuntime().availableProcessors()).coerceAtLeast(1),
                 debug = false,
                 provider = "cpu",
@@ -78,8 +75,12 @@ class SenseVoiceAsrProcessor(
     }
 
     companion object {
-        const val TOKENS_ASSET = "sense-voice-tokens.txt"
-        const val MODEL_VERSION = "sherpa-onnx-v1.13.7-sensevoice-int8"
+        const val MODEL_VERSION = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+        private const val CONV_FRONTEND = "conv_frontend.onnx"
+        private const val ENCODER = "encoder.int8.onnx"
+        private const val DECODER = "decoder.int8.onnx"
+        private const val TOKENIZER_DIR = "tokenizer"
+        private const val MAX_HOTWORDS_CHARS = 4_000
         private const val MIN_SAMPLES = 1_600 // 100 ms at 16 kHz
     }
 }

@@ -33,11 +33,19 @@ internal class InferenceClient(
         return starts.indices.map { DetectedSpeechWindow(starts[it], ends[it]) }
     }
 
-    suspend fun transcribe(file: File, windows: List<DetectedSpeechWindow>, language: String): List<String> {
+    suspend fun transcribe(
+        file: File,
+        windows: List<DetectedSpeechWindow>,
+        language: String,
+        engine: LocalAsrEngine = LocalAsrEngine.DEFAULT,
+        hotwords: String = "",
+    ): List<String> {
         if (windows.isEmpty()) return emptyList()
         val response = call(InferenceService.TRANSCRIBE, Bundle().apply {
             putString("path", file.path)
             putString("language", language)
+            putString("engine", engine.name)
+            putString("hotwords", hotwords)
             putLongArray("starts", windows.map { it.startOffsetMillis }.toLongArray())
             putLongArray("ends", windows.map { it.endOffsetMillis }.toLongArray())
         })

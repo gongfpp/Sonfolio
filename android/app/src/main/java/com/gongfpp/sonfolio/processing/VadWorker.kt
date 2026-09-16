@@ -23,15 +23,15 @@ class VadWorker(
         val app = applicationContext as SonfolioApplication
         val dao = app.database.recordingDao()
         val chunk = dao.getChunk(chunkId) ?: return Result.failure()
-        if (chunk.endedAtMillis == null || chunk.processingState == "AUDIO_DELETED") return Result.success()
-        if (chunk.processingState in setOf("ASR_READY", "ASR_RUNNING", "VAD_READY")) return Result.success()
+        if (chunk.endedAtMillis == null || chunk.processingState == ChunkProcessing.AUDIO_DELETED) return Result.success()
+        if (chunk.processingState in setOf(ChunkProcessing.ASR_READY, ChunkProcessing.ASR_RUNNING, ChunkProcessing.VAD_READY)) return Result.success()
         val file = File(chunk.localPath)
         if (!file.exists() || file.length() <= 44L) {
-            dao.updateProcessingState(chunkId, "VAD_FAILED", "录音文件不存在或为空")
+            dao.updateProcessingState(chunkId, ChunkProcessing.VAD_FAILED, "录音文件不存在或为空")
             return Result.failure()
         }
 
-        dao.updateProcessingState(chunkId, "VAD_RUNNING", null)
+        dao.updateProcessingState(chunkId, ChunkProcessing.VAD_RUNNING, null)
         return try {
             val windows = InferenceClient(applicationContext).detect(file)
             val entities = windows.map { window ->
@@ -41,26 +41,26 @@ class VadWorker(
                     startOffsetMillis = window.startOffsetMillis,
                     endOffsetMillis = window.endOffsetMillis,
                     speechProbability = 1.0F,
-                    processingState = "VAD_READY",
+                    processingState = ChunkProcessing.VAD_READY,
                 )
             }
             app.database.withTransaction {
                 dao.deleteTranscriptsForChunk(chunkId)
                 dao.deleteSpeechSegments(chunkId)
                 if (entities.isNotEmpty()) dao.insertSpeechSegments(entities)
-                dao.updateProcessingState(chunkId, "VAD_READY", null)
+                dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, null)
             }
             app.processingScheduler.enqueueAsr(chunkId)
             Result.success()
         } catch (error: CancellationException) {
             throw error
         } catch (error: OutOfMemoryError) {
-            dao.updateProcessingState(chunkId, "VAD_FAILED", "VAD 内存不足")
+            dao.updateProcessingState(chunkId, ChunkProcessing.VAD_FAILED, "VAD 内存不足")
             Result.failure()
         } catch (error: Throwable) {
             dao.updateProcessingState(
                 chunkId,
-                "VAD_FAILED",
+                ChunkProcessing.VAD_FAILED,
                 error.message ?: error.javaClass.simpleName,
             )
             Result.failure()
