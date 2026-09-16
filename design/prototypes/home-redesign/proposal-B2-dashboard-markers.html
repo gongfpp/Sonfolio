@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 B2 · 状态仪表 + 标记直达（B 的修订版）— 声迹首页重构提案</title>
+<style>
+  :root {
+    --ink: #17201C; --ink-soft: #626B65; --line: #E6E5DE;
+    --green: #1E7046; --pale-green: #E3F0DE; --card: #FFFEFA; --bg: #F4F3EE;
+    --amber: #B07600; --amber-deep: #694E00; --amber-pale: #F6EEDC;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Noto Sans SC", sans-serif; background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; align-items: center; padding: 40px 16px; gap: 28px; }
+  h1 { font-size: 20px; }
+  .phone { width: 390px; height: 820px; background: var(--bg); border: 1px solid var(--line); border-radius: 36px;
+    box-shadow: 0 18px 50px rgba(23,32,28,.14); overflow: hidden; display: flex; flex-direction: column; }
+  .statusbar { display: flex; justify-content: space-between; padding: 12px 22px 4px; font-size: 12px; color: var(--ink-soft); }
+  .header { padding: 10px 20px 6px; display: flex; justify-content: space-between; align-items: center; }
+  .header .title { font-size: 24px; font-weight: 700; }
+  .icon-btn { width: 36px; height: 36px; border-radius: 12px; background: var(--card); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--ink-soft); }
+  .scroll { flex: 1; overflow-y: auto; padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 12px; }
+  .daybar { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
+  .daybar .d { flex: 1; text-align: center; font-size: 11px; color: var(--ink-soft); padding: 7px 0; border-radius: 10px; }
+  .daybar .d.on { background: var(--card); border: 1px solid var(--line); font-weight: 700; color: var(--ink); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 10px; text-align: center; }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { font-size: 11px; color: var(--ink-soft); }
+
+  /* 录音主卡：状态 + 停止 + 标记直达（本方案核心修订） */
+  .record-card { background: var(--green); border-radius: 18px; padding: 16px 18px 14px; color: #fff; }
+  .rc-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .rc-top .left b { font-size: 17px; display: block; }
+  .rc-top .left span { font-size: 12px; opacity: .85; }
+  .rec-btn { width: 68px; height: 68px; border-radius: 50%; background: #fff; color: var(--green); border: none;
+    font-size: 14px; font-weight: 700; box-shadow: inset 0 0 0 6px var(--pale-green); flex: none; }
+  .rc-divider { border: none; border-top: 1px solid rgba(255,255,255,.28); margin: 13px 0 11px; }
+  .rc-mark-row { display: flex; align-items: center; gap: 10px; }
+  .rc-mark-label { font-size: 12px; opacity: .85; line-height: 1.35; }
+  .mark-main { display: inline-flex; align-items: center; gap: 6px; background: var(--amber-pale); color: var(--amber-deep);
+    border-radius: 11px; padding: 8px 11px; font-weight: 700; font-size: 13px; border: none; }
+  .mark-sub { width: 46px; height: 46px; border-radius: 50%; background: var(--amber-pale); color: var(--amber-deep);
+    border: none; font-weight: 700; font-size: 12px; }
+  .rc-marked { margin-top: 9px; font-size: 11px; color: #FFE9B8; display: flex; align-items: center; gap: 6px; }
+
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  .panel .p-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .panel .p-head a { color: var(--green); font-weight: 600; font-size: 12px; text-decoration: none; }
+  .progress { height: 8px; border-radius: 999px; background: #EDEDE7; overflow: hidden; display: flex; margin-top: 4px; }
+  .progress i { height: 100%; }
+  .p-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-top: 6px; }
+  .heat { display: grid; grid-template-columns: repeat(14, 1fr); gap: 4px; margin-top: 6px; }
+  .heat i { height: 16px; border-radius: 4px; background: #EDEDE7; }
+  .heat i.l1 { background: #DCEFD9; } .heat i.l2 { background: #A9D8B4; } .heat i.l3 { background: var(--green); }
+
+  .entry-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px;
+    display: flex; gap: 12px; align-items: flex-start; }
+  .badge { flex: none; width: 42px; height: 42px; border-radius: 12px; background: var(--pale-green); color: var(--green);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 700; }
+  .badge small { font-size: 9px; font-weight: 400; color: var(--ink-soft); }
+  .entry-card .e-body { flex: 1; }
+  .entry-card .e-title { font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; }
+  .entry-card .e-title .dur { font-size: 12px; color: var(--ink-soft); font-weight: 400; }
+  .entry-card .e-brief { font-size: 13px; margin-top: 3px; }
+  .entry-card .e-foot { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { background: var(--pale-green); color: var(--green); border-radius: 999px; padding: 3px 9px; font-size: 11px; }
+  .tag.amber { background: var(--amber-pale); color: var(--amber-deep); }
+  .tag.warn { background: #F6EEDC; color: #805900; }
+  .sec-title { font-size: 13px; font-weight: 700; color: var(--ink-soft); margin-top: 2px; }
+  .note { max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; }
+  .note h2 { font-size: 16px; margin-bottom: 8px; }
+  .note li { font-size: 13px; color: var(--ink-soft); margin: 5px 0 5px 18px; }
+</style>
+</head>
+<body>
+<h1>方案 B2 · 状态仪表 + 标记直达 —— B 的修订版</h1>
+
+<div class="phone">
+  <div class="statusbar"><span>9:41</span><span>●●●</span></div>
+  <div class="header">
+    <span class="title">声迹</span>
+    <span class="icon-btn">⚙</span>
+  </div>
+  <div class="scroll">
+    <div class="daybar">
+      <span class="d">一</span><span class="d">二</span><span class="d on">今天 16</span><span class="d">17</span><span class="d">18</span><span class="d">19</span><span class="d">20</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>2:09</b><span>今日已录</span></div>
+      <div class="stat"><b>5</b><span>场对话</span></div>
+      <div class="stat"><b>21.4<small style="font-size:11px">GB</small></b><span>累计占用</span></div>
+    </div>
+
+    <div class="record-card">
+      <div class="rc-top">
+        <div class="left">
+          <b>正在记录 · 02:14:37</b>
+          <span>每 5 分钟保存一段原音 · 全程在本机</span>
+        </div>
+        <button class="rec-btn">停止</button>
+      </div>
+      <hr class="rc-divider">
+      <div class="rc-mark-row">
+        <span class="rc-mark-label">标记刚才<br>重要的事</span>
+        <button class="mark-main">★ 标记（3分）</button>
+        <button class="mark-sub">10分</button>
+        <button class="mark-sub">20分</button>
+      </div>
+      <div class="rc-marked">★ 已标记 10:02 往前 10 分钟 · 涉及的对话会高亮保留</div>
+    </div>
+
+    <div class="panel">
+      <div class="p-head"><span>处理进度</span><a>查看全部 ›</a></div>
+      <div class="progress">
+        <i style="width:62%; background:var(--green)"></i><i style="width:20%; background:#A9D8B4"></i>
+      </div>
+      <div class="p-row"><span>✅ 已转写 62% · ⏳ 排队 20%</span><span>今日 7 段原音</span></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><span>最近两周</span><a>日历 ›</a></div>
+      <div class="heat">
+        <i></i><i class="l1"></i><i class="l2"></i><i></i><i class="l3"></i><i class="l1"></i><i></i>
+        <i class="l2"></i><i class="l3"></i><i class="l1"></i><i></i><i class="l2"></i><i class="l3"></i><i class="l1"></i>
+      </div>
+      <div class="p-row"><span>深色 = 录音更多</span><span>2 天有缺口</span></div>
+    </div>
+
+    <div class="sec-title">对话时间线 · 5 场</div>
+    <div class="entry-card">
+      <div class="badge">09:12<small>38分</small></div>
+      <div class="e-body">
+        <div class="e-title">投产安排与回滚检查<span class="dur">▶ 38 分钟</span></div>
+        <div class="e-brief">确认回滚预案由值班同学负责，明早核对清单。</div>
+        <div class="e-foot"><span class="tag amber">★ 10:02 标记</span><span class="tag">安排 · 明早</span></div>
+      </div>
+    </div>
+    <div class="entry-card">
+      <div class="badge">10:26<small>6分</small></div>
+      <div class="e-body">
+        <div class="e-title">午前灵感：播客选题<span class="dur">▶ 6 分钟</span></div>
+        <div class="e-brief">「本地优先工具」选题的三个论点。</div>
+        <div class="e-foot"><span class="tag warn">转写中</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <h2>方案说明（相对 B 改了什么）</h2>
+  <ul>
+    <li><b>标记回到一级位置：</b>录音主卡下半部新增「标记刚才」区——★3分 主按钮 + 10分/20分 圆钮，配色与现有 App 的琥珀色标记体系一致（AmberPale/深棕字），交互习惯不用重学。</li>
+    <li><b>反馈内联：</b>点击后主卡内直接出现「已标记 10:02 往前 10 分钟」，并说明「涉及的对话会高亮保留」，与现有一日回顾中 ★ 标记卡片呼应。</li>
+    <li><b>未录音时：</b>标记区半透明置灰（与现版本一致），主卡变成「开始记录」按钮 + 最近一次录音摘要。</li>
+    <li><b>保留 B 的全部优点：</b>统计三格、处理进度、两周热力、横滑日期条原样保留。</li>
+    <li><b>代价：</b>主卡变高（约 1.5 屏卡位）；下方内容首屏露出变少，需要权衡是否默认折叠热力面板。</li>
+  </ul>
+</div>
+</body>
+</html>

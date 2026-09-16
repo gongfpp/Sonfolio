@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 D · 日记优先 — 声迹首页重构提案</title>
+<style>
+  :root {
+    --ink: #17201C; --ink-soft: #626B65; --line: #E6E5DE;
+    --green: #1E7046; --pale-green: #E3F0DE; --card: #FFFEFA; --bg: #F4F3EE;
+    --amber-deep: #694E00; --amber-pale: #F6EEDC;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Noto Sans SC", sans-serif; background: var(--bg); color: var(--ink);
+    display: flex; flex-direction: column; align-items: center; padding: 40px 16px; gap: 28px; }
+  h1 { font-size: 20px; }
+  .phone { width: 390px; height: 820px; background: var(--bg); border: 1px solid var(--line); border-radius: 36px;
+    box-shadow: 0 18px 50px rgba(23,32,28,.14); overflow: hidden; display: flex; flex-direction: column; position: relative; }
+  .statusbar { display: flex; justify-content: space-between; padding: 12px 22px 4px; font-size: 12px; color: var(--ink-soft); }
+  .topbar { padding: 8px 20px 4px; display: flex; justify-content: space-between; align-items: center; }
+  .topbar .date { font-size: 15px; font-weight: 700; }
+  .topbar .date small { color: var(--ink-soft); font-weight: 400; margin-left: 6px; }
+  .topbar .link { font-size: 13px; color: var(--ink-soft); }
+  .scroll { flex: 1; overflow-y: auto; padding: 6px 16px 110px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* 录音状态：一条常驻细横幅，不打断阅读 */
+  .rec-strip { background: var(--green); color: #fff; border-radius: 999px; padding: 8px 14px;
+    display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .rec-strip .dot { width: 8px; height: 8px; border-radius: 50%; background: #B7F0C8; animation: p 1.6s infinite; }
+  @keyframes p { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .rec-strip b { font-variant-numeric: tabular-nums; }
+  .rec-strip .spacer { flex: 1; }
+  .rec-strip .stop { background: rgba(255,255,255,.22); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
+
+  /* 标记悬浮条：录音时吸附在底部 dock 上方 */
+  .mark-dock { position: absolute; left: 16px; right: 16px; bottom: 86px; background: var(--amber-pale);
+    border: 1px solid #EAD9AC; border-radius: 14px; padding: 9px 12px; display: flex; align-items: center; gap: 8px; }
+  .mark-dock .lab { font-size: 12px; color: var(--amber-deep); font-weight: 700; line-height: 1.3; }
+  .mark-dock .b { border: none; background: #fff; color: var(--amber-deep); font-weight: 700; border-radius: 999px;
+    padding: 7px 13px; font-size: 13px; box-shadow: 0 1px 4px rgba(105,78,0,.18); }
+  .mark-dock .b.main { background: var(--amber-deep); color: #FFF6DF; }
+  .record-fab { position: absolute; right: 18px; bottom: 18px; width: 62px; height: 62px; border-radius: 18px;
+    background: var(--green); color: #fff; border: none; font-size: 12px; font-weight: 700;
+    box-shadow: 0 10px 22px rgba(30,112,70,.4); }
+
+  /* 今日故事卡 */
+  .story { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px 18px 14px; }
+  .story .s-eyebrow { font-size: 11px; letter-spacing: 2px; color: var(--green); font-weight: 700; }
+  .story h3 { font-size: 19px; margin: 6px 0 8px; }
+  .story p { font-size: 13.5px; line-height: 1.75; color: var(--ink); }
+  .story .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .tag { background: var(--pale-green); color: var(--green); border-radius: 999px; padding: 3px 10px; font-size: 11px; }
+  .tag.amber { background: var(--amber-pale); color: var(--amber-deep); }
+  .story .s-foot { display: flex; justify-content: space-between; margin-top: 12px; font-size: 11px; color: var(--ink-soft); }
+
+  .chapter { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  .chapter .ch-head { display: flex; align-items: baseline; gap: 8px; }
+  .chapter .no { font-size: 11px; color: var(--green); font-weight: 700; letter-spacing: 1px; }
+  .chapter .ch-title { font-weight: 700; font-size: 15px; flex: 1; }
+  .chapter .ch-time { font-size: 11px; color: var(--ink-soft); }
+  .chapter p { font-size: 13px; margin-top: 4px; }
+  .chapter .ch-foot { margin-top: 7px; display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); }
+  .chapter .star-line { margin-top: 6px; background: var(--amber-pale); border-radius: 8px; padding: 5px 9px;
+    font-size: 11px; color: var(--amber-deep); }
+  .chapter.pending { border-style: dashed; opacity: .8; }
+  .note { max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; }
+  .note h2 { font-size: 16px; margin-bottom: 8px; }
+  .note li { font-size: 13px; color: var(--ink-soft); margin: 5px 0 5px 18px; }
+</style>
+</head>
+<body>
+<h1>方案 D · 日记优先 —— 「首页先读今天的故事」</h1>
+
+<div class="phone">
+  <div class="statusbar"><span>9:41</span><span>●●●</span></div>
+  <div class="topbar">
+    <span class="date">9月16日<small>周三 · 5 场对话 · 2:09</small></span>
+    <span class="link">日历 ›</span>
+  </div>
+  <div class="scroll">
+    <div class="rec-strip"><span class="dot"></span>正在记录 <b>02:14:37</b><span class="spacer"></span><span class="stop">停止</span></div>
+
+    <div class="story">
+      <div class="s-eyebrow">TODAY · 一日回顾</div>
+      <h3>投产定了，选题有了，周末待定</h3>
+      <p>上午和团队敲定了投产窗口与回滚预案，由值班同学跟进；午前想到「本地优先工具」的播客选题，记下三个论点。散步时聊起周末安排，展览还没定。今天是密度中等、但有两件值得跟进的事的一天。</p>
+      <div class="chips"><span class="tag">安排 ×2</span><span class="tag">要点 ×5</span><span class="tag amber">★ 标记 ×2</span></div>
+      <div class="s-foot"><span>基础整理 · 转写更新后自动刷新</span><span>换 AI 总结 ›</span></div>
+    </div>
+
+    <div class="chapter">
+      <div class="ch-head"><span class="no">壹</span><span class="ch-title">投产安排与回滚检查</span><span class="ch-time">09:12 · 38分</span></div>
+      <p>确认回滚预案由值班同学负责，明早核对清单。</p>
+      <div class="star-line">★ 10:02 往前 10 分钟已标记 · 高亮保留</div>
+      <div class="ch-foot"><span>3 段原音 · 24 行转写</span><span>▶ 对照回听</span></div>
+    </div>
+    <div class="chapter">
+      <div class="ch-head"><span class="no">贰</span><span class="ch-title">午前灵感：播客选题</span><span class="ch-time">10:26 · 6分</span></div>
+      <p>「本地优先工具」选题的三个论点。</p>
+      <div class="ch-foot"><span>1 段原音</span><span>▶ 回听</span></div>
+    </div>
+    <div class="chapter pending">
+      <div class="ch-head"><span class="no">叁</span><span class="ch-title" style="color:var(--ink-soft)">午餐后散步闲聊</span><span class="ch-time">14:05 · 22分</span></div>
+      <p style="color:var(--ink-soft)">原音已保存 · 转写排队中（第 3/7 段），完成后自动成为一章。</p>
+      <div class="ch-foot"><span>查看原音</span></div>
+    </div>
+  </div>
+
+  <div class="mark-dock">
+    <span class="lab">标记<br>刚才</span>
+    <button class="b main">★ 3分</button>
+    <button class="b">10分</button>
+    <button class="b">20分</button>
+  </div>
+  <button class="record-fab">录音</button>
+</div>
+
+<div class="note">
+  <h2>方案说明</h2>
+  <ul>
+    <li><b>结构：</b>首页 = 日期头 + 录音细横幅 + 「今日故事」卡 + 按章节编号的对话卡（壹/贰/叁）。先给一天的结论，再往下翻细节。</li>
+    <li><b>标记作为底部悬浮条：</b>录音时琥珀色「标记刚才」条吸附在右下录音键上方，★3分 主按钮 + 10分/20分；不占首页版面、且任何滚动位置都够得着——和「读故事」的主线互不干扰。</li>
+    <li><b>标记的回显：</b>被标记的章节卡内出现琥珀色高亮行（★ 时间 + 回溯范围），故事卡的 chip 汇总「★ 标记 ×N」。</li>
+    <li><b>录音横幅：</b>常驻顶部细条（计时 + 停止），右下角保留录音 FAB 兜底；阅读时几乎不占空间。</li>
+    <li><b>适合：</b>把声迹当「日记/晨报」用的人：每天先读总结，偶尔下钻。</li>
+    <li><b>代价：</b>没有统计/进度面板，处理状态只能从章节卡的 pending 样式感知；重度录音监控需求要进二级页。</li>
+  </ul>
+</div>
+</body>
+</html>
