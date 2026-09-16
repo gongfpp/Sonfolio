@@ -1,5 +1,6 @@
 package com.gongfpp.sonfolio.recording
 
+import com.gongfpp.sonfolio.processing.ChunkProcessing
 import com.gongfpp.sonfolio.SonfolioPreferences
 import com.gongfpp.sonfolio.data.local.AudioChunkEntity
 import com.gongfpp.sonfolio.data.local.MarkerEntity
@@ -60,7 +61,7 @@ class RecordingRepository(
             val bytes = if (recovered) WavChunkWriter.repairHeader(file, fact.sampleRate, fact.channels) else fact.bytes
             val end = fact.endedAt ?: (fact.startedAt + WavChunkWriter.durationMillis(bytes, fact.sampleRate, fact.channels))
             finishChunk(fact.id, end, bytes, if (recovered) {
-                if (bytes > WavChunkWriter.WAV_HEADER_BYTES) "RECOVERED" else "FAILED"
+                if (bytes > WavChunkWriter.WAV_HEADER_BYTES) ChunkProcessing.RECOVERED else ChunkProcessing.FAILED
             } else fact.state, if (recovered) "已从录音日志恢复，原音保留" else fact.error)
             if (recovered) recordingDao.openGap(end, "录音进程中断，等待重新采集")
             log.acknowledge(fact.id)
@@ -94,6 +95,9 @@ class RecordingRepository(
                     speechCount = row.speechCount,
                     sampleRateHz = chunk.sampleRateHz,
                     channelCount = chunk.channelCount,
+                    // 保留策略退役 WAV 后 byteSize 归零，展示压缩音大小而不是「待写入」。
+                    displayBytes = if (chunk.byteSize > 0L) chunk.byteSize else (chunk.compressedBytes ?: 0L),
+                    audioCompressed = chunk.byteSize <= 0L && (chunk.compressedBytes ?: 0L) > 0L,
                 )
             }
         }
@@ -117,7 +121,7 @@ class RecordingRepository(
                 byteSize = 0,
                 sampleRateHz = sampleRateHz,
                 channelCount = channelCount,
-                processingState = "RECORDING",
+                processingState = ChunkProcessing.RECORDING,
                 errorMessage = null,
                 recordedZoneId = zoneId,
                 recordedOffsetSeconds = offsetSeconds,
@@ -130,7 +134,7 @@ class RecordingRepository(
         id: String,
         endedAtMillis: Long,
         byteSize: Long,
-        state: String = "RECORDED",
+        state: String = ChunkProcessing.RECORDED,
         errorMessage: String? = null,
     ) {
         recordingDao.finishChunk(
@@ -140,7 +144,7 @@ class RecordingRepository(
             processingState = state,
             errorMessage = errorMessage,
         )
-        if (state == "RECORDED" || state == "RECOVERED") {
+        if (state == ChunkProcessing.RECORDED || state == ChunkProcessing.RECOVERED) {
             processingScheduler?.enqueueVad(id)
         }
     }
@@ -201,9 +205,9 @@ class RecordingRepository(
                 endedAtMillis = lastWriteAt,
                 byteSize = byteSize,
                 state = if (byteSize > WavChunkWriter.WAV_HEADER_BYTES) {
-                    "RECOVERED"
+                    ChunkProcessing.RECOVERED
                 } else {
-                    "FAILED"
+                    ChunkProcessing.FAILED
                 },
                 errorMessage = "录音服务异常退出，启动时已修复切片",
             )
@@ -227,22 +231,22 @@ class RecordingRepository(
             val scheduler = processingScheduler ?: return
             if (scheduler.hasUnfinishedProcessingWork(chunkId)) return
             when (state) {
-                "VAD_RUNNING" -> recordingDao.updateProcessingState(chunkId, "RECORDED", "应用退出后等待重新处理")
-                "ASR_RUNNING" -> {
-                    recordingDao.updateProcessingState(chunkId, "VAD_READY", "应用退出后等待重新处理")
+                ChunkProcessing.VAD_RUNNING -> recordingDao.updateProcessingState(chunkId, ChunkProcessing.RECORDED, "应用退出后等待重新处理")
+                ChunkProcessing.ASR_RUNNING -> {
+                    recordingDao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "应用退出后等待重新处理")
                     recordingDao.resetInterruptedSpeechSegmentsFor(chunkId)
                 }
             }
             state = recordingDao.getChunk(chunkId)?.processingState ?: return
         }
-        if (state in setOf("ASSEMBLY_PENDING", "ASSEMBLY_FAILED")) {
-            recordingDao.updateProcessingState(chunkId, "ASSEMBLY_PENDING", "文字已保存，等待整理")
+        if (state in setOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) {
+            recordingDao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待整理")
             processingScheduler?.enqueueAssembly(chunkId)
-        } else if (state in setOf("ASR_FAILED", "VAD_READY")) {
-            recordingDao.updateProcessingState(chunkId, "VAD_READY", null)
+        } else if (state in setOf(ChunkProcessing.ASR_FAILED, ChunkProcessing.VAD_READY)) {
+            recordingDao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, null)
             processingScheduler?.enqueueAsr(chunkId)
-        } else if (state in setOf("VAD_FAILED", "FAILED", "RECORDED", "RECOVERED")) {
-            recordingDao.updateProcessingState(chunkId, "RECORDED", null)
+        } else if (state in setOf(ChunkProcessing.VAD_FAILED, ChunkProcessing.FAILED, ChunkProcessing.RECORDED, ChunkProcessing.RECOVERED)) {
+            recordingDao.updateProcessingState(chunkId, ChunkProcessing.RECORDED, null)
             processingScheduler?.enqueueVad(chunkId)
         }
     }
@@ -256,12 +260,12 @@ class RecordingRepository(
             val scheduler = processingScheduler ?: return
             if (scheduler.hasUnfinishedProcessingWork(chunk.id)) return@forEach
             when (chunk.processingState) {
-                "VAD_RUNNING" -> {
-                    recordingDao.updateProcessingState(chunk.id, "RECORDED", "应用退出后等待重新处理")
+                ChunkProcessing.VAD_RUNNING -> {
+                    recordingDao.updateProcessingState(chunk.id, ChunkProcessing.RECORDED, "应用退出后等待重新处理")
                     processingScheduler?.enqueueVad(chunk.id)
                 }
-                "ASR_RUNNING" -> {
-                    recordingDao.updateProcessingState(chunk.id, "VAD_READY", "应用退出后等待重新处理")
+                ChunkProcessing.ASR_RUNNING -> {
+                    recordingDao.updateProcessingState(chunk.id, ChunkProcessing.VAD_READY, "应用退出后等待重新处理")
                     recordingDao.resetInterruptedSpeechSegmentsFor(chunk.id)
                     processingScheduler?.enqueueAsr(chunk.id)
                 }
@@ -344,7 +348,7 @@ class RecordingRepository(
             val protected = if (protectMarked) getMarkedChunkIds() else emptySet()
             var removed = 0; var skipped = 0; var failed = 0
             ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }.forEach { chunk ->
-                if (chunk.id in protected || chunk.endedAtMillis == null || chunk.processingState != "ASR_READY") {
+                if (chunk.id in protected || chunk.endedAtMillis == null || chunk.processingState != ChunkProcessing.ASR_READY) {
                     skipped++
                 } else {
                     // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。

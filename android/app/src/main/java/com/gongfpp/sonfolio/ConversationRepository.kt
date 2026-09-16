@@ -24,7 +24,6 @@ import kotlinx.coroutines.sync.withLock
 class ConversationRepository(
     private val database: SonfolioDatabase,
     private val preferences: SonfolioPreferences,
-    private val vocabulary: PersonalVocabularyRepository = PersonalVocabularyRepository(database.vocabularyDao()),
 ) {
     private val conversationDao = database.conversationDao()
     private val rebuildLock = Mutex()
@@ -61,7 +60,7 @@ class ConversationRepository(
             var rangeStart = start
             var rangeEnd = end
             while (true) {
-                val neighbors = conversationDao.getReadyRowsInWindow(rangeStart - MERGE_GAP_MILLIS, rangeEnd + MERGE_GAP_MILLIS)
+                val neighbors = conversationDao.getReadyRowsInWindow(rangeStart - CONVERSATION_MERGE_GAP_MILLIS, rangeEnd + CONVERSATION_MERGE_GAP_MILLIS)
                 val previous = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
                 val first = minOf(rangeStart, neighbors.minOfOrNull { it.startedAtMillis } ?: rangeStart, previous.minOfOrNull { it.startedAtMillis } ?: rangeStart)
                 val last = maxOf(rangeEnd, neighbors.maxOfOrNull { it.endedAtMillis } ?: rangeEnd, previous.maxOfOrNull { it.endedAtMillis } ?: rangeEnd)
@@ -113,7 +112,7 @@ class ConversationRepository(
         var groupEnd = Long.MIN_VALUE
         rows.forEach { row ->
             val current = groups.lastOrNull()
-            if (current == null || row.startedAtMillis - groupEnd > MERGE_GAP_MILLIS || gaps.any {
+            if (current == null || row.startedAtMillis - groupEnd > CONVERSATION_MERGE_GAP_MILLIS || gaps.any {
                     it.startedAtMillis < row.startedAtMillis && (it.endedAtMillis ?: Long.MAX_VALUE) > groupEnd
                 }) {
                 groups += mutableListOf(row)
@@ -332,23 +331,12 @@ class ConversationRepository(
      * 修正单条转写文字；原始识别版本保留在 originalText。
      * 修正是对原始记录的编辑，派生数据必须同步失效：重建受影响区间的基础小结与每日回顾，
      * 并把关联的 AI 总结标记为 STALE，防止“原文改了，总结还是旧的”。
-     * 同时把「原识别 → 修正」交给个人词汇，返回本次达到确认阈值、应在页面提示的候选词。
      */
-    suspend fun updateTranscriptText(transcriptId: String, text: String): List<String> {
+    suspend fun updateTranscriptText(transcriptId: String, text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return emptyList()
-        val row = conversationDao.getTranscriptWindow(transcriptId) ?: return emptyList()
-        val correction = conversationDao.getTranscriptForCorrection(transcriptId)
-        val baseline = correction?.originalText ?: correction?.text
+        if (trimmed.isEmpty()) return
+        val row = conversationDao.getTranscriptWindow(transcriptId) ?: return
         conversationDao.updateTranscriptText(transcriptId, trimmed)
-        val prompts = if (baseline != null && baseline.trim() != trimmed) {
-            // 词汇记录失败不应影响已经确认的文字修正。
-            runCatching { vocabulary.recordCorrections(baseline, trimmed) }
-                .getOrElse { error ->
-                    android.util.Log.e("ConversationRepository", "个人词汇候选记录失败", error)
-                    emptyList()
-                }
-        } else emptyList()
         val zone = ZoneId.systemDefault()
         val keys = buildSet {
             row.conversationId?.let { raw -> add("conversation:${conversationDao.resolveAlias(raw) ?: raw}") }
@@ -370,12 +358,8 @@ class ConversationRepository(
             // 文字已保存；整理遇到并发更新失败时留给下一次整理合并，不吞掉已确认的用户输入。
             android.util.Log.e("ConversationRepository", "转写修正后的整理未完成，待下次合并", error)
         }
-        return prompts
     }
 }
-
-private const val MERGE_GAP_MILLIS = 2 * 60 * 1_000L
-
 
 private fun isDetailed(group: List<TranscriptAudioRow>): Boolean {
     val duration = group.last().endedAtMillis - group.first().startedAtMillis

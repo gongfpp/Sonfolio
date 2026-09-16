@@ -104,4 +104,52 @@ class DayTimelineTest {
         val exactMidnight = row("boundary", midnight - 1_000, midnight)
         assertFalse(transcriptGroupsByDate(listOf(listOf(exactMidnight)), zone).containsKey(date))
     }
+
+    @Test fun unfinishedChunksGroupIntoPendingUnitsUsingTheSameMergeRule() {
+        val audio = listOf(
+            chunk("a", midnight, 60_000, "RECORDED"),
+            chunk("b", midnight + 90_000, 60_000, "VAD_READY"),
+            chunk("c", midnight + 400_000, 60_000, "ASR_RUNNING"),
+        )
+        val day = DayTimeline.build(date, emptyList(), audio, emptyList(), zone)
+        assertEquals(2, day.pendingUnits.size)
+        assertEquals(listOf("a", "b"), day.pendingUnits[0].chunkIds)
+        // 单元阶段取最靠后的那一段（最少完成步数），避免把整组显示成已完成。
+        assertEquals(1, day.pendingUnits[0].progress.completed)
+        assertEquals("原音已保存，等待找人声", day.pendingUnits[0].label)
+        assertEquals(3, day.pendingUnits[1].progress.active)
+        assertEquals(0, day.processedChunks)
+        assertEquals(3, day.totalChunks)
+    }
+
+    @Test fun recordingGapSplitsPendingUnits() {
+        val audio = listOf(
+            chunk("a", midnight, 60_000, "RECORDED"),
+            chunk("b", midnight + 90_000, 60_000, "RECORDED"),
+        )
+        val gap = RecordingGapEntity("g", midnight + 70_000, midnight + 80_000, "测试中断", false)
+        val day = DayTimeline.build(date, emptyList(), audio, listOf(gap), zone)
+        assertEquals(2, day.pendingUnits.size)
+    }
+
+    @Test fun progressCountsOnlyFullyProcessedChunks() {
+        val audio = listOf(
+            chunk("done", midnight, 1_000, "ASR_READY"),
+            chunk("waiting", midnight + 1_200, 1_000, "VAD_READY"),
+            chunk("deleted", midnight + 2_400, 1_000, "AUDIO_DELETED").copy(byteSize = 0),
+        )
+        val day = DayTimeline.build(date, emptyList(), audio, emptyList(), zone)
+        assertEquals(1, day.processedChunks)
+        assertEquals(2, day.totalChunks)
+    }
+
+    @Test fun timelineEntriesMixConversationsAndPendingNewestFirst() {
+        val conversation = ConversationPreview("c", "00:00", "已完成", "1分", "摘要", "BRIEF", midnight + 500_000, midnight + 560_000)
+        val pendingChunk = chunk("p", midnight, 60_000, "RECORDED")
+        val day = DayTimeline.build(date, listOf(conversation), listOf(pendingChunk), emptyList(), zone)
+        val entries = day.timelineEntries()
+        assertEquals(2, entries.size)
+        assertTrue(entries[0] is TimelineEntry.Conversation)
+        assertTrue(entries[1] is TimelineEntry.Pending)
+    }
 }

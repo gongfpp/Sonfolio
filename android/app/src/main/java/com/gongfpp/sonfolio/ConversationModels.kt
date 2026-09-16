@@ -61,4 +61,8 @@ data class AudioChunkPreview(
     val sampleRateHz: Int = 16_000,
     val channelCount: Int = 1,
     val speechCount: Int = 0,
+    /** 可展示的文件大小：原始 WAV 还在时是 WAV 大小，退役后是压缩音大小。 */
+    val displayBytes: Long = byteSize,
+    /** true 表示原始 WAV 已按保留策略删除，只剩压缩音。 */
+    val audioCompressed: Boolean = false,
 )
