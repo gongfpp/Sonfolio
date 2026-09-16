@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gongfpp.sonfolio.HelpHint
 import com.gongfpp.sonfolio.SonfolioApplication
 import kotlinx.coroutines.*
 
@@ -68,7 +69,14 @@ internal fun SummarySettingsCard() {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("总结方式", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text("当前：${saved.mode.label}。本卡片只决定文字如何总结，转文字方式在上方单独设置；切换不自动重做全部历史。", fontSize = 12.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("当前：${saved.mode.label}", fontSize = 12.sp, modifier = Modifier.weight(1f))
+                HelpHint(
+                    title = "总结方式说明",
+                    body = "本卡片只决定文字如何总结，转文字方式在上方单独设置；切换不会自动重做全部历史。\n\n" +
+                        "本地基础整理：直接摘取原句，离线可用，不是生成式 AI。\n手机本地 AI：下载约 491 MB 模型，在手机上生成，离线可用，效果与速度受手机性能影响。\n在线总结：把转写文字发送给所选服务，不上传音频，可能产生费用。",
+                )
+            }
             SummaryMode.entries.forEach { option ->
                 Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { mode = option }, verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = mode == option, onClick = null)
@@ -84,7 +92,6 @@ internal fun SummarySettingsCard() {
             }
             if (mode == SummaryMode.LOCAL) {
                 com.gongfpp.sonfolio.models.ModelDownloadControl(com.gongfpp.sonfolio.models.ModelCatalog.summary)
-                Text("默认提供约 491 MB 的小模型。离线运行，效果与速度受手机性能影响。", fontSize = 11.sp)
                 var advancedImport by remember { mutableStateOf(false) }
                 TextButton(onClick = { advancedImport = !advancedImport }) { Text("高级：使用已有模型文件") }
                 if (advancedImport) {
@@ -152,9 +159,13 @@ internal fun SummarySettingsCard() {
             if (mode != SummaryMode.BASIC) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(automatic, { automatic = it }, enabled = !busy)
-                    Text("转写完成后自动生成 AI 总结", Modifier.padding(start = 8.dp), fontSize = 12.sp)
+                    Text("转写完成后自动生成 AI 总结", Modifier.padding(start = 8.dp).weight(1f), fontSize = 12.sp)
+                    HelpHint(
+                        title = "自动 AI 总结的范围",
+                        body = "关闭时仍会自动转写并生成基础小结，AI 总结需在对话或一日回顾中手动点击生成。\n\n" +
+                            "开启后只自动处理新完成转写涉及的对话和日期，不重做全部历史；低电量时等待，失败可重试。",
+                    )
                 }
-                Text("关闭时仍会自动转写并生成基础小结，AI 总结需在对话或一日回顾中手动点击生成。开启后只自动处理新完成转写涉及的对话和日期，不重做全部历史。低电量时等待，失败可重试。", fontSize = 11.sp)
             }
             Button(enabled = !busy, onClick = {
                 val key = apiKey

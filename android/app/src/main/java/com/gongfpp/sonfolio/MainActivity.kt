@@ -1395,19 +1395,6 @@ private fun SummaryPointsCard(summary: ConversationSummaryEntity, lines: List<Tr
 }
 
 @Composable
-private fun StructuredCard(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color = PaleGreen) {
-    Surface(shape = RoundedCornerShape(14.dp), color = color, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(13.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, tint = Green, modifier = Modifier.size(18.dp))
-                Text(title, modifier = Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            }
-            Text(body, modifier = Modifier.padding(top = 9.dp), color = Color(0xFF3D4B41), fontSize = 12.5.sp, lineHeight = 19.sp)
-        }
-    }
-}
-
-@Composable
 private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     var localDate by rememberSaveable { mutableStateOf(initialDate) }
@@ -1724,8 +1711,13 @@ private fun SettingsScreen(
         }
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
-                Text("短录音过滤", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text("有效人声和文字同时低于阈值才隐藏；原音不删除，标记片段豁免。文字设为0可关闭过滤。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("短录音过滤", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    HelpHint(
+                        title = "短录音过滤怎么算",
+                        body = "有效人声和文字同时低于阈值才隐藏；原音不删除，标记片段豁免。文字设为 0 可关闭过滤。\n\n隐藏只影响首页时间线显示，仍可在原始录音中回听。",
+                    )
+                }
                 Text("最短有效人声：${minimumSpeechSeconds.toInt()} 秒", modifier = Modifier.padding(top = 12.dp), fontSize = 12.sp)
                 Slider(
                     value = minimumSpeechSeconds,
@@ -1771,9 +1763,15 @@ private fun SettingsScreen(
                         catch (error: Exception) { "设置已保存，但队列更新失败（${error.message ?: error.javaClass.simpleName}）；重新打开应用会重试" }
                     }
                 }
-                Text("包括人声检测、转写和自动 AI 总结。关闭后，已等待的任务也可在未充电时继续。开启不主动打断当前一轮；正在运行的旧任务若遇系统限制，下一轮按新设置执行。手动 AI 总结不要求充电。录音不受影响。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("默认本地识别，不上传音频。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    HelpHint(
+                        title = "仅充电时自动处理",
+                        body = "包括人声检测、转写和自动 AI 总结。关闭后，已等待的任务也可在未充电时继续；开启不主动打断当前一轮，正在运行的旧任务若遇系统限制，下一轮按新设置执行。手动 AI 总结不要求充电，录音不受影响。\n\n只有单独启用外部转文字并确认后才上传人声片段；外部总结仅发送转写文字。",
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                }
                 policyMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp)) }
-                Text("默认本地识别，不上传音频。只有单独启用外部转文字并确认后才上传人声片段；外部总结仅发送转写文字。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(13.dp))
             }
         }
         SectionTitle("存储与原音")
@@ -1791,7 +1789,13 @@ private fun SettingsScreen(
         }
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
-                Text("原音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("原音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    HelpHint(
+                        title = "原音保留策略",
+                        body = "转写完成后自动压缩原音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择「永久保留」则始终保留原声。\n\n超过保留期的段：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。",
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0, 7, 30, 90).forEach { days ->
                         FilterChip(selected = retentionDays == days, onClick = { retentionDays = days; preferences.setRetentionDays(days) },
@@ -1800,11 +1804,9 @@ private fun SettingsScreen(
                 }
                 val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
                 val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)
-                Text(
-                    if (expired > 0) "${expired}段原音超过保留期：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。"
-                    else "转写完成后自动压缩原音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择“永久保留”则始终保留原声。",
-                    color = InkSoft, fontSize = 11.sp,
-                )
+                if (expired > 0) {
+                    Text("${expired} 段原音超过保留期，将按保留策略自动处理。", color = InkSoft, fontSize = 11.sp)
+                }
             }
         }
         Surface(
@@ -1885,11 +1887,9 @@ private fun RawRecordingsScreen(
     val bytesPerDay = 16_000L * 2L * 86_400L
     val hoursLeft = (availableBytes.toDouble() / bytesPerDay) * 24.0
     val remainingLabel = if (hoursLeft >= 48) "预计还能录约 ${(hoursLeft / 24).toInt()} 天" else "预计还能录约 ${hoursLeft.toInt()} 小时"
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("audio/wav"),
-    ) { uri ->
+    fun saveExport(uri: android.net.Uri?) {
         val sourcePath = exportPath
-        if (uri == null || sourcePath == null || operationBusy) return@rememberLauncherForActivityResult
+        if (uri == null || sourcePath == null || operationBusy) return
         operationBusy = true
         scope.launch {
             try { withContext(Dispatchers.IO) { com.gongfpp.sonfolio.processing.AudioFileAccess.mutex.withLock {
@@ -1905,6 +1905,14 @@ private fun RawRecordingsScreen(
             catch (error: Exception) { operationMessage = "导出失败（${error.message ?: error.javaClass.simpleName}），目标可能是不完整文件，请重新导出" }
             finally { operationBusy = false }
         }
+    }
+    // 压缩后退伍的录音是 m4a；导出按实际文件类型选择 MIME，避免第三方播放器不识别。
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { saveExport(it) }
+    val exportM4aLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mp4")) { saveExport(it) }
+    fun launchExport(path: String) {
+        exportPath = path
+        val name = File(path).name
+        if (name.endsWith(".m4a", ignoreCase = true)) exportM4aLauncher.launch(name) else exportLauncher.launch(name)
     }
     val zipLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip"),
@@ -2044,10 +2052,7 @@ private fun RawRecordingsScreen(
                                 !app.transcriptionSettings.isAuthorized(config, chunk.id, chunk.startedAtMillis)) uploadRequest = chunk.id to config
                             else onRetry(chunk.id)
                         },
-                        onExport = {
-                            exportPath = chunk.localPath
-                            exportLauncher.launch(File(chunk.localPath).name)
-                        },
+                        onExport = { launchExport(chunk.localPath) },
                     )
                 }
                 if (displayedChunks.size > visibleCount) item(key = "more") {

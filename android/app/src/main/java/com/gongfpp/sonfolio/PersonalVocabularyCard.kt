@@ -34,11 +34,15 @@ import kotlinx.coroutines.*
 
     Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("个人词汇", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text(
-                "候选词来自你对转写的修正，只有确认过的词才会成为本地识别提示（热词）。目前仅对本地 Qwen3-ASR 生效，不上传、不改写已有文字。",
-                fontSize = 12.sp,
-            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("个人词汇", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                HelpHint(
+                    title = "个人词汇（本地热词）",
+                    body = "候选词来自你对转写的修正。只有确认过的词才会成为本地识别提示（热词），目前仅对本地 Qwen3-ASR 生效，不上传、不改写已有文字。\n\n" +
+                        "同一个词在多次修正中反复出现后，会进入候选列表提醒你确认；命中 ${PersonalVocabularyRepository.AUTO_ACCEPT_SUPPORT} 次后会直接加入，不再逐个确认。你也可以随时手动增删。",
+                )
+            }
+            Text("确认后才作为本地 Qwen3-ASR 的识别热词；候选来自你对转写的修正。", fontSize = 12.sp)
 
             if (accepted.isEmpty()) {
                 Text("还没有个人词汇。修正转写时出现的专有名词会先进入下方候选。", fontSize = 12.sp)
@@ -90,10 +94,7 @@ import kotlinx.coroutines.*
                         }) { Text("忽略") }
                     }
                 }
-                Text(
-                    "命中 ${PersonalVocabularyRepository.AUTO_ACCEPT_SUPPORT} 次后会直接加入，不再逐个确认。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
-                )
+                Text("反复出现的词会在这里等待确认。", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
 
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())

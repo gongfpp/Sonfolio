@@ -18,25 +18,11 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
     private val repository = sonfolioApplication.conversationRepository
     private val recordingRepository = sonfolioApplication.recordingRepository
 
-    val conversations = repository.observeTimeline()
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
-        )
-
     val recordingStatus = recordingRepository.observeStatus()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = RecordingStatus(),
-        )
-
-    val recordingChunks = recordingRepository.observeChunks()
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
         )
 
     val recordingFeedback = RecordingController.feedback
