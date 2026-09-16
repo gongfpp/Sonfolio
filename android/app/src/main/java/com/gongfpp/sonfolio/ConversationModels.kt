@@ -32,12 +32,16 @@ data class TranscriptLine(
 )
 
 data class SearchHit(
-    val transcriptId: String,
     val conversationId: String,
-    val startedAtMillis: Long,
-    val endedAtMillis: Long,
     val title: String,
-    val text: String,
+    /** 命中片段所在句的时间；打开对话时用它定位。 */
+    val snippetTranscriptId: String,
+    val snippetStartedAtMillis: Long,
+    val snippetText: String,
+    /** 正文命中的句子数；标题命中但正文没命中时为 0。 */
+    val hitCount: Int,
+    val titleHit: Boolean,
+    val latestHitMillis: Long,
     val isMarked: Boolean = false,
 )
 

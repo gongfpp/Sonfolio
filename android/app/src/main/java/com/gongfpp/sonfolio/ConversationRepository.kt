@@ -24,6 +24,7 @@ import kotlinx.coroutines.sync.withLock
 class ConversationRepository(
     private val database: SonfolioDatabase,
     private val preferences: SonfolioPreferences,
+    private val vocabulary: PersonalVocabularyRepository = PersonalVocabularyRepository(database.vocabularyDao()),
 ) {
     private val conversationDao = database.conversationDao()
     private val rebuildLock = Mutex()
@@ -277,19 +278,20 @@ class ConversationRepository(
         visibleLimit: Int = SEARCH_BATCH_SIZE,
     ): Flow<SearchResults> {
         val request = SearchQuery.build(query, dateRange, markedOnly, visibleLimit)
-        val noCriteria = query.isBlank() && dateRange == SearchDateRange.All && !markedOnly
-        if (request.errorMessage != null || noCriteria) {
+        if (request.errorMessage != null) {
             return flowOf(SearchResults(emptyList(), requestedLimit = request.visibleLimit, errorMessage = request.errorMessage))
         }
         return conversationDao.observeSearch(androidx.sqlite.db.SimpleSQLiteQuery(request.sql, request.arguments.toTypedArray())).map { rows ->
             val hits = rows.take(request.visibleLimit).map { row ->
                 SearchHit(
-                    transcriptId = row.transcriptId,
                     conversationId = row.conversationId,
-                    startedAtMillis = row.startedAtMillis,
-                    endedAtMillis = row.endedAtMillis,
                     title = row.title,
-                    text = row.text,
+                    snippetTranscriptId = row.snippetTranscriptId,
+                    snippetStartedAtMillis = row.snippetStartedAtMillis,
+                    snippetText = row.snippetText,
+                    hitCount = row.hitCount,
+                    titleHit = row.titleHit > 0,
+                    latestHitMillis = row.latestHitMillis,
                     isMarked = row.isMarked,
                 )
             }
@@ -331,12 +333,23 @@ class ConversationRepository(
      * 修正单条转写文字；原始识别版本保留在 originalText。
      * 修正是对原始记录的编辑，派生数据必须同步失效：重建受影响区间的基础小结与每日回顾，
      * 并把关联的 AI 总结标记为 STALE，防止“原文改了，总结还是旧的”。
+     * 同时把「原识别 → 修正」交给个人词汇，返回本次达到确认阈值、应在页面提示的候选词。
      */
-    suspend fun updateTranscriptText(transcriptId: String, text: String) {
+    suspend fun updateTranscriptText(transcriptId: String, text: String): List<String> {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        val row = conversationDao.getTranscriptWindow(transcriptId) ?: return
+        if (trimmed.isEmpty()) return emptyList()
+        val row = conversationDao.getTranscriptWindow(transcriptId) ?: return emptyList()
+        val correction = conversationDao.getTranscriptForCorrection(transcriptId)
+        val baseline = correction?.originalText ?: correction?.text
         conversationDao.updateTranscriptText(transcriptId, trimmed)
+        val prompts = if (baseline != null && baseline.trim() != trimmed) {
+            // 词汇记录失败不应影响已经确认的文字修正。
+            runCatching { vocabulary.recordCorrections(baseline, trimmed) }
+                .getOrElse { error ->
+                    android.util.Log.e("ConversationRepository", "个人词汇候选记录失败", error)
+                    emptyList()
+                }
+        } else emptyList()
         val zone = ZoneId.systemDefault()
         val keys = buildSet {
             row.conversationId?.let { raw -> add("conversation:${conversationDao.resolveAlias(raw) ?: raw}") }
@@ -358,6 +371,7 @@ class ConversationRepository(
             // 文字已保存；整理遇到并发更新失败时留给下一次整理合并，不吞掉已确认的用户输入。
             android.util.Log.e("ConversationRepository", "转写修正后的整理未完成，待下次合并", error)
         }
+        return prompts
     }
 }
 

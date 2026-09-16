@@ -24,12 +24,14 @@ data class TranscriptAudioRow(
 )
 
 data class TranscriptSearchRow(
-    @ColumnInfo(name = "transcriptId") val transcriptId: String,
     @ColumnInfo(name = "conversationId") val conversationId: String,
-    @ColumnInfo(name = "startedAtMillis") val startedAtMillis: Long,
-    @ColumnInfo(name = "endedAtMillis") val endedAtMillis: Long,
     @ColumnInfo(name = "title") val title: String,
-    @ColumnInfo(name = "text") val text: String,
+    @ColumnInfo(name = "hitCount") val hitCount: Int,
+    @ColumnInfo(name = "titleHit") val titleHit: Int,
+    @ColumnInfo(name = "latestHitMillis") val latestHitMillis: Long,
+    @ColumnInfo(name = "snippetTranscriptId") val snippetTranscriptId: String,
+    @ColumnInfo(name = "snippetText") val snippetText: String,
+    @ColumnInfo(name = "snippetStartedAtMillis") val snippetStartedAtMillis: Long,
     @ColumnInfo(name = "isMarked") val isMarked: Boolean,
 )
 

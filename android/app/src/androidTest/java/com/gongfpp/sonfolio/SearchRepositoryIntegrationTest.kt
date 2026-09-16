@@ -18,36 +18,43 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SearchRepositoryIntegrationTest {
-    @Test fun searchBeyondOneHundredRequiresEveryTermAndRefreshesAfterMarker() = runBlocking {
+    @Test fun searchAggregatesByConversationBeyondOneHundredAndRefreshesAfterMarker() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
         val preferenceName = "sonfolio-search-qa-${System.nanoTime()}"
         val repository = ConversationRepository(database, SonfolioPreferences(context, preferenceName))
-        val dao = database.recordingDao()
+        val recordingDao = database.recordingDao()
+        val conversationDao = database.conversationDao()
         val base = System.currentTimeMillis() - 3_600_000L
         try {
             database.withTransaction {
-                dao.insertChunk(AudioChunkEntity("chunk", base, base + 125_000, "/qa/metadata-only.wav", 4_000_044, 16_000, 1, "ASR_READY", null))
+                recordingDao.insertChunk(AudioChunkEntity("chunk", base, base + 125_000, "/qa/metadata-only.wav", 4_000_044, 16_000, 1, "ASR_READY", null))
                 repeat(125) { index ->
                     val id = index.toString().padStart(3, '0')
                     val offset = index * 1_000L
-                    dao.insertSpeechSegments(listOf(SpeechSegmentEntity("s-$id", "chunk", offset, offset + 1_000, 1f, "ASR_READY")))
-                    dao.insertTranscript(TranscriptEntity("t-$id", "s-$id", null, base + offset, base + offset + 1_000,
+                    recordingDao.insertSpeechSegments(listOf(SpeechSegmentEntity("s-$id", "chunk", offset, offset + 1_000, 1f, "ASR_READY")))
+                    recordingDao.insertTranscript(TranscriptEntity("t-$id", "s-$id", "c-$id", base + offset, base + offset + 1_000,
                         "甲乙 丙丁 戊己 庚辛" + if (index < 110) " 壬癸" else "", "zh", "qa", "qa", "ASR_READY", null))
+                    conversationDao.insertAll(listOf(ConversationEntity(
+                        id = "c-$id", kind = "Unknown", startedAtMillis = base + offset, endedAtMillis = base + offset + 1_000,
+                        zoneId = "Asia/Shanghai", generatedTitle = "对话$id", briefSummary = "", summaryLevel = "BRIEF", processingState = "READY",
+                    )))
                 }
-                repository.rebuildFromTranscripts()
             }
             val query = "甲乙 丙丁 戊己 庚辛 壬癸"
             val first = repository.observeSearch(query).first()
             assertEquals(100, first.hits.size)
             assertTrue(first.hasMore)
+            assertTrue(first.hits.all { it.hitCount == 1 && !it.titleHit })
             val all = repository.observeSearch(query, visibleLimit = 200).first()
             assertEquals(110, all.hits.size)
             assertFalse(all.hasMore)
             assertEquals(first.hits, all.hits.take(100))
+            assertEquals(all.hits.size, all.hits.map { it.conversationId }.distinct().size)
             assertTrue(repository.observeSearch("甲乙 丙丁 戊己 庚辛 不存在").first().hits.isEmpty())
             assertNotNull(repository.observeSearch("字".repeat(513)).first().errorMessage)
 
+            val markedConversation = all.hits.first { it.conversationId == "c-005" }
             val firstEmpty = CompletableDeferred<Unit>()
             val marked = async(start = CoroutineStart.UNDISPATCHED) {
                 withTimeout(10_000) {
@@ -57,9 +64,9 @@ class SearchRepositoryIntegrationTest {
                 }
             }
             withTimeout(10_000) { firstEmpty.await() }
-            dao.insertMarker(MarkerEntity("marker", base + 60_500, 1_000, 0, null))
+            recordingDao.insertMarker(MarkerEntity("marker", markedConversation.snippetStartedAtMillis + 500, 100, 0, null))
             val updated = marked.await()
-            assertEquals(110, updated.hits.size)
+            assertEquals(listOf("c-005"), updated.hits.map { it.conversationId })
             assertTrue(updated.hits.all { it.isMarked })
         } finally {
             database.close()
