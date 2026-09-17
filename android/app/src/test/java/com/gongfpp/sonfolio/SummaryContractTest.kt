@@ -25,6 +25,14 @@ class SummaryContractTest {
         assertTrue(parts.first().contains("★重点"))
     }
 
+    @Test fun summaryTitleIsNormalizedInsteadOfFailingTheWholeRun() {
+        fun json(title: String) = """{"title":"$title","brief":"一段小结","keyPoints":[],"decisions":[],"followUps":[],"questions":[]}"""
+        // 小模型常见的过长/带空格标题：截断规范化，而不是让整份小结失败。
+        assertEquals("今天讨论了", AiSummary.parse(json("今天讨论了录音与长期保存的方案")).title)
+        assertEquals("录音", AiSummary.parse(json("录 音")).title)
+        assertEquals("未识别", AiSummary.parse(json("   ")).title)
+    }
+
     @Test fun fingerprintInvalidatesChangedTextMarksTimeAndSource() {
         val row = SummaryText("a", 10, 20, "原文", false)
         val source = SummaryInput("conversation:a", listOf(row))

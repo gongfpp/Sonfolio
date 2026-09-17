@@ -87,9 +87,15 @@ internal data class AiSummary(
             val cleaned = value.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
             val json = runCatching { JSONObject(cleaned) }.getOrElse { error("模型没有返回有效结构化内容，原有小结保留") }
             require(json.opt("title") is String && json.opt("brief") is String) { "模型标题和小结必须是文字" }
-            val title = json.optString("title").trim()
+            // 小模型经常给出过长或带空格的标题；标题格式不该让整份小结失败，规范化即可。
+            val title = json.optString("title").trim().filterNot { it.isWhitespace() }.let { raw ->
+                when {
+                    raw.isEmpty() || raw == "未识别" -> "未识别"
+                    raw.length > 5 -> raw.take(5)
+                    else -> raw
+                }
+            }
             val brief = json.optString("brief").trim()
-            require(title == "未识别" || (title.length in 3..5 && title.none { it.isWhitespace() })) { "模型标题应为 3～5 个字" }
             require(brief.isNotBlank() && brief.length <= 1600) { "模型小结为空或过长，原有小结保留" }
             fun lines(key: String): List<String> {
                 val a = json.optJSONArray(key) ?: error("模型缺少结构化字段：$key")

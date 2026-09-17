@@ -86,9 +86,11 @@ class SummaryIntegrationTest {
         }
     }
 
-    @Test fun parserRejectsMissingFieldsLongTitlesAndNonStringPoints() {
+    @Test fun parserNormalizesLongTitlesAndRejectsInvalidFields() {
         assertEquals(valid, AiSummary.parse("```json\n${valid.json()}\n```"))
-        listOf("not json", "{}", JSONObject(valid.json()).put("title", "这是一个特别长的标题").toString(),
+        // 过长的标题会被截断规范化，而不是让整份小结失败（0.5B 模型常见）。
+        assertEquals("这是一个特", AiSummary.parse(JSONObject(valid.json()).put("title", "这是一个特别长的标题").toString()).title)
+        listOf("not json", "{}",
             JSONObject(valid.json()).put("keyPoints", org.json.JSONArray().put(12)).toString()).forEach {
             assertTrue(runCatching { AiSummary.parse(it) }.isFailure)
         }
