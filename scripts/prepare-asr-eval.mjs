@@ -52,10 +52,43 @@ if (run([...deviceArgs, 'get-state']).trim() !== 'device') throw new Error('TCP 
 function toProductionFormat(file) {
   const temporary = `${file}.16k.wav`;
   const ffmpeg = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-ac', '1', '-ar', '16000', '-sample_fmt', 's16', temporary], { encoding: 'utf8' });
-  if (ffmpeg.status === 0 && existsSync(temporary)) { renameSync(temporary, file); return 'ffmpeg'; }
-  const afconvert = spawnSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', file, temporary], { encoding: 'utf8' });
-  if (afconvert.status === 0 && existsSync(temporary)) { renameSync(temporary, file); return 'afconvert'; }
-  throw new Error(`无法把 ${file} 转成 16 kHz 单声道；请安装 ffmpeg 后重试`);
+  if (!(ffmpeg.status === 0 && existsSync(temporary))) {
+    const afconvert = spawnSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', file, temporary], { encoding: 'utf8' });
+    if (!(afconvert.status === 0 && existsSync(temporary))) throw new Error(`无法把 ${file} 转成 16 kHz 单声道；请安装 ffmpeg 后重试`);
+  }
+  renameSync(temporary, file);
+  canonicalizeWav(file);
+  return 'ffmpeg';
+}
+
+// ffmpeg/afconvert 会在 fmt 与 data 之间插入 LIST/FLLR 等 chunk，而应用内的 WavPcmReader
+// 只解析标准 44 字节头（录音由 WavChunkWriter 生成，恒为该布局）。这里重写成同样布局，
+// 否则素材会被当成空音频，评测结论无效。
+function canonicalizeWav(file) {
+  const buffer = readFileSync(file);
+  if (buffer.length < 12 || buffer.toString('latin1', 0, 4) !== 'RIFF' || buffer.toString('latin1', 8, 12) !== 'WAVE') {
+    throw new Error(`${file} 不是 RIFF/WAVE`);
+  }
+  let offset = 12, fmt = null, data = null;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString('latin1', offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    if (id === 'fmt ') fmt = { offset: offset + 8, size };
+    if (id === 'data') { data = { offset: offset + 8, size }; break; }
+    offset += 8 + size + (size & 1);
+  }
+  if (!fmt || fmt.size !== 16 || !data) throw new Error(`${file} 缺少标准 PCM fmt/data chunk`);
+  const output = Buffer.alloc(44 + data.size);
+  output.write('RIFF', 0, 'latin1');
+  output.writeUInt32LE(36 + data.size, 4);
+  output.write('WAVE', 8, 'latin1');
+  output.write('fmt ', 12, 'latin1');
+  output.writeUInt32LE(16, 16);
+  buffer.copy(output, 20, fmt.offset, fmt.offset + 16);
+  output.write('data', 36, 'latin1');
+  output.writeUInt32LE(data.size, 40);
+  buffer.copy(output, 44, data.offset, data.offset + data.size);
+  writeFileSync(file, output);
 }
 
 run([...deviceArgs, 'shell', 'mkdir', '-p', remoteDirectory]);
