@@ -70,7 +70,7 @@ class SummaryIntegrationTest {
             assertEquals("Bearer fixture-key", connection.getRequestProperty("Authorization"))
             assertFalse(connection.instanceFollowRedirects)
             assertTrue(connection.disconnected)
-            for ((code, expected) in listOf(302 to "重定向", 401 to "API Key", 429 to "额度", 500 to "HTTP 500")) {
+            for ((code, expected) in listOf(302 to "重定向", 401 to "密钥", 403 to "权限", 429 to "额度", 500 to "HTTP 500")) {
                 val error = runCatching { RemoteSummaryTransport(store) { FakeHttps("private-server-body", code) }
                     .generate(store.read(), "system", "fixture") }.exceptionOrNull()
                 assertTrue(error?.message.orEmpty().contains(expected))
@@ -161,12 +161,12 @@ class SummaryIntegrationTest {
                 old.execSQL("INSERT INTO recording_gaps (id, startedAtMillis, endedAtMillis, reason, recoveredAutomatically) VALUES ('old-gap', 30, 40, 'existing gap', 0)")
                 old.version = oldVersion
             }
-            val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name).addMigrations(SonfolioDatabase.MIGRATION_1_2, SonfolioDatabase.MIGRATION_2_3, SonfolioDatabase.MIGRATION_3_4).build()
+            val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name).addMigrations(SonfolioDatabase.MIGRATION_1_2, SonfolioDatabase.MIGRATION_2_3, SonfolioDatabase.MIGRATION_3_4, SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10).build()
             try {
                 assertEquals("/qa/original.wav", migrated.recordingDao().getChunk("original")!!.localPath)
                 assertEquals(364L, migrated.recordingDao().getChunk("original")!!.byteSize)
                 assertTrue(migrated.conversationDao().getSummaryRuns().isEmpty())
-                assertEquals(4, migrated.openHelper.writableDatabase.version)
+                assertEquals(10, migrated.openHelper.writableDatabase.version)
                 val previous = migrated.recordingDao().getGaps().single()
                 assertEquals("old-gap", previous.id)
                 assertEquals(40L, previous.endedAtMillis)

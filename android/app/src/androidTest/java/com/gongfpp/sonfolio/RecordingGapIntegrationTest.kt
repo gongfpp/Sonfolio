@@ -67,7 +67,11 @@ class RecordingGapIntegrationTest {
             assertTrue(java.io.File(directory, "a.wav").exists())
             assertTrue(java.io.File(directory, "b.wav").exists())
             assertFalse(java.io.File(directory, "other.wav").exists())
-            assertEquals(before, db.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE))
+            // 清理后文字与顺序不变，只有被清理原音的 localPath 变为空。
+            val after = db.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE)
+            assertEquals(before.map { it.transcriptId to it.text }, after.map { it.transcriptId to it.text })
+            assertEquals("", after.single { it.transcriptId == "t-other" }.localPath)
+            assertTrue(after.single { it.transcriptId == "t-a" }.localPath.isNotBlank())
             assertEquals("AUDIO_DELETED", db.recordingDao().getChunk("other")!!.processingState)
             assertEquals(0L, db.recordingDao().getChunk("other")!!.byteSize)
         } finally { db.close(); directory.deleteRecursively(); context.deleteSharedPreferences(prefsName) }

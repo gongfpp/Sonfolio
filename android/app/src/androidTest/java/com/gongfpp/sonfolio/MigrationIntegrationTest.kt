@@ -9,6 +9,7 @@ import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,9 +19,9 @@ import org.junit.runner.RunWith
 class MigrationIntegrationTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
-    /** 用导出的 Schema JSON 重建版本 4–8 的旧库，迁移到 9 后核对原音、对话字段与个人词汇表不丢失。 */
-    @Test fun upgradeFromVersion4Through8PreservesAudioAndConversationFields() = runBlocking {
-        for (oldVersion in listOf(4, 5, 6, 7, 8)) {
+    /** 用导出的 Schema JSON 重建版本 4–9 的旧库，迁移到 10 后核对原音、对话字段、个人词汇与恒定列清理。 */
+    @Test fun upgradeFromVersion4Through9PreservesAudioAndConversationFields() = runBlocking {
+        for (oldVersion in listOf(4, 5, 6, 7, 8, 9)) {
         val name = "migration-qa-${UUID.randomUUID()}.db"
         val schema = InstrumentationRegistry.getInstrumentation().context.assets
             .open("com.gongfpp.sonfolio.data.local.SonfolioDatabase/$oldVersion.json").bufferedReader().use { JSONObject(it.readText()).getJSONObject("database") }
@@ -59,10 +60,10 @@ class MigrationIntegrationTest {
                 old.version = oldVersion
             }
             val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name)
-                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9)
+                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10)
                 .build()
             try {
-                assertEquals(9, migrated.openHelper.writableDatabase.version)
+                assertEquals(10, migrated.openHelper.writableDatabase.version)
                 val chunk = migrated.recordingDao().getChunk("original")!!
                 assertEquals("/qa/original.wav", chunk.localPath)
                 assertEquals(364L, chunk.byteSize)
@@ -83,6 +84,13 @@ class MigrationIntegrationTest {
                 // 9 起新增个人词汇表；迁移后必须可写且为空。
                 val vocab = migrated.vocabularyDao().acceptedTerms()
                 assertTrue(vocab.isEmpty())
+                // 10 起删除永远只写 READY 的恒定状态列。
+                fun columnsOf(table: String): Set<String> =
+                    migrated.openHelper.writableDatabase.query("PRAGMA table_info($table)").use { rows ->
+                        buildSet { while (rows.moveToNext()) add(rows.getString(rows.getColumnIndex("name"))) }
+                    }
+                assertFalse("conversations.processingState 应已删除", "processingState" in columnsOf("conversations"))
+                assertFalse("daily_journals.processingState 应已删除", "processingState" in columnsOf("daily_journals"))
             } finally { migrated.close() }
         } finally { context.deleteDatabase(name) }
         }

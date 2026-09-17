@@ -19,7 +19,7 @@ import androidx.room.RoomDatabase
         ConversationAliasEntity::class,
         PersonalVocabularyEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -28,6 +28,40 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun vocabularyDao(): VocabularyDao
 
     companion object {
+        // 0.2.3 收敛恒定状态列：conversations/daily_journals 的 processingState 永远只写 "READY"，
+        // 没有任何读者，删除以去掉一个「两处存同一事实」的隐患。SQLite 3.28 不支持 DROP COLUMN，
+        // 因此按既有 5→6 的做法重建表并保留全部数据与其他索引。
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("PRAGMA defer_foreign_keys = TRUE")
+                db.execSQL(
+                    "CREATE TABLE conversations_new (id TEXT NOT NULL, kind TEXT NOT NULL, startedAtMillis INTEGER NOT NULL, " +
+                        "endedAtMillis INTEGER NOT NULL, zoneId TEXT NOT NULL, generatedTitle TEXT NOT NULL, titleOverride TEXT, " +
+                        "briefSummary TEXT NOT NULL, summaryLevel TEXT NOT NULL, note TEXT, localStartDate TEXT NOT NULL DEFAULT '', PRIMARY KEY(id))",
+                )
+                db.execSQL(
+                    "INSERT INTO conversations_new (id, kind, startedAtMillis, endedAtMillis, zoneId, generatedTitle, titleOverride, " +
+                        "briefSummary, summaryLevel, note, localStartDate) " +
+                        "SELECT id, kind, startedAtMillis, endedAtMillis, zoneId, generatedTitle, titleOverride, briefSummary, summaryLevel, note, localStartDate FROM conversations",
+                )
+                db.execSQL("DROP TABLE conversations")
+                db.execSQL("ALTER TABLE conversations_new RENAME TO conversations")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_conversations_startedAtMillis ON conversations (startedAtMillis)")
+
+                db.execSQL(
+                    "CREATE TABLE daily_journals_new (id TEXT NOT NULL, localDate TEXT NOT NULL, zoneId TEXT NOT NULL, narrative TEXT NOT NULL, " +
+                        "memorableJson TEXT NOT NULL, possibleActionsJson TEXT NOT NULL, sourceConversationCount INTEGER NOT NULL, " +
+                        "generatedAtMillis INTEGER NOT NULL, modelVersion TEXT, PRIMARY KEY(id))",
+                )
+                db.execSQL(
+                    "INSERT INTO daily_journals_new (id, localDate, zoneId, narrative, memorableJson, possibleActionsJson, sourceConversationCount, generatedAtMillis, modelVersion) " +
+                        "SELECT id, localDate, zoneId, narrative, memorableJson, possibleActionsJson, sourceConversationCount, generatedAtMillis, modelVersion FROM daily_journals",
+                )
+                db.execSQL("DROP TABLE daily_journals")
+                db.execSQL("ALTER TABLE daily_journals_new RENAME TO daily_journals")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_daily_journals_localDate ON daily_journals (localDate)")
+            }
+        }
         // 0.2.2 个人词汇：候选词来自用户对转写的修正，确认后作为本地 Qwen3-ASR 的热词。
         val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -109,7 +143,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { database -> instance = database }
             }
     }
 }

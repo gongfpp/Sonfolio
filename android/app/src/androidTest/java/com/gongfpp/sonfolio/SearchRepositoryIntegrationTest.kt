@@ -37,7 +37,7 @@ class SearchRepositoryIntegrationTest {
                         "甲乙 丙丁 戊己 庚辛" + if (index < 110) " 壬癸" else "", "zh", "qa", "qa", "ASR_READY", null))
                     conversationDao.insertAll(listOf(ConversationEntity(
                         id = "c-$id", kind = "Unknown", startedAtMillis = base + offset, endedAtMillis = base + offset + 1_000,
-                        zoneId = "Asia/Shanghai", generatedTitle = "对话$id", briefSummary = "", summaryLevel = "BRIEF", processingState = "READY",
+                        zoneId = "Asia/Shanghai", generatedTitle = "对话$id", briefSummary = "", summaryLevel = "BRIEF",
                     )))
                 }
             }

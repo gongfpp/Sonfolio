@@ -159,7 +159,6 @@ class ConversationRepository(
                 titleOverride = survivor?.titleOverride ?: inherited.firstNotNullOfOrNull { it.titleOverride },
                 briefSummary = ai?.brief ?: summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
-                processingState = "READY",
                 note = survivor?.note ?: inherited.firstNotNullOfOrNull { it.note },
                 localStartDate = Instant.ofEpochMilli(start).atZone(groupZone).toLocalDate().toString(),
             )
@@ -212,7 +211,6 @@ class ConversationRepository(
                     sourceConversationCount = dateGroups.size,
                     generatedAtMillis = System.currentTimeMillis(),
                     modelVersion = if (ai == null) "extractive-v0.2" else "${run?.provider}:${run?.model}",
-                    processingState = "READY",
                 )
             )
         }

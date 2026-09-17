@@ -55,7 +55,7 @@ class BackupIntegrationTest {
             source.recordingDao().insertChunk(AudioChunkEntity("legacy-audio", 1_000, 2_000, file.path, file.length(), 16_000, 1, "ASR_READY", null))
             source.recordingDao().insertSpeechSegments(listOf(SpeechSegmentEntity("legacy-speech", "legacy-audio", 0, 1_000, 1f, "ASR_READY")))
             source.recordingDao().insertTranscript(TranscriptEntity("legacy-text", "legacy-speech", null, 1_000, 2_000, "旧版本备份资料", "zh", "test", "test", "ASR_READY", null))
-            source.conversationDao().insertAll(listOf(ConversationEntity("legacy-conv", "Unknown", 1_000, 2_000, "Asia/Shanghai", "手改标题", null, "自动摘要", "BRIEF", "READY", "用户备注")))
+            source.conversationDao().insertAll(listOf(ConversationEntity("legacy-conv", "Unknown", 1_000, 2_000, "Asia/Shanghai", "手改标题", null, "自动摘要", "BRIEF", "用户备注")))
             val archive = Uri.fromFile(File(root, "current.zip"))
             MemoryBackup(context, source, fixtureMutex).export(archive)
 
@@ -100,7 +100,7 @@ class BackupIntegrationTest {
             assertEquals("旧版本备份资料", target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().text)
 
             // 缺失非空且无默认值的列仍然拒绝，不静默导入残缺数据。
-            source.conversationDao().insertAll(listOf(ConversationEntity("second", "Unknown", 3_000, 4_000, "Asia/Shanghai", "标题", null, "摘要", "BRIEF", "READY", null)))
+            source.conversationDao().insertAll(listOf(ConversationEntity("second", "Unknown", 3_000, 4_000, "Asia/Shanghai", "标题", null, "摘要", "BRIEF", null)))
             val invalid = File(root, "invalid.zip")
             java.util.zip.ZipInputStream(java.io.BufferedInputStream(java.io.FileInputStream(File(root, "current.zip")))).use { input ->
                 java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(java.io.FileOutputStream(invalid))).use { output ->

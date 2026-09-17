@@ -108,10 +108,15 @@ class PipelineIntegrationTest {
             dao.insertMarker(MarkerEntity("mark", base + 330_000, 180_000, 0, null))
             repository.rebuildFromTranscripts()
             assertTrue(repository.observeTranscript(id).first().all { it.isMarked })
-            assertEquals(2, repository.observeSearch("", markedOnly = true).first().hits.size)
+            // 搜索按「每场对话」聚合：两句话属于同一场对话，只算一条结果。
+            val markedHits = repository.observeSearch("", markedOnly = true).first().hits
+            assertEquals(1, markedHits.size)
+            // 空关键词没有正文命中句，hitCount 为 0；命中来源是「标记」筛选。
+            assertEquals(0, markedHits.single().hitCount)
             assertTrue(repository.observeSearch("%").first().hits.isEmpty())
             assertTrue(repository.observeSearch("_").first().hits.isEmpty())
-            assertTrue(repository.observeSearch("").first().hits.isEmpty())
+            // 空关键词不再拦截为 0 条，而是按最新对话列出。
+            assertEquals(1, repository.observeSearch("").first().hits.size)
             assertEquals(1, repository.observeSearch("回滚").first().hits.size)
             insert("short", base + 900_000, 1_000, "嗯")
             repository.rebuildFromTranscripts()
