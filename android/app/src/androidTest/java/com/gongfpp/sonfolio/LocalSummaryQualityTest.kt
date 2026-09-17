@@ -22,7 +22,9 @@ class LocalSummaryQualityTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = ModelCatalog.file(context.filesDir, ModelCatalog.summary)
         assumeTrue("需提前下载验收模型，不在测试中自动下载", file.isFile)
-        val cases = loadQualitySet(context.assets.open("summary-quality-set.json").readBytes().decodeToString())
+        // 质量集随测试 APK 打包，必须从 instrumentation 上下文读取。
+        val assets = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.assets
+        val cases = loadQualitySet(assets.open("summary-quality-set.json").readBytes().decodeToString())
         var parsed = 0
         val outputs = mutableMapOf<String, String>()
         LocalSummaryTransport(context).withSession(file) { send ->
