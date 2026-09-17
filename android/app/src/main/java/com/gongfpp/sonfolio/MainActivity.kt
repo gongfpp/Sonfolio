@@ -1109,7 +1109,7 @@ private fun RealConversationScreen(
                                         fontSize = 12.sp,
                                     )
                                     Text(
-                                        highlightText(line.text, searchQuery),
+                                        remember(line.text, searchQuery) { highlightText(line.text, searchQuery) },
                                         modifier = Modifier.weight(1f),
                                         color = Color(0xFF3E4A42),
                                         fontSize = 12.5.sp,
@@ -1518,16 +1518,21 @@ private fun AuxiliaryCard(title: String, body: String, icon: androidx.compose.ui
 @Composable
 private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
+    // 输入防抖：逐字查询会在每个字符都打一次库，长列表/大库时明显卡顿。
+    var settledQuery by remember { mutableStateOf(query) }
+    LaunchedEffect(query) {
+        if (query.isBlank()) settledQuery = query else { delay(220); settledQuery = query }
+    }
     var dateRange by rememberSaveable { mutableStateOf(SearchDateRange.All) }
     var markedOnly by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     fun resetScroll() { scope.launch { listState.scrollToItem(0) } }
     val today = rememberCurrentDay()
-    var visibleLimit by rememberSaveable(query, dateRange, markedOnly, today.toString()) { mutableIntStateOf(SEARCH_BATCH_SIZE) }
-    val results by key(query, dateRange, markedOnly, today) {
-        remember(query, dateRange, markedOnly, today, visibleLimit) {
-            viewModel.observeSearch(query, dateRange, markedOnly, visibleLimit)
+    var visibleLimit by rememberSaveable(settledQuery, dateRange, markedOnly, today.toString()) { mutableIntStateOf(SEARCH_BATCH_SIZE) }
+    val results by key(settledQuery, dateRange, markedOnly, today) {
+        remember(settledQuery, dateRange, markedOnly, today, visibleLimit) {
+            viewModel.observeSearch(settledQuery, dateRange, markedOnly, visibleLimit)
         }.collectAsStateWithLifecycle(initialValue = null)
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
@@ -1561,7 +1566,7 @@ private fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> Un
             )
         }
         SearchResultsPanel(
-            query, dateRange, markedOnly, results, visibleLimit, listState,
+            settledQuery, dateRange, markedOnly, results, visibleLimit, listState,
             onLoadMore = { visibleLimit = (visibleLimit.toLong() + SEARCH_BATCH_SIZE).coerceAtMost(Int.MAX_VALUE - 1L).toInt() },
             onOpen = onOpen,
             modifier = Modifier.weight(1f),
