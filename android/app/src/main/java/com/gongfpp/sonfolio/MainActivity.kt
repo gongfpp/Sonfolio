@@ -1239,7 +1239,11 @@ private fun RealAudioPlayer(
 ) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as SonfolioApplication
     val gaps by remember(app) { app.database.recordingDao().observeGaps() }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val timeline = remember(lines, chunks, gaps) { PlaybackTimeline.forConversation(lines, chunks, gaps) }
+    val timelineState = remember { mutableStateOf(PlaybackTimeline(emptyList())) }
+    LaunchedEffect(lines, chunks, gaps) {
+        timelineState.value = withContext(Dispatchers.Default) { PlaybackTimeline.forConversation(lines, chunks, gaps) }
+    }
+    val timeline = timelineState.value
     val locateTime = requestedLineId?.let { id -> lines.firstOrNull { it.id == id }?.startedAtMillis }
     val playTime = playRequest?.let { (id, _) -> lines.firstOrNull { it.id == id }?.startedAtMillis }
     TimelineAudioPlayer(
@@ -1665,7 +1669,11 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val app = context.applicationContext as SonfolioApplication
     val used by remember { app.database.recordingDao().observeStorageBytes() }.collectAsStateWithLifecycle(initialValue = 0L)
-    val available = remember(used) { android.os.StatFs(context.filesDir.path).availableBytes }
+    val availableState = remember { mutableStateOf(0L) }
+    LaunchedEffect(used) {
+        availableState.value = withContext(Dispatchers.IO) { android.os.StatFs(context.filesDir.path).availableBytes }
+    }
+    val available = availableState.value
     val bytesPerDay = 16_000L * 2L * 86_400L
     var language by remember { mutableStateOf(preferences.preferredLanguage) }
     var minimumSpeechSeconds by remember { mutableStateOf(preferences.minimumSpeechSeconds.toFloat()) }
@@ -1883,7 +1891,11 @@ private fun RawRecordingsScreen(
     }
     val allIds = displayedChunks.take(visibleCount).filter { it.processingState != "AUDIO_DELETED" }.map { it.id }
     val allSelected = allIds.isNotEmpty() && selection.containsAll(allIds)
-    val availableBytes = remember(chunks) { android.os.StatFs(context.filesDir.path).availableBytes }
+    val availableBytesState = remember { mutableStateOf(0L) }
+    LaunchedEffect(chunks) {
+        availableBytesState.value = withContext(Dispatchers.IO) { android.os.StatFs(context.filesDir.path).availableBytes }
+    }
+    val availableBytes = availableBytesState.value
     val bytesPerDay = 16_000L * 2L * 86_400L
     val hoursLeft = (availableBytes.toDouble() / bytesPerDay) * 24.0
     val remainingLabel = if (hoursLeft >= 48) "预计还能录约 ${(hoursLeft / 24).toInt()} 天" else "预计还能录约 ${hoursLeft.toInt()} 小时"

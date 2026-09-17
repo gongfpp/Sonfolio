@@ -111,6 +111,14 @@ object ModelCatalog {
 
     fun installed(filesDir: File, model: ModelArtifact): Boolean = missingFile(filesDir, model) == null
 
+    /**
+     * 轻量可用性检查：只比对文件是否存在且大小完全一致，不计算 SHA-256。
+     * 供 UI 展示使用——在组合期对 987 MB 模型做哈希会直接把主线程卡住。
+     * 真正启用前仍由 Worker / 推理前用 [installed] 完整校验。
+     */
+    fun available(filesDir: File, model: ModelArtifact): Boolean =
+        model.files.all { file(filesDir, it).let { target -> target.isFile && target.length() == it.bytes } }
+
     fun verify(file: File, expected: ModelFile): Boolean {
         if (!file.isFile || file.length() != expected.bytes) return false
         val hash = MessageDigest.getInstance("SHA-256")

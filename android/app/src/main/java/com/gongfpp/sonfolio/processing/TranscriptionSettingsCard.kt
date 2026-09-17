@@ -36,6 +36,7 @@ import kotlinx.coroutines.*
     var providerMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
     var keyHelp by remember { mutableStateOf(false) }
+    var engineMenu by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val uriHandler = LocalUriHandler.current
@@ -62,29 +63,31 @@ import kotlinx.coroutines.*
                 }
             }
             if (mode == TranscriptionMode.LOCAL) {
-                Text("本地识别引擎", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                LocalAsrEngine.entries.forEach { option ->
-                    val artifact = ModelCatalog.byId(option.artifactId) ?: return@forEach
-                    Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { localEngine = option }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(localEngine == option, onClick = null)
-                        Column(Modifier.padding(start = 8.dp).weight(1f)) {
-                            Text("${option.displayName}${if (option.supportsHotwords) " · 支持个人词汇热词" else ""}", fontSize = 13.sp)
-                            Text(artifact.label, fontSize = 11.sp)
-                            if (option == LocalAsrEngine.QWEN3_ASR) {
-                                Text("当前版本真机实测未返回文字，请先使用 SenseVoice（正在排查）", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-                            }
+                // 引擎选择是「在手机上识别」的下属项：缩进成一个子面板，点一行下钻选择。
+                Surface(
+                    Modifier.fillMaxWidth().padding(start = 12.dp),
+                    RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("手机端识别设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(onClick = { engineMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                            Text("识别引擎：${localEngine.displayName} ▾")
+                        }
+                        if (localEngine == LocalAsrEngine.QWEN3_ASR) {
+                            Text("当前版本真机实测未返回文字，请先使用 SenseVoice（正在排查）", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                        }
+                        ModelDownloadControl(ModelCatalog.byId(localEngine.artifactId)!!)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("尚未下载也能录音与回听；下载完成后自动处理等待中的录音。", fontSize = 11.sp, modifier = Modifier.weight(1f))
+                            HelpHint(
+                                title = "本地识别引擎怎么选",
+                                body = "SenseVoice：默认，约 239 MB，中英日韩粤，速度快。\n" +
+                                    "Qwen3-ASR 0.6B：约 987 MB，中英混说和方言更强，但速度更慢、占用内存更多，并支持「个人词汇」热词。\n\n" +
+                                    "两者是并列备选，可随时切换；只影响之后新转写的录音，已有文字不会重做。主要语言可在下方设置。",
+                            )
                         }
                     }
-                }
-                ModelDownloadControl(ModelCatalog.byId(localEngine.artifactId)!!)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("尚未下载也能录音与回听；下载完成后自动处理等待中的录音。", fontSize = 11.sp, modifier = Modifier.weight(1f))
-                    HelpHint(
-                        title = "本地识别引擎怎么选",
-                        body = "SenseVoice：默认，约 239 MB，中英日韩粤，速度快。\n" +
-                            "Qwen3-ASR 0.6B：约 987 MB，中英混说和方言更强，但速度更慢、占用内存更多，并支持「个人词汇」热词。\n\n" +
-                            "两者是并列备选，可随时切换；只影响之后新转写的录音，已有文字不会重做。主要语言可在下方设置。",
-                    )
                 }
             } else {
                 Box {
@@ -160,6 +163,34 @@ import kotlinx.coroutines.*
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             message?.let { Text(it, fontSize = 12.sp) }
         }
+    }
+    if (engineMenu) {
+        AlertDialog(
+            onDismissRequest = { engineMenu = false },
+            title = { Text("选择本地识别引擎") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LocalAsrEngine.entries.forEach { option ->
+                        val artifact = ModelCatalog.byId(option.artifactId) ?: return@forEach
+                        Row(
+                            Modifier.fillMaxWidth().clickable { localEngine = option; engineMenu = false },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(localEngine == option, onClick = null)
+                            Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                                Text("${option.displayName}${if (option.supportsHotwords) " · 支持个人词汇热词" else ""}", fontSize = 14.sp)
+                                Text(artifact.label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (option == LocalAsrEngine.QWEN3_ASR) {
+                                    Text("当前版本真机实测未返回文字，请先使用 SenseVoice（正在排查）", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                    Text("切换只影响之后新转写的录音，已有文字不会重做。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { TextButton(onClick = { engineMenu = false }) { Text("完成") } },
+        )
     }
     if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("如何获取识别密钥") },
         text = { Text("点击卡片中的“获取识别密钥”进入官方控制台，登录并创建密钥，再粘贴到此处。密钥不是聊天 App 的密码，只在本机加密保存；请勿分享或公开截图。各提供商、各地域的密钥不能混用，请在官方设置费用限额。") },
