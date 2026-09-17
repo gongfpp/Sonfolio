@@ -9,6 +9,9 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -42,10 +45,21 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         return summaryInput(key, snapshot.first.first, snapshot.first.second, snapshot.first.third, snapshot.second ?: java.time.ZoneId.systemDefault())
     }
 
-    fun observe(key: String) = combine(dao.observeSummaryRun(key), dao.observeTimeline(), app.database.recordingDao().observeGaps()) { run, _, _ ->
-        if (run != null && run.state !in listOf("QUEUED", "RUNNING") && run.sourceHash != input(key).fingerprint)
-            run.copy(state = "STALE", message = "内容有更新，当前显示基础整理，可重新生成 AI 总结") else run
-    }
+    /**
+     * 观察某条总结的运行状态。时间线/缺口只作为「内容可能变了」的触发器，但每次触发都要重算
+     * 该 sourceKey 的输入指纹（含全部转写文本哈希），所以：
+     * - conflate 丢弃来不及处理的中间触发，只保留最新一次；
+     * - mapLatest 让被取代的计算直接取消；
+     * - flowOn(Default) 把指纹计算移出主线程，避免持续录音时卡 UI。
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observe(key: String) = combine(dao.observeSummaryRun(key), dao.observeTimeline(), app.database.recordingDao().observeGaps()) { run, _, _ -> run }
+        .conflate()
+        .mapLatest { run ->
+            if (run != null && run.state !in listOf("QUEUED", "RUNNING") && run.sourceHash != input(key).fingerprint)
+                run.copy(state = "STALE", message = "内容有更新，当前显示基础整理，可重新生成 AI 总结") else run
+        }
+        .flowOn(Dispatchers.Default)
 
     suspend fun enqueue(key: String, automatic: Boolean = false): Unit = enqueueMutex.withLock {
         val config = app.summarySettings.read()
