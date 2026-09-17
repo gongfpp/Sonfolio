@@ -6,8 +6,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 internal object WavPcmReader {
-    internal const val HEADER_BYTES = 44L
-
     private data class WavMetadata(
         val dataOffset: Long,
         val dataBytes: Long,
@@ -77,6 +75,17 @@ internal object WavPcmReader {
      * 之间插入 LIST/FLLR chunk；此时 data 并不在偏移 44，固定偏移会把文件误读成近乎空音频。
      * 本应用录音由 WavChunkWriter 生成标准布局，两种布局都必须正确处理。
      */
+    /**
+     * data chunk 的真实起点与长度。压缩等按字节顺序读取的调用方必须用它，
+     * 不能假定数据从第 44 字节开始。
+     */
+    fun readDataLayout(file: File, expectedSampleRateHz: Int): Pair<Long, Long> {
+        RandomAccessFile(file, "r").use { input ->
+            val metadata = readMetadata(input, expectedSampleRateHz)
+            return metadata.dataOffset to metadata.dataBytes
+        }
+    }
+
     private fun readMetadata(
         input: RandomAccessFile,
         expectedSampleRateHz: Int,

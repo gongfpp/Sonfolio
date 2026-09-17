@@ -29,7 +29,10 @@ internal object AudioTranscoder {
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
             RandomAccessFile(wav, "r").use { reader ->
-                reader.seek(WavPcmReader.HEADER_BYTES)
+                // data chunk 不一定从 44 字节开始（可能夹带 LIST 等 chunk），按真实布局定位。
+                val (dataOffset, dataBytes) = WavPcmReader.readDataLayout(wav, sampleRateHz)
+                reader.seek(dataOffset)
+                var remaining = dataBytes
                 val bufferInfo = MediaCodec.BufferInfo()
                 var track = -1
                 var inputEnded = false
@@ -41,13 +44,14 @@ internal object AudioTranscoder {
                         if (index >= 0) {
                             val input = encoder.getInputBuffer(index)!!
                             input.order(ByteOrder.LITTLE_ENDIAN)
-                            val chunk = ByteArray(input.remaining())
+                            val chunk = ByteArray(minOf(input.remaining().toLong(), maxOf(remaining, 0L)).toInt())
                             var filled = 0
                             while (filled < chunk.size) {
                                 val read = reader.read(chunk, filled, chunk.size - filled)
                                 if (read < 0) break
                                 filled += read
                             }
+                            remaining -= filled
                             val timestampUs = samplesFed * 1_000_000L / sampleRateHz
                             if (filled == 0) {
                                 encoder.queueInputBuffer(index, 0, 0, timestampUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
