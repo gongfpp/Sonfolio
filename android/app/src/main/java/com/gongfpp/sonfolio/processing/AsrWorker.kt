@@ -68,9 +68,9 @@ class AsrWorker(
                     // 只有支持热词的引擎才读取个人词汇，避免每次本地转写都查库。
                     val hotwords = if (engine.supportsHotwords) app.vocabularyRepository.hotwords() else ""
                     val localTexts = InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords)
-                    // Qwen3-ASR 在真机上曾出现「不报错但全部返回空」；不能静默丢文字，必须让用户看到并改用 SenseVoice。
+                    // 不能静默丢文字：整段为空时明确报错并保留原音，让用户改用 SenseVoice 重试。
                     if (engine == LocalAsrEngine.QWEN3_ASR && windows.isNotEmpty() && localTexts.all { it.isBlank() }) {
-                        error("Qwen3-ASR 未返回任何文字，当前版本在该设备可能不可用；请在设置改用 SenseVoice 后重试（原音已保留）")
+                        error("Qwen3-ASR 本次没有返回文字（可能是纯音乐/噪声或模型异常）；原音已保留，可在设置改用 SenseVoice 后重试")
                     }
                     localTexts
                 }

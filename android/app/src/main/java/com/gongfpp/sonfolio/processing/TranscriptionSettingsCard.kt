@@ -74,16 +74,13 @@ import kotlinx.coroutines.*
                         OutlinedButton(onClick = { engineMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                             Text("识别引擎：${localEngine.displayName} ▾")
                         }
-                        if (localEngine == LocalAsrEngine.QWEN3_ASR) {
-                            Text("当前版本真机实测未返回文字，请先使用 SenseVoice（正在排查）", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-                        }
                         ModelDownloadControl(ModelCatalog.byId(localEngine.artifactId)!!)
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("尚未下载也能录音与回听；下载完成后自动处理等待中的录音。", fontSize = 11.sp, modifier = Modifier.weight(1f))
                             HelpHint(
                                 title = "本地识别引擎怎么选",
                                 body = "SenseVoice：默认，约 239 MB，中英日韩粤，速度快。\n" +
-                                    "Qwen3-ASR 0.6B：约 987 MB，中英混说和方言更强，但速度更慢、占用内存更多，并支持「个人词汇」热词。\n\n" +
+                                    "Qwen3-ASR 0.6B：约 987 MB，中英混说和方言更强，并支持「个人词汇」热词；速度更慢、占用内存更多。真机实测中英粤字错率良好，但歌曲/清唱类素材目前不稳定。\n\n" +
                                     "两者是并列备选，可随时切换；只影响之后新转写的录音，已有文字不会重做。主要语言可在下方设置。",
                             )
                         }
@@ -180,9 +177,6 @@ import kotlinx.coroutines.*
                             Column(Modifier.padding(start = 8.dp).weight(1f)) {
                                 Text("${option.displayName}${if (option.supportsHotwords) " · 支持个人词汇热词" else ""}", fontSize = 14.sp)
                                 Text(artifact.label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (option == LocalAsrEngine.QWEN3_ASR) {
-                                    Text("当前版本真机实测未返回文字，请先使用 SenseVoice（正在排查）", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-                                }
                             }
                         }
                     }

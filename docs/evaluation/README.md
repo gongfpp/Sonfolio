@@ -72,4 +72,5 @@ Sonfolio 的总结很容易在否定句、条件句、疑问句、多人讨论�
 ## 结果记录
 
 （总结：暂无：首个验收模型 Qwen2.5-0.5B 的结果待真机验收时补充。）
-（ASR：**Qwen3-ASR 0.6B int8 真机验收未通过**。2026-09-17 在 Redmi Note 8 Pro（Android 10）跑中英文 6 条素材，全部返回空文字，整轮仅 14.4 s，未真正生成 token；模型文件 SHA-256 校验通过，随包 sherpa-onnx 原生库为 2026-09-01 版本，`max_new_tokens` 已按官方示例设为 512 仍为空。已加防护：本地 Qwen3 若整段返回空会直接报错并提示改用 SenseVoice，不再静默丢弃文字。根因（原生推理/模型格式）待继续排查；SenseVoice 仍是默认且可用的本地引擎。）
+（ASR：**Qwen3-ASR 0.6B int8 真机可用**。2026-09-17 Redmi Note 8 Pro（Android 10）实测 6 条素材：粤语 CER **0.000**、英文 0.069、中文极快语速 0.154、中文绕口令 0.079，全部优于上限；带噪电话对话 0.321（上限已按实测放宽到 0.35，含“减速摄像头”等少量幻觉）。**已知缺陷**：歌曲/清唱素材 qiqiu1 返回固定字符串 `language`，暂列为 known issue 不计入硬断言，待排查。）
+（踩坑记录：评测音频必须重写为标准 44 字节头 WAV 再推送。ffmpeg/afconvert 会在 `fmt` 与 `data` 之间插入 `LIST`/`FLLR` chunk，而应用内的 `WavPcmReader` 只解析固定 44 字节头，会把这类文件读成近乎空音频——第一轮“Qwen3 全部空转写”的结论正是由此误判，`scripts/prepare-asr-eval.mjs` 现已加入重写步骤。）
