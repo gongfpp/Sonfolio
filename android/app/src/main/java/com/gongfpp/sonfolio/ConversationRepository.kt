@@ -255,18 +255,7 @@ class ConversationRepository(
 
     fun observeTranscript(conversationId: String): Flow<List<TranscriptLine>> =
         conversationDao.observeTranscriptRows(conversationId).map { rows ->
-            rows.map { row ->
-                TranscriptLine(
-                    id = row.transcriptId,
-                    startedAtMillis = row.startedAtMillis,
-                    endedAtMillis = row.endedAtMillis,
-                    text = row.text,
-                    localPath = row.localPath,
-                    chunkStartedAtMillis = row.chunkStartedAtMillis,
-                    isMarked = row.isMarked,
-                    originalText = row.originalText,
-                )
-            }
+            TranscriptMerger.merge(rows.map { it.toTranscriptLine() })
         }
 
     fun observeSearch(
@@ -340,6 +329,8 @@ class ConversationRepository(
         val correction = conversationDao.getTranscriptForCorrection(transcriptId)
         val baseline = correction?.originalText ?: correction?.text
         conversationDao.updateTranscriptText(transcriptId, trimmed)
+        // 展示层会把语气词碎句并入相邻句；编辑合并行时清空同组的其他原始句，避免下次展示重复。
+        mergedSiblings(transcriptId, row.conversationId).forEach { conversationDao.clearTranscriptText(it) }
         val prompts = if (baseline != null && baseline.trim() != trimmed) {
             // 词汇记录失败不应影响已经确认的文字修正。
             runCatching { vocabulary.recordCorrections(baseline, trimmed) }
@@ -371,7 +362,27 @@ class ConversationRepository(
         }
         return prompts
     }
+
+    /** 展示层合并组的其他原始转写 id；编辑合并行时用于清空，避免下次展示重复。 */
+    private suspend fun mergedSiblings(transcriptId: String, conversationId: String?): List<String> {
+        if (conversationId == null) return emptyList()
+        val rows = conversationDao.getReadyRowsForConversations(listOf(conversationId))
+        val group = TranscriptMerger.merge(rows.map { it.toTranscriptLine() })
+            .firstOrNull { transcriptId in it.mergedIds } ?: return emptyList()
+        return group.mergedIds.filter { it != transcriptId }
+    }
 }
+
+private fun TranscriptAudioRow.toTranscriptLine(): TranscriptLine = TranscriptLine(
+    id = transcriptId,
+    startedAtMillis = startedAtMillis,
+    endedAtMillis = endedAtMillis,
+    text = text,
+    localPath = localPath,
+    chunkStartedAtMillis = chunkStartedAtMillis,
+    isMarked = isMarked,
+    originalText = originalText,
+)
 
 private fun isDetailed(group: List<TranscriptAudioRow>): Boolean {
     val duration = group.last().endedAtMillis - group.first().startedAtMillis

@@ -29,6 +29,8 @@ data class TranscriptLine(
     val isMarked: Boolean = false,
     /** 用户修正前的原始识别文字；为空表示未修正过。 */
     val originalText: String? = null,
+    /** 展示层把语气词碎句并入后，这一行实际覆盖的原始转写 id（含自身）。 */
+    val mergedIds: List<String> = listOf(id),
 )
 
 data class SearchHit(

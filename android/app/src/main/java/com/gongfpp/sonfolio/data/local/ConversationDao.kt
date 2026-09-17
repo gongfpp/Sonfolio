@@ -223,6 +223,10 @@ interface ConversationDao {
     @Query("UPDATE transcripts SET originalText = CASE WHEN originalText IS NULL THEN text ELSE originalText END, text = :text WHERE id = :id")
     suspend fun updateTranscriptText(id: String, text: String)
 
+    /** 清空某条转写文字（被合并进相邻展示行后不再单独显示；originalText 仍保留）。 */
+    @Query("UPDATE transcripts SET text = '' WHERE id = :id")
+    suspend fun clearTranscriptText(id: String)
+
     @Query("SELECT id, conversationId, startedAtMillis, endedAtMillis FROM transcripts WHERE id = :id LIMIT 1")
     suspend fun getTranscriptWindow(id: String): TranscriptRef?
 
