@@ -37,6 +37,7 @@ internal fun SummarySettingsCard() {
     var listedModels by remember(provider) { mutableStateOf(provider.defaults) }
     var modelListNote by remember(provider) { mutableStateOf("预设模型，可从官方刷新；费用与可用性以提供商为准") }
     var keyHelp by remember { mutableStateOf(false) }
+    var summaryModelMenu by remember { mutableStateOf(false) }
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     LaunchedEffect(Unit) {
         if (endpoint.isBlank()) { endpoint = provider.endpoint; model = provider.defaults.firstOrNull().orEmpty() }
@@ -91,12 +92,25 @@ internal fun SummarySettingsCard() {
                 }
             }
             if (mode == SummaryMode.LOCAL) {
-                com.gongfpp.sonfolio.models.ModelDownloadControl(com.gongfpp.sonfolio.models.ModelCatalog.summary)
-                var advancedImport by remember { mutableStateOf(false) }
-                TextButton(onClick = { advancedImport = !advancedImport }) { Text("高级：使用已有模型文件") }
-                if (advancedImport) {
-                    Text("替换会清理旧导入副本，不改变源文件或录音。仅用于了解 GGUF 兼容性的用户。", fontSize = 11.sp)
-                    OutlinedButton(onClick = { import.launch(arrayOf("*/*")) }, enabled = !busy) { Text("选择已有 GGUF 文件") }
+                // 与「本地识别引擎」保持同一套层级：二级面板 + 模型行下钻。
+                Surface(
+                    Modifier.fillMaxWidth().padding(start = 12.dp),
+                    RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("手机端总结设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            com.gongfpp.sonfolio.HelpHint(
+                                title = "本地总结怎么用",
+                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。默认提供约 491 MB 的 Qwen2.5-0.5B-Instruct GGUF；也可以导入兼容的 GGUF 模型。\n\n导入或替换会清理旧导入副本，不改变源文件或录音。",
+                            )
+                        }
+                        OutlinedButton(onClick = { summaryModelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                            Text("总结模型：${saved.localLabel.ifBlank { com.gongfpp.sonfolio.models.ModelCatalog.summary.label }} ▾")
+                        }
+                        com.gongfpp.sonfolio.models.ModelDownloadControl(com.gongfpp.sonfolio.models.ModelCatalog.summary)
+                    }
                 }
             }
             if (mode == SummaryMode.REMOTE) {
@@ -185,6 +199,16 @@ internal fun SummarySettingsCard() {
             message?.let { Text(it, fontSize = 12.sp) }
         }
     }
+    if (summaryModelMenu) AlertDialog(
+        onDismissRequest = { summaryModelMenu = false },
+        title = { Text("总结模型") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("内置：${com.gongfpp.sonfolio.models.ModelCatalog.summary.label}（${com.gongfpp.sonfolio.models.ModelCatalog.summary.bytes / 1_000_000} MB）", fontSize = 13.sp)
+            Text("下载后在面板里点「使用已下载的总结模型」启用；也可以导入兼容的 GGUF 文件（替换会清理旧导入副本，不改变源文件或录音）。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } },
+        confirmButton = { TextButton(enabled = !busy, onClick = { summaryModelMenu = false; import.launch(arrayOf("*/*")) }) { Text("导入 GGUF 文件") } },
+        dismissButton = { TextButton(onClick = { summaryModelMenu = false }) { Text("知道了") } },
+    )
     if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("总结服务密钥从哪里获取？") },
         text = { Text(if (provider == SummaryProvider.QWEN) "在阿里云百炼创建中国内地（北京）地域的密钥，复制后粘贴到这里。其他地域的密钥不能混用。调用可能计费，建议在官方设置用量限制。密钥只保存在本机，不要分享或截图公开。"
             else "在所选提供商的开发者平台登录，创建密钥后粘贴到这里。它不是聊天 App 的密码。调用可能计费，建议设置用量限制；不要分享或截图公开密钥。") },
