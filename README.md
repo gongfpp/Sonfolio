@@ -84,7 +84,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 当前重点是录音长期运行可靠性、减少历史数据增长带来的整理与查询开销，以及完善用户可控的原音管理和备份恢复。说话人识别、声纹定向识别、语义搜索和自然语言历史问答尚未实现，嘈杂环境下的识别效果也仍需改进。若遇到问题，欢迎在 [GitHub Issues](https://github.com/gongfpp/Sonfolio/issues) 提供手机型号、Android 版本、应用版本和复现步骤；公开反馈不需要附上私人录音、完整转写或 API Key。
 
-Android 客户端使用 Kotlin、Jetpack Compose、Room 和 WorkManager，语音链路采用 Silero VAD、SenseVoice／Qwen3-ASR 与 sherpa-onnx，本地生成式总结通过 llama.cpp 接入。技术选择与架构见 [技术说明](docs/technical-selection.md)，中英文识别质量集见 [评测目录](docs/evaluation/README.md)，已验证的范围和剩余问题见 [0.2.1 验收记录](docs/开发验收-0.2.1.md)，详细版本变更保留在 `docs/` 下的开发验收文档中。若只想查看网页交互原型，可在仓库根目录运行 `python3 -m http.server 4173` 后访问 `http://127.0.0.1:4173`；该页面只用于设计参考，不代表手机功能已完成验收。
+Android 客户端使用 Kotlin、Jetpack Compose、Room 和 WorkManager，语音链路采用 Silero VAD、SenseVoice／Qwen3-ASR 与 sherpa-onnx，本地生成式总结通过 llama.cpp 接入。技术选择与架构见 [技术说明](docs/technical-selection.md)，中英文识别质量集见 [评测目录](docs/evaluation/README.md)，已验证的范围和剩余问题见 [0.2.3 验收记录](docs/开发验收-0.2.3.md)，详细版本变更保留在 `docs/` 下的开发验收文档中。若只想查看网页交互原型，可在仓库根目录运行 `python3 -m http.server 4173` 后访问 `http://127.0.0.1:4173`；该页面只用于设计参考，不代表手机功能已完成验收。
 
 ## 许可证
 
