@@ -69,10 +69,13 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         val old = dao.getSummaryRun(key)
         if (!automatic && old?.state in listOf("QUEUED", "RUNNING")) return
         if (automatic && old?.sourceHash == source.fingerprint && old.outputJson != null && old.model == identity(config)) return
+        // 手动触发的任务必须能立刻开始：不加电量/充电/网络条件；只有「自动总结」才受充电设置约束。
+        val requiresCharging = automatic && app.preferences.chargeOnly
+        val constraints = Constraints.Builder().setRequiresCharging(requiresCharging)
+        if (automatic) constraints.setRequiresBatteryNotLow(true)
         val request = OneTimeWorkRequestBuilder<SummaryWorker>()
             .setInputData(workDataOf("key" to key, "revision" to config.revision, "force" to !automatic))
-            .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true)
-                .setRequiresCharging(automatic && app.preferences.chargeOnly).build())
+            .setConstraints(constraints.build())
             .addTag(TAG).addTag("summary-key:$key").addTag("summary-revision:${config.revision}").addTag("summary-force:${!automatic}")
         if (automatic) {
             // 持续录音时同一对话/日期会随每个新切片被反复触发；延迟并入队替换（REPLACE），
@@ -80,7 +83,11 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             request.setInitialDelay(java.time.Duration.ofMinutes(10))
         }
         // 单队列隔离于 VAD/ASR；每个任务读取执行时的最新转写，不并行加载多个语言模型。
-        val waiting = if (automatic && app.preferences.chargeOnly) "等待充电后自动总结；也可取消后手动生成" else "已排队，电量正常时系统将自动继续；可取消后手动重试"
+        val waiting = when {
+            requiresCharging -> "等待充电后自动总结；也可取消后手动生成"
+            automatic -> "已排队，系统会在后台自动继续；可取消后手动重试"
+            else -> "已排队，将尽快开始；可取消"
+        }
         dao.saveSummaryRun(old?.copy(state = "QUEUED", message = waiting, updatedAtMillis = System.currentTimeMillis())
             ?: SummaryRunEntity(key, source.fingerprint, config.mode.name, identity(config), null, "QUEUED", waiting, System.currentTimeMillis()))
         work.enqueueUniqueWork(
@@ -126,13 +133,18 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             val key = info.tags.firstOrNull { it.startsWith("summary-key:") }?.removePrefix("summary-key:") ?: return@forEach
             val revision = info.tags.firstOrNull { it.startsWith("summary-revision:") }?.removePrefix("summary-revision:") ?: config.revision
             val force = info.tags.firstOrNull { it.startsWith("summary-force:") }?.removePrefix("summary-force:")?.toBooleanStrictOrNull() ?: false
+            val constraints = Constraints.Builder().setRequiresCharging(!force && app.preferences.chargeOnly)
+            if (!force) constraints.setRequiresBatteryNotLow(true)
             val builder = OneTimeWorkRequestBuilder<SummaryWorker>().setId(info.id)
                 .setInputData(workDataOf("key" to key, "revision" to revision, "force" to force))
-                .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).setRequiresCharging(!force && app.preferences.chargeOnly).build())
+                .setConstraints(constraints.build())
             info.tags.forEach { builder.addTag(it) }
             work.updateWork(builder.build()).get()
-            if (info.state != WorkInfo.State.RUNNING) dao.updateSummaryRun(key, "QUEUED",
-                if (!force && app.preferences.chargeOnly) "等待充电后自动总结；也可取消后手动生成" else "已解除充电等待，电量正常时系统将继续", System.currentTimeMillis())
+            if (info.state != WorkInfo.State.RUNNING) dao.updateSummaryRun(key, "QUEUED", when {
+                !force && app.preferences.chargeOnly -> "等待充电后自动总结；也可取消后手动生成"
+                force -> "已排队，将尽快开始；可取消"
+                else -> "已排队，系统会在后台自动继续；可取消后手动重试"
+            }, System.currentTimeMillis())
         }
     } }
 
@@ -181,7 +193,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         withTimeout(CORRECTION_TIMEOUT_MILLIS) {
             parts.forEachIndexed { index, part ->
                 ensureActive()
-                dao.updateSummaryRun(runKey, "RUNNING", "正在纠错 ${index + 1}/${parts.size}", System.currentTimeMillis())
+                dao.updateSummaryRun(runKey, "RUNNING", if (parts.size <= 1) "正在纠错…" else "正在纠错 ${index + 1}/${parts.size}", System.currentTimeMillis())
                 val raw = withGenerator(config) { generate ->
                     generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(part.map { it.text }))
                 }
@@ -293,7 +305,7 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 coordinator.withGenerator(config) { generate ->
                 for ((index, part) in parts.withIndex()) {
                     ensureActive()
-                    dao.updateSummaryRun(key, "RUNNING", "正在整理 ${index + 1}/${parts.size} 部分", System.currentTimeMillis())
+                    dao.updateSummaryRun(key, "RUNNING", if (parts.size <= 1) "正在生成小结…" else "正在整理 ${index + 1}/${parts.size} 部分", System.currentTimeMillis())
                     summary = AiSummary.parse(generate(SummaryPrompt.SYSTEM, SummaryPrompt.user(input, part, summary, index, parts.size)))
                 }
                 }

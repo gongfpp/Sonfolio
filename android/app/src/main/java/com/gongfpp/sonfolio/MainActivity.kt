@@ -1051,7 +1051,7 @@ private fun RealConversationScreen(
                             )
                         }
                     }
-                    SummaryCard(summary, origin)
+                    SummaryCard(summary, origin, structuredSummary?.generatedAtMillis?.takeIf { origin != "本地提取式小结" })
                     if (conversation?.note.isNullOrBlank()) {
                         TextButton(onClick = { noteDraft = "" }) { Text("＋ 添加备注", fontSize = 12.sp) }
                     } else {
@@ -1343,7 +1343,7 @@ private fun formatPlaybackTime(millis: Long): String {
 }
 
 @Composable
-private fun SummaryCard(summary: String, origin: String = "本地基础整理") {
+private fun SummaryCard(summary: String, origin: String = "本地基础整理", updatedAtMillis: Long? = null) {
     Surface(shape = RoundedCornerShape(15.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1354,6 +1354,9 @@ private fun SummaryCard(summary: String, origin: String = "本地基础整理") 
                 }
             }
             Text(summary, modifier = Modifier.padding(top = 12.dp), color = Color(0xFF344039), fontSize = 14.sp, lineHeight = 23.sp)
+            if (updatedAtMillis != null) {
+                Text("AI 更新于 ${formatDateTime(updatedAtMillis)}", modifier = Modifier.padding(top = 8.dp), color = InkSoft, fontSize = 11.sp)
+            }
         }
     }
 }
@@ -1390,7 +1393,6 @@ private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBac
             }
         }
         AuxiliaryCard("值得记住", parseJsonLines(journal?.memorableJson).ifBlank { "这一天还没有标记重点对话" }, Icons.Default.Star, Amber)
-        AuxiliaryCard("可能需要处理", parseJsonLines(journal?.possibleActionsJson).ifBlank { "暂未从转写中提取明确安排" }, Icons.Default.Warning, Color(0xFFC59016))
         Text("基于 $sourceCount 场对话整理 · 原始录音仍按你的保留策略保存", modifier = Modifier.padding(top = 20.dp), color = InkSoft, fontSize = 11.sp)
         com.gongfpp.sonfolio.summary.SummaryAction("day:$localDate")
         TextButton(onClick = viewModel::rebuildConversations) { Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("重新整理") }

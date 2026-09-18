@@ -83,6 +83,9 @@ internal data class AiSummary(
         .put("followUps", JSONArray(followUps)).put("questions", JSONArray(questions)).toString()
 
     companion object {
+        /** 完整 ISO 时间戳；正常小结不该包含它，出现即视为模型把提示里的时间当成了内容。 */
+        private val ISO_TIMESTAMP = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}")
+
         fun parse(value: String): AiSummary {
             val cleaned = value.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
             val json = runCatching { JSONObject(cleaned) }.getOrElse { error("模型没有返回有效结构化内容，原有小结保留") }
@@ -97,6 +100,9 @@ internal data class AiSummary(
             }
             val brief = json.optString("brief").trim()
             require(brief.isNotBlank() && brief.length <= 1600) { "模型小结为空或过长，原有小结保留" }
+            // 小模型常把提示里的时间范围/缺口时间戳当成小结内容；这类没有实质内容的结果一律拒绝，
+            // 让上层继续使用提取式小结，而不是把「某点到某点」当成本段小结展示。
+            require(!ISO_TIMESTAMP.containsMatchIn(brief)) { "模型小结只是时间范围，已保留基础小结" }
             fun lines(key: String): List<String> {
                 val a = json.optJSONArray(key) ?: error("模型缺少结构化字段：$key")
                 require(a.length() <= 6) { "模型要点过多，请重试" }

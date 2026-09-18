@@ -244,10 +244,10 @@ class RecordingRepository(
             processingScheduler?.enqueueAssembly(chunkId)
         } else if (state in setOf(ChunkProcessing.ASR_FAILED, ChunkProcessing.VAD_READY)) {
             recordingDao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, null)
-            processingScheduler?.enqueueAsr(chunkId)
+            processingScheduler?.enqueueAsr(chunkId, manual = true)
         } else if (state in setOf(ChunkProcessing.VAD_FAILED, ChunkProcessing.FAILED, ChunkProcessing.RECORDED, ChunkProcessing.RECOVERED)) {
             recordingDao.updateProcessingState(chunkId, ChunkProcessing.RECORDED, null)
-            processingScheduler?.enqueueVad(chunkId)
+            processingScheduler?.enqueueVad(chunkId, manual = true)
         }
     }
 

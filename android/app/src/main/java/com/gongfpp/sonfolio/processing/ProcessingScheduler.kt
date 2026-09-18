@@ -55,10 +55,11 @@ class ProcessingScheduler(context: Context) {
         }
     }
 
-    fun enqueueVad(audioChunkId: String) {
+    /** manual=true 表示用户主动「继续处理」：不受充电/仅充电设置约束，立即排入。 */
+    fun enqueueVad(audioChunkId: String, manual: Boolean = false) {
         runCatching {
         val request = OneTimeWorkRequestBuilder<VadWorker>()
-            .setConstraints(constraints())
+            .setConstraints(if (manual) Constraints.NONE else constraints())
             .setInputData(workDataOf(VadWorker.AUDIO_CHUNK_ID to audioChunkId))
             .addTag(VadWorker.TAG)
             .build()
@@ -74,7 +75,7 @@ class ProcessingScheduler(context: Context) {
      * ASR is kept in one unique chain because the int8 SenseVoice model is large. Serializing
      * chunks prevents two native recognizers from competing for the phone's memory.
      */
-    fun enqueueAsr(audioChunkId: String) {
+    fun enqueueAsr(audioChunkId: String, manual: Boolean = false) {
         scope.launch {
             runCatching {
                 scheduleLock.withLock {
@@ -82,7 +83,7 @@ class ProcessingScheduler(context: Context) {
                     val chunkTag = "sonfolio-asr-chunk-$audioChunkId"
                     if (manager.getWorkInfosByTag(chunkTag).get().any { !it.state.isFinished }) return@withLock
                     val request = OneTimeWorkRequestBuilder<AsrWorker>()
-                        .setConstraints(constraints())
+                        .setConstraints(if (manual) Constraints.NONE else constraints())
                         .setInputData(workDataOf(AsrWorker.AUDIO_CHUNK_ID to audioChunkId))
                         .addTag(AsrWorker.TAG)
                         .addTag(chunkTag)
