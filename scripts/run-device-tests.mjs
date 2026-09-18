@@ -30,7 +30,9 @@ const nonUi = [
 // 需要真实麦克风与厂商权限，只有显式 --recording 时才跑（会等待录音状态，常超时）。
 const recording = ['RecordingReliabilityTest'];
 // 需要亮屏且解锁；息屏时会报 “No compose hierarchies found”。
-const ui = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest', 'LocalSummaryQualityTest'];
+const ui = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest'];
+// 20 段 × 0.5B 的本地总结质量报告，耗时很长且结果受模型波动影响，只有显式 --quality 才跑。
+const quality = ['LocalSummaryQualityTest'];
 
 function run(classes, label) {
   const started = Date.now();
@@ -58,6 +60,6 @@ if (wantUi && !awake) console.log('提示：设备未亮屏，跳过 UI 套件�
 
 // 每个测试类各起一个 instrument 进程：本地总结相关用例会创建/杀死 :summary 绑定进程，
 // ClientUiTest 会拉起真实 MainActivity，混在同一进程里会互相干扰（超时或 Snapshot 误报）。
-const classes = [...nonUi, ...(flags.includes('--recording') ? recording : []), ...(wantUi && awake ? ui : [])];
+const classes = [...nonUi, ...(flags.includes('--recording') ? recording : []), ...(wantUi && awake ? ui : []), ...(flags.includes('--quality') ? quality : [])];
 for (const className of classes) run([className], className);
 console.log(process.exitCode ? '\n有失败项。' : '\n全部通过。');
