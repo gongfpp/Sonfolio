@@ -1603,6 +1603,7 @@ private fun SearchResult(date: String, title: String, excerpt: String, trailing:
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsScreen(
     preferences: SonfolioPreferences,
@@ -1645,7 +1646,12 @@ private fun SettingsScreen(
             Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
                 Text("识别语言", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text("新录音将按所选语言识别，已有转写保持原样", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
-                Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.padding(top = 10.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = 2,
+                ) {
                     listOf("zh" to "中文优先", "en" to "英文优先", "zh_en" to "中英文优先", "auto" to "自动识别").forEach { (value, label) ->
                         FilterChip(
                             selected = language == value,
