@@ -339,11 +339,65 @@ class ConversationRepository(
                     emptyList()
                 }
         } else emptyList()
+        invalidateDerivedForCorrection(row.conversationId, row.startedAtMillis, row.endedAtMillis)
+        return prompts
+    }
+
+    /**
+     * 应用一批「转写 id → 纠正后文字」（来自 LLM 纠错）。与手动修正一样保留 originalText，
+     * 并统一失效受影响的基础小结/AI 总结，然后重建一次派生数据，避免逐句重建的开销。
+     */
+    suspend fun applyTranscriptCorrections(corrections: Map<String, String>) {
+        if (corrections.isEmpty()) return
+        var conversationId: String? = null
+        var minStart = Long.MAX_VALUE
+        var maxEnd = Long.MIN_VALUE
+        var applied = 0
+        database.withTransaction {
+            corrections.forEach { (id, text) ->
+                val trimmed = text.trim()
+                if (trimmed.isEmpty()) return@forEach
+                val window = conversationDao.getTranscriptWindow(id) ?: return@forEach
+                val current = conversationDao.getTranscriptForCorrection(id)?.text
+                if (current == trimmed) return@forEach
+                conversationDao.updateTranscriptText(id, trimmed)
+                // 与手动编辑一致：清空展示层合并组的其他原始句，避免下次展示重复。
+                mergedSiblings(id, window.conversationId).forEach { conversationDao.clearTranscriptText(it) }
+                if (conversationId == null) conversationId = window.conversationId
+                minStart = minOf(minStart, window.startedAtMillis)
+                maxEnd = maxOf(maxEnd, window.endedAtMillis)
+                applied++
+            }
+        }
+        if (applied == 0) return
+        invalidateDerivedForCorrection(conversationId, minStart, maxEnd)
+    }
+
+    /** 撤销本场对话的 AI 纠错：把 text 还原为 originalText，并重建派生数据。 */
+    suspend fun revertTranscriptCorrections(conversationId: String) {
+        val rows = conversationDao.correctedTranscripts(conversationId)
+        if (rows.isEmpty()) return
+        var minStart = Long.MAX_VALUE
+        var maxEnd = Long.MIN_VALUE
+        database.withTransaction {
+            rows.forEach { row ->
+                val window = conversationDao.getTranscriptWindow(row.id) ?: return@forEach
+                conversationDao.revertTranscriptText(row.id)
+                minStart = minOf(minStart, window.startedAtMillis)
+                maxEnd = maxOf(maxEnd, window.endedAtMillis)
+            }
+        }
+        if (minStart == Long.MAX_VALUE) return
+        invalidateDerivedForCorrection(conversationId, minStart, maxEnd)
+    }
+
+    /** 修正转写后统一处理派生数据：受影响区间的总结标为 STALE，并重建一次。 */
+    private suspend fun invalidateDerivedForCorrection(conversationId: String?, startedAtMillis: Long, endedAtMillis: Long) {
         val zone = ZoneId.systemDefault()
         val keys = buildSet {
-            row.conversationId?.let { raw -> add("conversation:${conversationDao.resolveAlias(raw) ?: raw}") }
-            val first = Instant.ofEpochMilli(row.startedAtMillis).atZone(zone).toLocalDate()
-            val last = Instant.ofEpochMilli(maxOf(row.startedAtMillis, row.endedAtMillis - 1)).atZone(zone).toLocalDate()
+            conversationId?.let { raw -> add("conversation:${conversationDao.resolveAlias(raw) ?: raw}") }
+            val first = Instant.ofEpochMilli(startedAtMillis).atZone(zone).toLocalDate()
+            val last = Instant.ofEpochMilli(maxOf(startedAtMillis, endedAtMillis - 1)).atZone(zone).toLocalDate()
             generateSequence(first) { it.plusDays(1) }.takeWhile { it <= last }.forEach { add("day:$it") }
         }
         keys.forEach { key ->
@@ -353,14 +407,13 @@ class ConversationRepository(
             }
         }
         try {
-            rebuildFromTranscripts(row.startedAtMillis, row.endedAtMillis)
+            rebuildFromTranscripts(startedAtMillis, endedAtMillis)
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
             // 文字已保存；整理遇到并发更新失败时留给下一次整理合并，不吞掉已确认的用户输入。
             android.util.Log.e("ConversationRepository", "转写修正后的整理未完成，待下次合并", error)
         }
-        return prompts
     }
 
     /** 展示层合并组的其他原始转写 id；编辑合并行时用于清空，避免下次展示重复。 */

@@ -227,6 +227,17 @@ interface ConversationDao {
     @Query("UPDATE transcripts SET text = '' WHERE id = :id")
     suspend fun clearTranscriptText(id: String)
 
+    /** 本场对话里被 AI 纠错改过的行（text 与 originalText 不同）。 */
+    @Query(
+        "SELECT id, text, originalText FROM transcripts WHERE conversationId = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :conversationId), :conversationId) " +
+            "AND originalText IS NOT NULL AND text <> originalText",
+    )
+    suspend fun correctedTranscripts(conversationId: String): List<TranscriptCorrectionRow>
+
+    /** 撤销 AI 纠错：把文字还原为 originalText，并清除该标记。 */
+    @Query("UPDATE transcripts SET text = originalText, originalText = NULL WHERE id = :id")
+    suspend fun revertTranscriptText(id: String)
+
     @Query("SELECT id, conversationId, startedAtMillis, endedAtMillis FROM transcripts WHERE id = :id LIMIT 1")
     suspend fun getTranscriptWindow(id: String): TranscriptRef?
 

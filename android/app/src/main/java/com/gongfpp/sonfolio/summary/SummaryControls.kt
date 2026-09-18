@@ -246,3 +246,53 @@ internal fun SummaryAction(sourceKey: String) {
         error?.let { Text(it, fontSize = 11.sp) }
     }
 }
+
+/**
+ * 对话详情里的「AI 纠错」入口：用已配置的总结模型（本地 GGUF 或在线 API）纠正错别字与标点，
+ * 原始转写保留在 originalText。默认不自动触发，每场对话单独执行。
+ */
+@Composable
+internal fun CorrectionAction(conversationId: String) {
+    val app = LocalContext.current.applicationContext as SonfolioApplication
+    val config by app.summarySettings.config.collectAsStateWithLifecycle()
+    val key = "conversation:$conversationId"
+    val run by remember(key) {
+        app.database.conversationDao().observeSummaryRun(app.summaryCoordinator.correctionKey(key))
+    }.collectAsStateWithLifecycle(initialValue = null)
+    val scope = rememberCoroutineScope()
+    var error by remember(key) { mutableStateOf<String?>(null) }
+    val pending = run?.state in listOf("QUEUED", "RUNNING")
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(when {
+            run?.state == "READY" -> "AI 纠错 · ${run?.message ?: "原文保留"}"
+            run?.message != null -> run!!.message!!
+            config.mode == SummaryMode.BASIC -> "AI 纠错需要先在设置里选择「在手机上总结」或「在线总结」作为纠错模型"
+            config.mode == SummaryMode.LOCAL -> "用本地小模型纠正错别字与标点，能力有限；原始转写保留，可随时撤销。想要更好效果可在设置改用「在线总结」"
+            else -> "用所选在线模型纠正错别字与标点；原始转写保留，可随时撤销"
+        }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row {
+            if (config.mode != SummaryMode.BASIC && !pending) TextButton(onClick = {
+                scope.launch {
+                    try { withContext(Dispatchers.IO) { app.summaryCoordinator.enqueueCorrection(key) }; error = null }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { error = e.message ?: "无法加入纠错队列" }
+                }
+            }) { Text(if (run?.state == "READY") "重新纠错" else "AI 纠错") }
+            if (pending) TextButton(onClick = {
+                scope.launch {
+                    try { withContext(Dispatchers.IO) { app.summaryCoordinator.cancelCorrection(key) }; error = null }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { error = "取消失败，请重试" }
+                }
+            }) { Text("取消纠错") }
+            if (!pending && run?.state == "READY") TextButton(onClick = {
+                scope.launch {
+                    try { withContext(Dispatchers.IO) { app.conversationRepository.revertTranscriptCorrections(conversationId) }; error = null }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { error = "撤销失败，请重试" }
+                }
+            }) { Text("撤销纠错") }
+        }
+        error?.let { Text(it, fontSize = 11.sp) }
+    }
+}

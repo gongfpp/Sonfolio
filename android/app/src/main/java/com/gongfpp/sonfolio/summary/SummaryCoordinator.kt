@@ -141,6 +141,96 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         dao.updateSummaryRun(key, "CANCELLED", "已取消，已有小结保留", System.currentTimeMillis())
     }
 
+    // ---- LLM 转写纠错（4.1）：复用同一套模型/密钥，默认手动触发，不改动原始转写（originalText 保留）。 ----
+
+    fun correctionKey(key: String) = "correction:$key"
+
+    suspend fun enqueueCorrection(key: String): Unit = enqueueMutex.withLock {
+        val config = app.summarySettings.read()
+        check(config.mode != SummaryMode.BASIC) { "请先在设置中选择「在手机上总结」或「在线总结」作为纠错模型" }
+        val source = input(key)
+        if (source.rows.isEmpty()) return
+        val runKey = correctionKey(key)
+        if (dao.getSummaryRun(runKey)?.state in listOf("QUEUED", "RUNNING")) return
+        dao.saveSummaryRun(
+            SummaryRunEntity(runKey, source.fingerprint, config.mode.name, identity(config), null, "QUEUED", "已排队，可取消", System.currentTimeMillis()),
+        )
+        work.enqueueUniqueWork(
+            "sonfolio-correction:$key",
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<CorrectionWorker>()
+                .setInputData(workDataOf("key" to key, "revision" to config.revision))
+                .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
+                .addTag(TAG).addTag("correction").addTag("summary-key:$runKey").build(),
+        )
+        Unit
+    }
+
+    /** 逐批纠错并把结果落库；由 CorrectionWorker 调用。 */
+    suspend fun correct(key: String) {
+        val config = app.summarySettings.read()
+        val runKey = correctionKey(key)
+        val source = input(key)
+        if (source.rows.isEmpty()) {
+            dao.updateSummaryRun(runKey, "FAILED", "暂无可纠错的转写", System.currentTimeMillis())
+            return
+        }
+        val parts = source.rows.chunked(CORRECTION_BATCH_LINES)
+        val corrections = LinkedHashMap<String, String>()
+        var skipped = 0
+        withTimeout(CORRECTION_TIMEOUT_MILLIS) {
+            parts.forEachIndexed { index, part ->
+                ensureActive()
+                dao.updateSummaryRun(runKey, "RUNNING", "正在纠错 ${index + 1}/${parts.size}", System.currentTimeMillis())
+                val raw = withGenerator(config) { generate ->
+                    generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(part.map { it.text }))
+                }
+                val texts = runCatching { CorrectionPrompt.parse(raw, part.size) }.getOrNull()
+                when {
+                    texts != null -> part.forEachIndexed { i, row ->
+                        val corrected = texts[i]
+                        if (corrected.isNotEmpty() && corrected != row.text && !CorrectionPrompt.looksLikeLeak(corrected)) {
+                            corrections[row.id] = corrected
+                        }
+                    }
+                    // 小模型给不出稳定句数：对短批次逐句重试，仍失败就保留原文而不是整份失败。
+                    part.size <= CORRECTION_FALLBACK_MAX_LINES -> {
+                        for (row in part) {
+                            ensureActive()
+                            val single = runCatching {
+                                val one = withGenerator(config) { generate ->
+                                    generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(listOf(row.text)))
+                                }
+                                CorrectionPrompt.parse(one, 1).single()
+                            }.getOrNull()
+                            if (single != null && single.isNotEmpty() && single != row.text && !CorrectionPrompt.looksLikeLeak(single)) {
+                                corrections[row.id] = single
+                            } else if (single == null) skipped++
+                        }
+                    }
+                    else -> skipped += part.size
+                }
+            }
+        }
+        app.conversationRepository.applyTranscriptCorrections(corrections)
+        val detail = buildString {
+            append(if (corrections.isEmpty()) "没有发现需要纠正的内容" else "已纠正 ${corrections.size} 句")
+            if (skipped > 0) append("，$skipped 句因模型输出不稳定已跳过")
+        }
+        dao.saveSummaryRun(
+            SummaryRunEntity(
+                runKey, source.fingerprint, config.mode.name, identity(config),
+                """{"count":${corrections.size},"skipped":$skipped}""", "READY", detail, System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    suspend fun cancelCorrection(key: String) {
+        val runKey = correctionKey(key)
+        work.cancelAllWorkByTag("summary-key:$runKey").result.get()
+        dao.updateSummaryRun(runKey, "CANCELLED", "已取消，原文保留", System.currentTimeMillis())
+    }
+
     suspend fun test(config: SummaryConfig): String {
         check(config.mode != SummaryMode.BASIC) { "基础整理不需要测试连接" }
         val input = SummaryInput("conversation:connection-test", listOf(SummaryText("test", 0, 1, "这是一段连接测试文字，不包含用户录音。我们决定明天上午检查录音按钮。", false)))
@@ -170,6 +260,11 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         const val TAG = "sonfolio-summary"
         private val enqueueMutex = Mutex()
         internal val localMutex = Mutex()
+        /** 纠错每批句数：太小丢上下文，太大超出小模型上下文。 */
+        private const val CORRECTION_BATCH_LINES = 30
+        /** 整批句数不一致时，只有不超过这么多句才逐句重试（小模型对单句更稳）。 */
+        private const val CORRECTION_FALLBACK_MAX_LINES = 10
+        private const val CORRECTION_TIMEOUT_MILLIS = 9 * 60_000L
         internal fun identity(config: SummaryConfig) = if (config.mode == SummaryMode.LOCAL) "${config.localLabel} [${config.localFile}]" else "${config.model} @ ${config.endpoint}"
     }
 }
@@ -228,5 +323,33 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             Result.success()
         }
     }
+    companion object { private val workerMutex = Mutex() }
+}
+
+/** 纠错跑在总结的同一套模型上：本地走 :summary 绑定进程，在线走 HTTPS；默认不自动触发。 */
+class CorrectionWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = workerMutex.withLock {
+        val app = applicationContext as SonfolioApplication
+        val coordinator = app.summaryCoordinator
+        val dao = app.database.conversationDao()
+        val key = inputData.getString("key") ?: return@withLock Result.failure()
+        val runKey = coordinator.correctionKey(key)
+        val config = app.summarySettings.read()
+        if (config.mode == SummaryMode.BASIC || config.revision != inputData.getString("revision")) return@withLock Result.success()
+        return@withLock try {
+            coordinator.correct(key)
+            Result.success()
+        } catch (_: TimeoutCancellationException) {
+            withContext(NonCancellable) { dao.updateSummaryRun(runKey, "FAILED", "纠错耗时过长，原文保留，可重试", System.currentTimeMillis()) }
+            Result.success()
+        } catch (error: CancellationException) {
+            withContext(NonCancellable) { dao.updateSummaryRun(runKey, "CANCELLED", "已取消，原文保留", System.currentTimeMillis()) }
+            throw error
+        } catch (error: Throwable) {
+            dao.updateSummaryRun(runKey, "FAILED", if (error is OutOfMemoryError) "纠错内存不足，原文保留" else error.message?.take(180) ?: "纠错失败，原文保留", System.currentTimeMillis())
+            Result.success()
+        }
+    }
+
     companion object { private val workerMutex = Mutex() }
 }

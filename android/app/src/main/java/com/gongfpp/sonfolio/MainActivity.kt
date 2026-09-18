@@ -1060,6 +1060,7 @@ private fun RealConversationScreen(
                         }
                     }
                     com.gongfpp.sonfolio.summary.SummaryAction("conversation:$conversationId")
+                    com.gongfpp.sonfolio.summary.CorrectionAction(conversationId)
                     structuredSummary?.let { structured ->
                         Spacer(Modifier.height(10.dp))
                         SummaryPointsCard(structured, lines) { id -> transcriptOpen = true; seekLineId = id }
