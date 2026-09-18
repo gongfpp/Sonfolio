@@ -25,6 +25,7 @@ const nonUi = [
   'AudioCompressionIntegrationTest',
   'LocalSummaryRuntimeTest',   // 未下载模型时按假设跳过
   'Qwen3AsrZhEnQualityTest',   // 未下载模型/未推送素材时按假设跳过
+  'FireRedAsrZhEnQualityTest', // 同上
 ];
 // 需要真实麦克风与厂商权限，只有显式 --recording 时才跑（会等待录音状态，常超时）。
 const recording = ['RecordingReliabilityTest'];
