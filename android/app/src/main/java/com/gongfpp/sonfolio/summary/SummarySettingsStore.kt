@@ -1,7 +1,6 @@
 package com.gongfpp.sonfolio.summary
 
 import android.content.Context
-import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -90,47 +89,6 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
         state.value = read()
     }
 
-    fun importModel(uri: Uri): String {
-        val directory = File(context.filesDir, "summary-models").apply { mkdirs() }
-        val target = File(directory, "${UUID.randomUUID()}.gguf")
-        val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else null
-        }?.take(160) ?: "本地 GGUF 模型"
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val magic = ByteArray(4)
-                java.io.DataInputStream(input).readFully(magic)
-                require(magic.contentEquals("GGUF".toByteArray())) { "请选择 GGUF 格式的文本对话模型" }
-                target.outputStream().use { output ->
-                    output.write(magic)
-                    val buffer = ByteArray(256 * 1024)
-                    var total = 4L
-                    while (true) {
-                        val n = input.read(buffer); if (n < 0) break
-                        total += n
-                        require(total <= 2_000_000_000L) { "当前仅支持不超过 2 GB 的本地模型" }
-                        require(directory.usableSpace > 512L * 1024 * 1024) { "剩余空间不足，至少预留 512 MB 给录音" }
-                        output.write(buffer, 0, n)
-                    }
-                    require(total >= 1024 * 1024) { "模型文件不完整" }
-                }
-            } ?: error("无法读取模型文件")
-            synchronized(this) {
-                check(prefs.edit().putString("local-file", target.name).putString("local-label", name)
-                    .putString("revision", UUID.randomUUID().toString()).commit())
-                state.value = read()
-            }
-            return name
-        } catch (error: Throwable) { target.delete(); throw error }
-    }
-
-    /** 仅在用户明确替换模型且旧总结任务取消后清理旧模型副本，不涉及任何录音。 */
-    @Synchronized fun removeReplacedModelCopies() {
-        val current = modelFile()?.name ?: return
-        File(context.filesDir, "summary-models").listFiles()?.filter {
-            it.isFile && it.name != current && it.name.matches(Regex("[a-f0-9-]+\\.gguf"))
-        }?.forEach { it.delete() }
-    }
 
     private fun encrypt(text: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secretKey()) }

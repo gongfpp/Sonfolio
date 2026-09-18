@@ -103,7 +103,7 @@ internal data class AiSummary(
                 return (0 until a.length()).map {
                     require(a.get(it) is String) { "模型要点格式不正确" }
                     a.getString(it).trim().also { text -> require(text.length in 1..240) { "模型要点为空或过长" } }
-                }
+                }.distinct() // 小模型常把同一句重复多次；去重避免「重点整理」全是同一句话。
             }
             return AiSummary(title, brief, lines("keyPoints"), lines("decisions"), lines("followUps"), lines("questions"))
         }

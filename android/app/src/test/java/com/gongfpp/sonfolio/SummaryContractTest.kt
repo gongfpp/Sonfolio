@@ -25,6 +25,12 @@ class SummaryContractTest {
         assertTrue(parts.first().contains("★重点"))
     }
 
+    @Test fun repeatedModelPointsAreDeduplicated() {
+        // 本地小模型常把同一句重复多次；「重点整理」不应出现重复要点。
+        val repeated = """{"title":"讨论录音","brief":"一段小结","keyPoints":["检查录音按钮","检查录音按钮","检查录音按钮"],"decisions":[],"followUps":[],"questions":[]}"""
+        assertEquals(listOf("检查录音按钮"), AiSummary.parse(repeated).keyPoints)
+    }
+
     @Test fun summaryTitleIsNormalizedInsteadOfFailingTheWholeRun() {
         fun json(title: String) = """{"title":"$title","brief":"一段小结","keyPoints":[],"decisions":[],"followUps":[],"questions":[]}"""
         // 小模型常见的过长/带空格标题：截断规范化，而不是让整份小结失败。

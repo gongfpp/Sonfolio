@@ -1,7 +1,5 @@
 package com.gongfpp.sonfolio.summary
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -37,7 +35,6 @@ internal fun SummarySettingsCard() {
     var listedModels by remember(provider) { mutableStateOf(provider.defaults) }
     var modelListNote by remember(provider) { mutableStateOf("预设模型，可从官方刷新；费用与可用性以提供商为准") }
     var keyHelp by remember { mutableStateOf(false) }
-    var summaryModelMenu by remember { mutableStateOf(false) }
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     LaunchedEffect(Unit) {
         if (endpoint.isBlank()) { endpoint = provider.endpoint; model = provider.defaults.firstOrNull().orEmpty() }
@@ -56,14 +53,6 @@ internal fun SummarySettingsCard() {
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { message = error.message ?: "操作失败，原有配置保留" }
             finally { busy = false }
-        }
-    }
-    val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) action {
-            app.summarySettings.importModel(uri)
-            app.summaryCoordinator.cancelAll()
-            app.summarySettings.removeReplacedModelCopies()
-            "模型已导入。选择手机本地 AI 并保存后，可使用固定样例测试。"
         }
     }
     Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp),
@@ -103,11 +92,8 @@ internal fun SummarySettingsCard() {
                             Text("手机端总结设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                             com.gongfpp.sonfolio.HelpHint(
                                 title = "本地总结怎么用",
-                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。默认提供约 491 MB 的 Qwen2.5-0.5B-Instruct GGUF；也可以导入兼容的 GGUF 模型。\n\n导入或替换会清理旧导入副本，不改变源文件或录音。",
+                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。内置约 491 MB 的 Qwen2.5-0.5B-Instruct GGUF，下载后即可离线使用。",
                             )
-                        }
-                        OutlinedButton(onClick = { summaryModelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                            Text("总结模型：${saved.localLabel.ifBlank { com.gongfpp.sonfolio.models.ModelCatalog.summary.label }} ▾")
                         }
                         com.gongfpp.sonfolio.models.ModelDownloadControl(com.gongfpp.sonfolio.models.ModelCatalog.summary)
                     }
@@ -199,16 +185,6 @@ internal fun SummarySettingsCard() {
             message?.let { Text(it, fontSize = 12.sp) }
         }
     }
-    if (summaryModelMenu) AlertDialog(
-        onDismissRequest = { summaryModelMenu = false },
-        title = { Text("总结模型") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("内置：${com.gongfpp.sonfolio.models.ModelCatalog.summary.label}（${com.gongfpp.sonfolio.models.ModelCatalog.summary.bytes / 1_000_000} MB）", fontSize = 13.sp)
-            Text("下载后在面板里点「使用已下载的总结模型」启用；也可以导入兼容的 GGUF 文件（替换会清理旧导入副本，不改变源文件或录音）。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } },
-        confirmButton = { TextButton(enabled = !busy, onClick = { summaryModelMenu = false; import.launch(arrayOf("*/*")) }) { Text("导入 GGUF 文件") } },
-        dismissButton = { TextButton(onClick = { summaryModelMenu = false }) { Text("知道了") } },
-    )
     if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("总结服务密钥从哪里获取？") },
         text = { Text(if (provider == SummaryProvider.QWEN) "在阿里云百炼创建中国内地（北京）地域的密钥，复制后粘贴到这里。其他地域的密钥不能混用。调用可能计费，建议在官方设置用量限制。密钥只保存在本机，不要分享或截图公开。"
             else "在所选提供商的开发者平台登录，创建密钥后粘贴到这里。它不是聊天 App 的密码。调用可能计费，建议设置用量限制；不要分享或截图公开密钥。") },
@@ -216,6 +192,7 @@ internal fun SummarySettingsCard() {
         dismissButton = { TextButton(onClick = { keyHelp = false }) { Text("关闭") } })
 }
 
+/** 对话详情里的「生成 AI 总结」入口：复用已配置的总结模型，产出小结并更新本段小结/标题。 */
 @Composable
 internal fun SummaryAction(sourceKey: String) {
     val app = LocalContext.current.applicationContext as SonfolioApplication
