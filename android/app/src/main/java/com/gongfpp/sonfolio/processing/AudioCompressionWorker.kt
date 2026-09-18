@@ -32,15 +32,15 @@ class AudioCompressionWorker(context: Context, params: WorkerParameters) : Corou
             throw error
         } catch (error: Exception) {
             target.delete()
-            Log.e(TAG, "原音压缩失败，保留原始 WAV", error)
+            Log.e(TAG, "录音压缩失败，保留原始 WAV", error)
             // 只回写仍处于 ASR_READY 的行：清理并发把状态改成 AUDIO_DELETED 时不得覆盖回去，
             // 否则会产生 localPath 为空但状态又可备份的永久不一致行。
             val noted = dao.noteCompressionFailure(id, if (runAttemptCount < 2) {
-                "文字与总结已保留；原音压缩遇到问题，稍后自动重试"
+                "文字与总结已保留；录音压缩遇到问题，稍后自动重试"
             } else {
-                "文字与总结已保留；原音压缩未完成，仍可播放原声"
+                "文字与总结已保留；录音压缩未完成，仍可播放录音"
             })
-            if (noted < 1) Log.i(TAG, "原音已在压缩期间被清理，放弃登记压缩结果")
+            if (noted < 1) Log.i(TAG, "录音已在压缩期间被清理，放弃登记压缩结果")
             if (runAttemptCount < 2) Result.retry() else Result.success()
         }
     }

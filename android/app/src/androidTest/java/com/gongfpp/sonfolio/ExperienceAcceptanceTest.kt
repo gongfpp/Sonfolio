@@ -43,8 +43,8 @@ class ExperienceAcceptanceTest {
         ui.onAllNodes(isToggleable()).assertCountEquals(0)
         ui.onAllNodesWithTag("raw-audio-row")[0].performScrollTo().performClick()
         // 真机上第一行可能已被清理原音（localPath 为空），此时只提示不进入回听页；两种都接受。
-        if (ui.onAllNodesWithText("原音回听").fetchSemanticsNodes().isNotEmpty()) {
-            ui.onNodeWithText("原音回听").assertIsDisplayed()
+        if (ui.onAllNodesWithText("录音回听").fetchSemanticsNodes().isNotEmpty()) {
+            ui.onNodeWithText("录音回听").assertIsDisplayed()
             ui.onNodeWithContentDescription("返回").performClick()
         }
         ui.onAllNodesWithTag("raw-audio-row")[0].performScrollTo().performSemanticsAction(SemanticsActions.OnLongClick) { it() }

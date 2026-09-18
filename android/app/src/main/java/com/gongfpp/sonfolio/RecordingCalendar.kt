@@ -48,7 +48,7 @@ internal fun datesInRange(start: Long, end: Long): List<LocalDate> {
                                 val marker = when { date in organized -> Color(0xFF3F694B); date in recorded -> Color(0xFFAD7C16); else -> null }
                                 TextButton(enabled = date <= today, onClick = { onSelect(date) },
                                     modifier = Modifier.fillMaxSize().semantics {
-                                        contentDescription = "$date，${if (date in organized) "已整理对话" else if (date in recorded) "有原音" else "无记录"}"
+                                        contentDescription = "$date，${if (date in organized) "已整理对话" else if (date in recorded) "有录音" else "无记录"}"
                                     }, contentPadding = PaddingValues(0.dp)) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(day.toString(), Modifier.background(if (date == selected) Color(0xFFE1EEDC) else Color.Transparent, CircleShape).padding(3.dp), fontSize = 13.sp)
@@ -60,7 +60,7 @@ internal fun datesInRange(start: Long, end: Long): List<LocalDate> {
                     }
                 }
             }
-            Text("● 绿色：已有对话　● 黄色：已有原音", fontSize = 11.sp)
+            Text("● 绿色：已有对话　● 黄色：已有录音", fontSize = 11.sp)
             Text("未来日期不可选择。没有圆点的过去日期仍可查看。", fontSize = 11.sp)
         } },
         confirmButton = { TextButton(onClick = { onSelect(today) }) { Text("回到本日") } },

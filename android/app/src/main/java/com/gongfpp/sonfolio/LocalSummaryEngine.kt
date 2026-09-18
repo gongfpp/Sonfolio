@@ -30,7 +30,7 @@ internal object LocalSummaryEngine {
         }.map { it.trim().replace(Regex("\\s+"), " ") }
             .filter { it.count(Char::isLetterOrDigit) >= 3 }
             .distinct()
-        if (sentences.isEmpty()) return Summary("未识别", "未识别到足够的可读文字，原音已保留。", emptyList(), emptyList(), emptyList(), emptyList())
+        if (sentences.isEmpty()) return Summary("未识别", "未识别到足够的可读文字，录音已保留。", emptyList(), emptyList(), emptyList(), emptyList())
         val joined = sentences.joinToString(" ")
         val topic = topics.entries.maxByOrNull { (_, words) -> words.sumOf { word -> Regex(Regex.escape(word)).findAll(joined).count() } }
             ?.takeIf { (_, words) -> words.any(joined::contains) }

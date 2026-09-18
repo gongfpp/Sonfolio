@@ -47,10 +47,10 @@ import kotlinx.coroutines.launch
                 Text("完整备份与恢复", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
                 com.gongfpp.sonfolio.HelpHint(
                     title = "备份包含什么",
-                    body = "包含原音、转写、标记、缺口、对话和总结；不包含模型、API Key 与个性化设置。\n\n备份未加密，请保存到你信任的位置，勿公开分享；请先停止录音，并在完成前留在此页面。\n\n恢复仅支持空数据库，不覆盖或合并已有记录。原音逐个校验 SHA-256，通过后统一写入数据库；单份备份文字清单上限 64 MB。恢复后需重新下载模型，在线识别不会自动启用。",
+                    body = "包含录音、转写、标记、缺口、对话和总结；不包含模型、API Key 与个性化设置。\n\n备份未加密，请保存到你信任的位置，勿公开分享；请先停止录音，并在完成前留在此页面。\n\n恢复仅支持空数据库，不覆盖或合并已有记录。录音逐个校验 SHA-256，通过后统一写入数据库；单份备份文字清单上限 64 MB。恢复后需重新下载模型，在线识别不会自动启用。",
                 )
             }
-            Text("包含原音、转写、对话与总结；不包含模型与 API Key。", fontSize = 12.sp)
+            Text("包含录音、转写、对话与总结；不包含模型与 API Key。", fontSize = 12.sp)
             Row {
                 OutlinedButton(enabled = !busy, onClick = { export.launch("Sonfolio-backup-${java.time.LocalDate.now()}.zip") }) { Text("创建完整备份") }
                 TextButton(enabled = !busy, onClick = { restoring = true }) { Text("恢复备份") }

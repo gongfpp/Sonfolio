@@ -380,7 +380,7 @@ private fun TodayScreen(
         item(key = "header") {
             Text("声迹", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                if (recordingStatus.isRecording) "正在记录 · 原音保存在本机" else "你的记录保存在本机 · 按日期回看",
+                if (recordingStatus.isRecording) "正在记录 · 录音保存在本机" else "你的记录保存在本机 · 按日期回看",
                 color = InkSoft, fontSize = 14.sp,
             )
         }
@@ -428,7 +428,7 @@ private fun TodayScreen(
         if (timelineEntries.isEmpty()) {
             item(key = "empty") {
                 Text(
-                    if (day.chunks.isEmpty()) "这一天还没有录音，可以选择其他日期回看。" else "原音已保存，这一天暂无可显示的对话。未识别或已过滤的内容仍可在原始录音中回听。",
+                    if (day.chunks.isEmpty()) "这一天还没有录音，可以选择其他日期回看。" else "录音已保存，这一天暂无可显示的对话。未识别或已过滤的内容仍可在原始录音中回听。",
                     color = InkSoft, fontSize = 13.sp,
                 )
             }
@@ -494,7 +494,7 @@ private fun TodayStats(day: DayTimeline) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         StatCard(formatStatDuration(day.savedMillis), null, "当日已录", Modifier.weight(1f))
         StatCard(day.conversations.size.toString(), null, "场对话", Modifier.weight(1f))
-        StatCard(day.totalChunks.toString(), null, "当日原音", Modifier.weight(1f))
+        StatCard(day.totalChunks.toString(), null, "当日录音", Modifier.weight(1f))
     }
 }
 
@@ -551,7 +551,7 @@ private fun RecentHeatPanel(
                 }
             }
             Text(
-                "浅绿 = 有原音 · 深绿 = 已整理 · 近两周 ${days.count { it in recorded || it in organized }} 天有记录",
+                "浅绿 = 有录音 · 深绿 = 已整理 · 近两周 ${days.count { it in recorded || it in organized }} 天有记录",
                 modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 10.5.sp,
             )
             if (day.totalChunks > 0) {
@@ -613,7 +613,7 @@ private fun PendingUnitCard(unit: PendingUnit, onClick: () -> Unit) {
                     StageIndicator(unit.progress)
                 }
                 Text(
-                    "${formatDateTime(unit.startedAtMillis)} · ${unit.chunkIds.size} 段原音",
+                    "${formatDateTime(unit.startedAtMillis)} · ${unit.chunkIds.size} 段录音",
                     color = InkSoft, fontSize = 11.5.sp,
                 )
                 Text(unit.label, color = Color(0xFF725B18), fontSize = 12.sp)
@@ -672,7 +672,7 @@ private fun RecordingCard(
                         color = onWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp,
                     )
                     Text(
-                        if (status.isRecording) "每 5 分钟保存一段原音 · 全程在本机" else "点击后持续在后台录音",
+                        if (status.isRecording) "每 5 分钟保存一段录音 · 全程在本机" else "点击后持续在后台录音",
                         color = onWhite.copy(alpha = .85f), fontSize = 12.sp,
                     )
                 }
@@ -1299,7 +1299,7 @@ private fun TimelineAudioPlayer(
         Column(Modifier.padding(horizontal = 9.dp, vertical = 7.dp)) {
             if (timeline.gaps.isNotEmpty()) Text(
                 if (timeline.gaps.any { timeline.start + controller.position >= it.startedAtMillis && timeline.start + controller.position < (it.endedAtMillis ?: Long.MAX_VALUE) })
-                    "当前进度位于已知录音缺口，原文件可能只有静音。" else "这段原音含已知缺口，缺失内容无法回听。",
+                    "当前进度位于已知录音缺口，原文件可能只有静音。" else "这段录音含已知缺口，缺失内容无法回听。",
                 color = Color(0xFF805900), fontSize = 11.sp,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1315,7 +1315,7 @@ private fun TimelineAudioPlayer(
                     )
                 }
                 Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                    Text(controller.error ?: if (controller.preparing) "正在定位原音…" else "原音 · 可拖动进度或点击转写行", color = InkSoft, fontSize = 10.sp)
+                    Text(controller.error ?: if (controller.preparing) "正在定位录音…" else "录音 · 可拖动进度或点击转写行", color = InkSoft, fontSize = 10.sp)
                     Slider(
                         value = (dragPosition ?: controller.position.toFloat()).coerceIn(0f, duration.toFloat()),
                         onValueChange = { dragPosition = it },
@@ -1672,7 +1672,7 @@ private fun SettingsScreen(
                     Text("短录音过滤", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                     HelpHint(
                         title = "短录音过滤怎么算",
-                        body = "有效人声和文字同时低于阈值才隐藏；原音不删除，标记片段豁免。文字设为 0 可关闭过滤。\n\n隐藏只影响首页时间线显示，仍可在原始录音中回听。",
+                        body = "有效人声和文字同时低于阈值才隐藏；录音不删除，标记片段豁免。文字设为 0 可关闭过滤。\n\n隐藏只影响首页时间线显示，仍可在原始录音中回听。",
                     )
                 }
                 Text("最短有效人声：${minimumSpeechSeconds.toInt()} 秒", modifier = Modifier.padding(top = 12.dp), fontSize = 12.sp)
@@ -1731,7 +1731,7 @@ private fun SettingsScreen(
                 policyMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp)) }
             }
         }
-        SectionTitle("存储与原音")
+        SectionTitle("存储与录音")
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1747,10 +1747,10 @@ private fun SettingsScreen(
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("原音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Text("录音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                     HelpHint(
-                        title = "原音保留策略",
-                        body = "转写完成后自动压缩原音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择「永久保留」则始终保留原声。\n\n超过保留期的段：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。",
+                        title = "录音保留策略",
+                        body = "转写完成后自动压缩录音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择「永久保留」则始终保留录音。\n\n超过保留期的段：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。",
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1762,7 +1762,7 @@ private fun SettingsScreen(
                 val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
                 val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)
                 if (expired > 0) {
-                    Text("${expired} 段原音超过保留期，将按保留策略自动处理。", color = InkSoft, fontSize = 11.sp)
+                    Text("${expired} 段录音超过保留期，将按保留策略自动处理。", color = InkSoft, fontSize = 11.sp)
                 }
             }
         }
@@ -1825,13 +1825,22 @@ private fun RawRecordingsScreen(
     val dao = (context.applicationContext as SonfolioApplication).database.recordingDao()
     val totalCount by remember(window) { dao.observeChunkCount(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = 0)
     val displayedChunks = chunks
+    // 提前算出可清理数量：按钮上直接显示，避免「点了没反应」的困惑。
+    var speechCandidates by remember(window) { mutableIntStateOf(-1) }
+    var filteredCandidates by remember(window) { mutableIntStateOf(-1) }
+    LaunchedEffect(window.start, window.end, chunks.size) {
+        speechCandidates = withContext(Dispatchers.IO) { dao.getCleanupCandidates(window.start, window.end, true).size }
+        filteredCandidates = withContext(Dispatchers.IO) { dao.getCleanupCandidates(window.start, window.end, false).size }
+    }
     fun prepareCleanup(silence: Boolean) {
         if (operationBusy || cleanupIds != null) return
         operationBusy = true
         scope.launch {
             try {
                 val ids = dao.getCleanupCandidates(window.start, window.end, silence).toSet()
-                if (ids.isEmpty()) operationMessage = "没有符合条件的原音，无需清理" else cleanupIds = ids
+                if (ids.isEmpty()) {
+                    operationMessage = "没有可清理的录音：只能清理已整理完成、未被标记保护、且无人声或已过滤的录音。"
+                } else cleanupIds = ids
             }
             catch (error: kotlinx.coroutines.CancellationException) { throw error }
             catch (error: Exception) { operationMessage = "读取清理清单失败（${error.message ?: error.javaClass.simpleName}），未删除任何文件" }
@@ -1885,7 +1894,7 @@ private fun RawRecordingsScreen(
         scope.launch {
             try {
                 onExportSelected(ids, uri)
-                operationMessage = "原音与文字已导出；这不是完整的数据恢复备份"
+                operationMessage = "录音与文字已导出；这不是完整的数据恢复备份"
                 selection = emptySet()
                 selectionMode = false
             } catch (error: kotlinx.coroutines.CancellationException) { throw error }
@@ -1896,8 +1905,8 @@ private fun RawRecordingsScreen(
 
     cleanupIds?.let { ids ->
         AlertDialog(onDismissRequest = { if (!operationBusy) cleanupIds = null },
-            title = { Text("清理 ${ids.size} 份原音？") },
-            text = { Text("此操作不可撤销，请先导出需要保留的文件。仅清理已识别完成的原音，保留转写、总结和标记；被标记的整场对话及未处理文件会跳过。") },
+            title = { Text("清理 ${ids.size} 份录音？") },
+            text = { Text("此操作不可撤销，请先导出需要保留的文件。仅清理已识别完成的录音，保留转写、总结和标记；被标记的整场对话及未处理文件会跳过。") },
             confirmButton = { TextButton(enabled = !operationBusy, onClick = {
                 if (operationBusy) return@TextButton
                 operationBusy = true
@@ -1908,16 +1917,16 @@ private fun RawRecordingsScreen(
                     catch (error: Exception) { operationMessage = "清理未全部完成，请检查列表后重试：${error.message}" }
                     finally { operationBusy = false; cleanupIds = null }
                 }
-            }) { Text("确认清理原音") } },
+            }) { Text("确认清理录音") } },
             dismissButton = { TextButton(enabled = !operationBusy, onClick = { cleanupIds = null }) { Text("取消") } })
     }
 
     uploadRequest?.let { (id, config) ->
         AlertDialog(onDismissRequest = { uploadRequest = null }, title = { Text("上传这份录音的人声片段？") },
-            text = { Text("将发送到 ${config.provider.label} 的 ${config.model}，可能产生流量和调用费用。这只授权当前一份原音，不上传其他历史录音；原音在本机保留。") },
+            text = { Text("将发送到 ${config.provider.label} 的 ${config.model}，可能产生流量和调用费用。这只授权当前一份录音，不上传其他历史录音；录音在本机保留。") },
             confirmButton = { TextButton(onClick = {
                 runCatching { app.transcriptionSettings.authorizeChunk(id, config.revision) }
-                    .onSuccess { onRetry(id); operationMessage = "已授权这份原音，等待转写" }
+                    .onSuccess { onRetry(id); operationMessage = "已授权这份录音，等待转写" }
                     .onFailure { operationMessage = it.message ?: "授权失败，请重新确认" }
                 uploadRequest = null
             }) { Text("确认上传并处理") } },
@@ -1930,7 +1939,7 @@ private fun RawRecordingsScreen(
             TimelineAudioPlayer(PlaybackTimeline(listOf(PlaybackSlice(selected.localPath, selected.startedAtMillis, selected.startedAtMillis, selected.savedEndMillis()))))
         }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(18.dp)) {
-                DetailTopBar("原音回听", formatDateTime(selected.startedAtMillis), ::leavePage)
+                DetailTopBar("录音回听", formatDateTime(selected.startedAtMillis), ::leavePage)
                 Text("${formatBytes(selected.displayBytes)} · ${File(selected.localPath).name}", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(top = 18.dp))
                 Text("拖动底部进度条跳转；暂停后可以从当前位置继续。", color = InkSoft, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
             }
@@ -1941,9 +1950,9 @@ private fun RawRecordingsScreen(
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)) {
             item(key = "header") {
                 Column {
-                    DetailTopBar("原始录音", "${if (showAll) "全部日期" else date} · ${totalCount} 段原音", ::leavePage)
+                    DetailTopBar("原始录音", "${if (showAll) "全部日期" else date} · ${totalCount} 段录音", ::leavePage)
                     Text(
-                        "点击卡片回听，长按进入多选。清理后原音从此列表移除，已有转写和总结仍保留。",
+                        "点击卡片回听，长按进入多选。清理后录音从此列表移除，已有转写和总结仍保留。",
                         modifier = Modifier.padding(start = 46.dp, top = 4.dp),
                         color = InkSoft,
                         fontSize = 11.5.sp,
@@ -1961,12 +1970,15 @@ private fun RawRecordingsScreen(
                     operationMessage?.let { Text(it, color = InkSoft, fontSize = 12.sp) }
                     if (operationBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     Row {
-                        TextButton(enabled = !operationBusy, onClick = {
-                            prepareCleanup(false)
-                        }) { Text("清理已过滤原音") }
-                        TextButton(enabled = !operationBusy, onClick = {
+                        TextButton(enabled = !operationBusy && speechCandidates != 0, onClick = {
                             prepareCleanup(true)
-                        }) { Text("清理无人声原音") }
+                        }) { Text(if (speechCandidates > 0) "清理无人声录音（$speechCandidates）" else "清理无人声录音") }
+                        TextButton(enabled = !operationBusy && filteredCandidates != 0, onClick = {
+                            prepareCleanup(false)
+                        }) { Text(if (filteredCandidates > 0) "清理已过滤录音（$filteredCandidates）" else "清理已过滤录音") }
+                    }
+                    if (speechCandidates == 0 && filteredCandidates == 0) {
+                        Text("没有可自动清理的录音：只能清理已整理完成、未被标记保护、且无人声或已过滤的录音。", color = InkSoft, fontSize = 11.sp)
                     }
                 }
             }
@@ -1976,7 +1988,7 @@ private fun RawRecordingsScreen(
                     Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(13.dp), color = Green) {
                         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("已选 ${selection.size} 段 · ${formatBytes(totalBytes)}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            TextButton(enabled = !operationBusy && selection.isNotEmpty(), onClick = { cleanupIds = selection }) { Text("清理原音", color = Color.White) }
+                            TextButton(enabled = !operationBusy && selection.isNotEmpty(), onClick = { cleanupIds = selection }) { Text("清理录音", color = Color.White) }
                             TextButton(enabled = !operationBusy && selection.isNotEmpty(), onClick = { zipLauncher.launch("sonfolio-export-${date ?: "all"}.zip") }) { Text("导出文件", color = Color.White) }
                         }
                     }
@@ -2017,7 +2029,7 @@ private fun RawRecordingsScreen(
                     )
                 }
                 if (displayedChunks.size > visibleCount) item(key = "more") {
-                    TextButton(onClick = { visibleCount += 30 }) { Text("查看更多原音（已显示 $visibleCount / $totalCount）") }
+                    TextButton(onClick = { visibleCount += 30 }) { Text("查看更多录音（已显示 $visibleCount / $totalCount）") }
                 }
             }
         }
@@ -2041,14 +2053,14 @@ private fun RawRecordingRow(
     val progress = ChunkProcessing.progressOf(chunk.processingState)
     val stateLabel = if (chunk.processingState == ChunkProcessing.ASR_READY) when {
         chunk.speechCount == 0 -> "处理结束 · 未检测到人声，不生成对话"
-        chunk.transcriptCount == 0 -> "处理结束 · 检测到人声但未识别出文字，可回听原音"
-        chunk.visibleTranscriptCount == 0 -> "处理结束 · 低于过滤阈值，对话已隐藏，原音保留"
+        chunk.transcriptCount == 0 -> "处理结束 · 检测到人声但未识别出文字，可回听录音"
+        chunk.visibleTranscriptCount == 0 -> "处理结束 · 低于过滤阈值，对话已隐藏，录音保留"
         else -> "4/4 对话与基础小结已完成 · AI 总结可在对话详情生成"
     } else {
         "${(progress.active ?: progress.completed).coerceIn(1, ChunkProcessing.TOTAL_STAGES)}/4 ${ChunkProcessing.labelOf(chunk.processingState)}"
     }
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("raw-audio-row").combinedClickable(enabled = enabled, onClick = onPlay, onLongClick = onLongClick, onLongClickLabel = "选择原音"),
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("raw-audio-row").combinedClickable(enabled = enabled, onClick = onPlay, onLongClick = onLongClick, onLongClickLabel = "选择录音"),
         shape = RoundedCornerShape(13.dp),
         color = if (checked) PaleGreen else Color(0xFFFFFEFA),
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),

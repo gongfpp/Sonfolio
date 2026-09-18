@@ -93,7 +93,7 @@ internal object LocalSummaryNative {
     external fun generate(path: String, system: ByteArray, user: ByteArray): ByteArray
 }
 
-/** 和录音、ASR 分开的进程，只接收文本和私有模型路径，不接收原音。 */
+/** 和录音、ASR 分开的进程，只接收文本和私有模型路径，不接收录音。 */
 class LocalSummaryService : Service() {
     private lateinit var thread: HandlerThread
     private lateinit var messenger: Messenger

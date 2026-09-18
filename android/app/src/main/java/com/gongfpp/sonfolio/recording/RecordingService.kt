@@ -185,7 +185,7 @@ class RecordingService : Service() {
                 "AudioRecord 初始化失败"
             }
             runCatching { recorder.registerAudioRecordingCallback(mainExecutor, callback) }
-                .onFailure { Log.w(TAG, "系统音频状态监测不可用，继续保存原音", it) }
+                .onFailure { Log.w(TAG, "系统音频状态监测不可用，继续保存录音", it) }
             recorder.startRecording()
             check(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 "麦克风未进入录音状态"

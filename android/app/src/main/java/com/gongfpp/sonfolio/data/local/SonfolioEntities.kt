@@ -28,7 +28,7 @@ data class AudioChunkEntity(
     @androidx.room.ColumnInfo(defaultValue = "0") val recordedOffsetSeconds: Int = 0,
     /** 录音发生时按 recordedZoneId 算出的当地日期（ISO），日历按它分桶。 */
     @androidx.room.ColumnInfo(defaultValue = "") val localStartDate: String = "",
-    /** 整理完成后生成的 AAC 压缩音；为空表示尚未压缩或仅剩原音。 */
+    /** 整理完成后生成的 AAC 压缩音；为空表示尚未压缩或仅剩录音。 */
     val compressedPath: String? = null,
     val compressedBytes: Long? = null,
 )

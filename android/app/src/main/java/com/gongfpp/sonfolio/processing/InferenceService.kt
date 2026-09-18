@@ -46,7 +46,7 @@ class InferenceService : Service() {
                     else -> error("未知处理请求")
                 }
             } catch (error: OutOfMemoryError) {
-                Bundle().apply { putString("error", "模型内存不足，原音仍保留，可稍后重试") }
+                Bundle().apply { putString("error", "模型内存不足，录音仍保留，可稍后重试") }
             } catch (error: Exception) {
                 Bundle().apply { putString("error", error.message ?: "本地模型处理失败") }
             }

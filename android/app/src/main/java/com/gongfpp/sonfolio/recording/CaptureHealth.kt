@@ -26,7 +26,7 @@ data class CaptureHealth(
 internal const val RECORDING_SPACE_RESERVE = 64L * 1024 * 1024
 internal const val RECORDING_SPACE_WARNING = 512L * 1024 * 1024
 internal fun requireRecordingSpace(available: Long) {
-    check(available >= RECORDING_SPACE_RESERVE) { "可用空间不足 64 MB，已停止录音以保留已录内容；不会自动删除原音" }
+    check(available >= RECORDING_SPACE_RESERVE) { "可用空间不足 64 MB，已停止录音以保留已录内容；不会自动删除录音" }
 }
 
 internal fun pcmLevel(bytes: ByteArray, count: Int): Float {

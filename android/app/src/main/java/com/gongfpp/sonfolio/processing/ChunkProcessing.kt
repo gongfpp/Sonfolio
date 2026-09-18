@@ -4,7 +4,7 @@ package com.gongfpp.sonfolio.processing
  * 切片处理状态的唯一来源。数据库里仍然存字符串，但阶段编号、用户文案、是否可重试都从这里取，
  * UI、仓库和调度器不再各自维护一套映射（历史上三处文案和 ①–④ 编号互相矛盾）。
  *
- * 阶段：① 保存原音 → ② 找人声 → ③ 转写 → ④ 整理对话。
+ * 阶段：① 保存录音 → ② 找人声 → ③ 转写 → ④ 整理对话。
  */
 object ChunkProcessing {
     const val RECORDING = "RECORDING"
@@ -27,7 +27,7 @@ object ChunkProcessing {
     const val STAGE_TRANSCRIBE = 3
     const val STAGE_ASSEMBLE = 4
 
-    val stageTitles = listOf("保存原音", "找人声", "转写", "整理对话")
+    val stageTitles = listOf("保存录音", "找人声", "转写", "整理对话")
 
     /** completed = 已完成阶段数；active = 正在进行的阶段（1–4，无则 null）；failed = 当前阶段失败。 */
     data class StageProgress(val completed: Int, val active: Int?, val failed: Boolean) {
@@ -52,17 +52,17 @@ object ChunkProcessing {
     /** 用户可见的一句话状态；全应用只此一份。 */
     fun labelOf(state: String): String = when (state) {
         RECORDING -> "正在录音"
-        RECORDED, RECOVERED -> "原音已保存，等待找人声"
+        RECORDED, RECOVERED -> "录音已保存，等待找人声"
         VAD_RUNNING -> "正在找人声"
-        VAD_FAILED -> "找人声失败，原音已保留"
+        VAD_FAILED -> "找人声失败，录音已保留"
         VAD_READY -> "人声已找到，等待转写"
         ASR_RUNNING -> "正在转写"
-        ASR_FAILED -> "转写失败，原音已保留"
+        ASR_FAILED -> "转写失败，录音已保留"
         ASSEMBLY_PENDING -> "文字已保存，等待整理对话"
         ASSEMBLY_FAILED -> "整理对话失败，文字已保存"
         ASR_READY -> "已整理完成"
-        AUDIO_DELETED -> "原音已清理，文字保留"
-        FAILED -> "录音文件异常，原音保留"
+        AUDIO_DELETED -> "录音已清理，文字保留"
+        FAILED -> "录音文件异常，录音保留"
         else -> "处理中"
     }
 

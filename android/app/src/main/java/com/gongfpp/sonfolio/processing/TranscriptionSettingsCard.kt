@@ -48,7 +48,7 @@ import kotlinx.coroutines.*
                 Text("当前：${saved.mode.label}${if (saved.mode == TranscriptionMode.REMOTE) " · ${saved.provider.label}" else " / ${saved.localEngine.displayName}"}", fontSize = 12.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "转文字方式说明",
-                    body = "录音始终先保存在本机，识别失败不影响录音，也不会删除原音。\n\n" +
+                    body = "录音始终先保存在本机，识别失败不影响录音，也不会删除录音。\n\n" +
                         "本地识别：按需下载模型，离线运行，不上传音频。默认 SenseVoice 体积小、速度快；Qwen3-ASR 中英混说与方言更强，但约 1 GB、速度更慢。\n\n" +
                         "在线识别：先在手机检测人声，再把短片段上传给所选提供商，可能产生费用；历史录音不会自动上传，需要逐份确认。",
                 )
@@ -132,7 +132,7 @@ import kotlinx.coroutines.*
                             "更改设置会停止后续上传，已经发出的请求无法撤回；失败后的手动重试可能再次计费。",
                         modifier = Modifier.padding(end = 4.dp),
                     )
-                    Text("只上传人声片段，不上传整段原音。", fontSize = 11.sp)
+                    Text("只上传人声片段，不上传整段录音。", fontSize = 11.sp)
                 }
             }
             Button(enabled = !busy, onClick = {

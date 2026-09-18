@@ -62,7 +62,7 @@ class RecordingRepository(
             val end = fact.endedAt ?: (fact.startedAt + WavChunkWriter.durationMillis(bytes, fact.sampleRate, fact.channels))
             finishChunk(fact.id, end, bytes, if (recovered) {
                 if (bytes > WavChunkWriter.WAV_HEADER_BYTES) ChunkProcessing.RECOVERED else ChunkProcessing.FAILED
-            } else fact.state, if (recovered) "已从录音日志恢复，原音保留" else fact.error)
+            } else fact.state, if (recovered) "已从录音日志恢复，录音保留" else fact.error)
             if (recovered) recordingDao.openGap(end, "录音进程中断，等待重新采集")
             log.acknowledge(fact.id)
         }
@@ -284,8 +284,8 @@ class RecordingRepository(
     }
 
     /**
-     * 原音保留策略：已完成压缩且超过保留期的切片，删除未压缩 WAV（文字、标记与压缩音保留）。
-     * 标记时间窗内的录音受保护；保留期为 0 表示永久保留原音。
+     * 录音保留策略：已完成压缩且超过保留期的切片，删除未压缩 WAV（文字、标记与压缩音保留）。
+     * 标记时间窗内的录音受保护；保留期为 0 表示永久保留录音。
      */
     suspend fun applyRetention(nowMillis: Long = System.currentTimeMillis()): Int = withContext(Dispatchers.IO) {
         val days = preferences?.retentionDays ?: 0
@@ -346,24 +346,34 @@ class RecordingRepository(
         if (!lock.tryLock()) return@withContext "正在识别录音，请处理结束后再清理；未删除任何文件"
         try {
             val protected = if (protectMarked) getMarkedChunkIds() else emptySet()
-            var removed = 0; var skipped = 0; var failed = 0
+            var removed = 0; var skippedMarked = 0; var skippedNotReady = 0; var failed = 0
             ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }.forEach { chunk ->
-                if (chunk.id in protected || chunk.endedAtMillis == null || chunk.processingState != ChunkProcessing.ASR_READY) {
-                    skipped++
-                } else {
-                    // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。
-                    val files = listOfNotNull(File(chunk.localPath), chunk.compressedPath?.let(::File))
-                    // Metadata survives a failed unlink or a crash between unlink and this update.
-                    // Navigation/coroutine cancellation cannot leave a successful unlink unrecorded.
-                    withContext(kotlinx.coroutines.NonCancellable) {
-                        if (files.all { !it.exists() || it.delete() }) {
-                            recordingDao.markAudioDeleted(chunk.id)
-                            removed++
-                        } else failed++
+                when {
+                    chunk.id in protected -> skippedMarked++
+                    chunk.endedAtMillis == null || chunk.processingState != ChunkProcessing.ASR_READY -> skippedNotReady++
+                    else -> {
+                        // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。
+                        val files = listOfNotNull(File(chunk.localPath), chunk.compressedPath?.let(::File))
+                        // Metadata survives a failed unlink or a crash between unlink and this update.
+                        // Navigation/coroutine cancellation cannot leave a successful unlink unrecorded.
+                        withContext(kotlinx.coroutines.NonCancellable) {
+                            if (files.all { !it.exists() || it.delete() }) {
+                                recordingDao.markAudioDeleted(chunk.id)
+                                removed++
+                            } else failed++
+                        }
                     }
                 }
             }
-            "已清理 ${removed} 份原音，保留全部文字；跳过 ${skipped} 份标记或未处理文件，失败 ${failed} 份"
+            buildString {
+                append("已清理 $removed 份录音，保留全部文字")
+                val reasons = buildList {
+                    if (skippedMarked > 0) add("$skippedMarked 份被标记保护")
+                    if (skippedNotReady > 0) add("$skippedNotReady 份尚未处理完成")
+                    if (failed > 0) add("$failed 份删除失败")
+                }
+                if (reasons.isNotEmpty()) append("；跳过 ${reasons.joinToString("、")}")
+            }
         } finally { lock.unlock() }
     }
 

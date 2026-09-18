@@ -31,7 +31,7 @@ object RecordingExporter {
         items.forEach { item ->
             require(item.endedAtMillis != null) { "正在录音的文件不能导出，请停止录音或等待切片完成" }
             require(item.id.matches(Regex("[a-zA-Z0-9_-]+"))) { "文件标识不合法" }
-            require(File(item.localPath).isFile) { "选中原音已清理或缺失，请取消选择后重试" }
+            require(File(item.localPath).isFile) { "选中录音已清理或缺失，请取消选择后重试" }
         }
         context.contentResolver.openOutputStream(uri)?.use { out ->
             ZipOutputStream(out).use { zip ->

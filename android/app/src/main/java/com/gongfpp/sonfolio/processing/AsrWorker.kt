@@ -68,14 +68,14 @@ class AsrWorker(
                     // 只有支持热词的引擎才读取个人词汇，避免每次本地转写都查库。
                     val hotwords = if (engine.supportsHotwords) app.vocabularyRepository.hotwords() else ""
                     val localTexts = InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords)
-                    // 不能静默丢文字：整段为空时明确报错并保留原音，让用户改用 SenseVoice 重试。
+                    // 不能静默丢文字：整段为空时明确报错并保留录音，让用户改用 SenseVoice 重试。
                     if (engine == LocalAsrEngine.QWEN3_ASR && windows.isNotEmpty() && localTexts.all { it.isBlank() }) {
-                        error("Qwen3-ASR 本次没有返回文字（可能是纯音乐/噪声或模型异常）；原音已保留，可在设置改用 SenseVoice 后重试")
+                        error("Qwen3-ASR 本次没有返回文字（可能是纯音乐/噪声或模型异常）；录音已保留，可在设置改用 SenseVoice 后重试")
                     }
                     localTexts
                 }
             }
-            check(segments.size == texts.size) { "转写片段数量不完整，原音保留，请重试" }
+            check(segments.size == texts.size) { "转写片段数量不完整，录音保留，请重试" }
             check(app.transcriptionSettings.read().revision == config.revision) { "转文字设置已改变，请继续处理以使用新设置" }
             app.database.withTransaction {
                 dao.deleteTranscriptsForChunk(chunkId)

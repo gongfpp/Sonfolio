@@ -47,7 +47,7 @@ class ConversationRepository(
     suspend fun rebuildFromTranscripts(startedAt: Long? = null, endedAt: Long? = null) = rebuildLock.withLock {
         withContext(Dispatchers.Default) {
             repeat(4) { if (rebuildRegion(startedAt, endedAt)) return@withContext }
-            error("整理期间内容持续更新，请稍后重试；原音和转写已保留")
+            error("整理期间内容持续更新，请稍后重试；录音和转写已保留")
         }
     }
 

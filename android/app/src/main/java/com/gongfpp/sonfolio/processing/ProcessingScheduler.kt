@@ -21,7 +21,7 @@ class ProcessingScheduler(context: Context) {
     private val appContext = context.applicationContext
     fun enqueueAssembly(chunkId: String) = AssemblyWorker.enqueue(appContext, chunkId)
 
-    /** 整理完成后的原音压缩；约束比 ASR 宽松，但避免低电与低存储时写入大文件。 */
+    /** 整理完成后的录音压缩；约束比 ASR 宽松，但避免低电与低存储时写入大文件。 */
     fun enqueueCompression(chunkId: String) {
         runCatching {
             val request = OneTimeWorkRequestBuilder<AudioCompressionWorker>()
@@ -32,7 +32,7 @@ class ProcessingScheduler(context: Context) {
             WorkManager.getInstance(appContext).enqueueUniqueWork(
                 "sonfolio-compress-$chunkId", ExistingWorkPolicy.KEEP, request,
             )
-        }.onFailure { Log.e("ProcessingScheduler", "无法加入压缩队列，原音保持未压缩状态", it) }
+        }.onFailure { Log.e("ProcessingScheduler", "无法加入压缩队列，录音保持未压缩状态", it) }
     }
 
     /** Update persisted constraints, including requests created by older versions. Running
@@ -67,7 +67,7 @@ class ProcessingScheduler(context: Context) {
             ExistingWorkPolicy.KEEP,
             request,
         )
-        }.onFailure { Log.e("ProcessingScheduler", "无法加入处理队列，原音保持待处理状态", it) }
+        }.onFailure { Log.e("ProcessingScheduler", "无法加入处理队列，录音保持待处理状态", it) }
     }
 
     /**
@@ -89,7 +89,7 @@ class ProcessingScheduler(context: Context) {
                         .build()
                     manager.enqueueUniqueWork(ASR_QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).result.get()
                 }
-            }.onFailure { Log.e("ProcessingScheduler", "无法加入转写队列，原音保持待处理状态", it) }
+            }.onFailure { Log.e("ProcessingScheduler", "无法加入转写队列，录音保持待处理状态", it) }
         }
     }
 

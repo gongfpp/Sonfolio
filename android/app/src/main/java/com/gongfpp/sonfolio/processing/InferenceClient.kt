@@ -92,11 +92,11 @@ internal class InferenceClient(
             check(bound) { "无法连接本地模型" }
             // 冷启动即退出可能没有断开回调，连接等待必须单独限时。
             val remote = withTimeoutOrNull(connectionTimeoutMillis) { connected.await() }
-                ?: error("本地模型启动超时，原音仍保留，请重试")
+                ?: error("本地模型启动超时，录音仍保留，请重试")
             remote.send(Message.obtain(null, operation).apply { data = input; replyTo = reply })
             // 自身超时是可重试的处理失败；外部取消仍正常向上传递。
             withTimeoutOrNull(processingTimeoutMillis) { result.await() }
-                ?: error("本地模型处理超时，原音仍保留，请重试")
+                ?: error("本地模型处理超时，录音仍保留，请重试")
         } finally {
             if (bound) runCatching { context.unbindService(connection) }
             if (binder != null) withContext(NonCancellable) {

@@ -104,7 +104,7 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
                     val count = input.read(buffer); if (count < 0) break
                     current += count
                     require(current <= file.bytes) { "下载内容超过预期大小" }
-                    require(target.parentFile!!.usableSpace > RESERVE) { "剩余空间不足，下载已暂停，原音不受影响" }
+                    require(target.parentFile!!.usableSpace > RESERVE) { "剩余空间不足，下载已暂停，录音不受影响" }
                     output.write(buffer, 0, count)
                     if (System.currentTimeMillis() - lastUpdate > 700) {
                         setProgress(workDataOf("bytes" to completed + current, "message" to "正在下载 ${target.name}（$sourceLabel），可取消后续传"))

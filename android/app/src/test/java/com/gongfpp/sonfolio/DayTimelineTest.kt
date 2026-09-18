@@ -116,7 +116,7 @@ class DayTimelineTest {
         assertEquals(listOf("a", "b"), day.pendingUnits[0].chunkIds)
         // 单元阶段取最靠后的那一段（最少完成步数），避免把整组显示成已完成。
         assertEquals(1, day.pendingUnits[0].progress.completed)
-        assertEquals("原音已保存，等待找人声", day.pendingUnits[0].label)
+        assertEquals("录音已保存，等待找人声", day.pendingUnits[0].label)
         assertEquals(3, day.pendingUnits[1].progress.active)
         assertEquals(0, day.processedChunks)
         assertEquals(3, day.totalChunks)

@@ -52,7 +52,7 @@ internal class RemoteSpeechTransport(
                 check(status in 200..299) { when (status) {
                     401, 403 -> "识别密钥无效、地域不匹配或无模型权限，请检查转文字设置"
                     429 -> "识别服务限流或额度不足，稍后在原始录音中重试"
-                    else -> "识别服务返回 HTTP $status；原音已保留，可稍后重试"
+                    else -> "识别服务返回 HTTP $status；录音已保留，可稍后重试"
                 } }
                 val response = connection.inputStream.use { input ->
                     val output = ByteArrayOutputStream(); val buffer = ByteArray(8192)
@@ -67,7 +67,7 @@ internal class RemoteSpeechTransport(
                 check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
                 parse(config.provider, response)
             } catch (error: CancellationException) { throw error }
-            catch (error: java.io.IOException) { error("识别网络中断或超时，原音已保留；重试可能再次计费") }
+            catch (error: java.io.IOException) { error("识别网络中断或超时，录音已保留；重试可能再次计费") }
             finally { guard.cancel(); connection.disconnect() }
         }
     }

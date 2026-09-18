@@ -78,7 +78,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                         row.put("backupAudio", name).put("backupBytes", File(compressedPath).length()).put("backupSha256", hash(File(compressedPath)))
                         files[name] = File(compressedPath)
                     }
-                    else -> error("部分原音丢失，无法制作完整备份；已有数据未改动")
+                    else -> error("部分录音丢失，无法制作完整备份；已有数据未改动")
                 }
             } else {
                 row.put("localPath", "").put("compressedPath", JSONObject.NULL)
@@ -86,7 +86,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
         }
         manifest.put("tables", tables)
         val metadata = manifest.toString().toByteArray(Charsets.UTF_8)
-        require(metadata.size <= MAX_METADATA) { "文字数据超过当前单份备份上限（64 MB），请先分批导出原音" }
+        require(metadata.size <= MAX_METADATA) { "文字数据超过当前单份备份上限（64 MB），请先分批导出录音" }
         val output = context.contentResolver.openOutputStream(uri, "wt") ?: error("无法写入备份位置")
         ZipOutputStream(BufferedOutputStream(output)).use { zip ->
             zip.putNextEntry(ZipEntry("manifest.json")); zip.write(metadata); zip.closeEntry()
@@ -98,7 +98,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                 }; zip.closeEntry()
             }
         }
-        "完整备份已写入：${chunks.length()} 份原音记录、${tables.getJSONArray("transcripts").length()} 条转写，包含标记、总结与对话关系。"
+        "完整备份已写入：${chunks.length()} 份录音记录、${tables.getJSONArray("transcripts").length()} 条转写，包含标记、总结与对话关系。"
     } }
 
     /** Empty destination only: never replaces or merges an existing user's recording library. */
@@ -110,7 +110,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
         try {
             val input = context.contentResolver.openInputStream(uri) ?: error("无法读取备份文件")
             ZipInputStream(BufferedInputStream(input)).use { zip ->
-                require(zip.nextEntry?.name == "manifest.json") { "不是声迹完整备份文件，普通原音导出不能用于恢复" }
+                require(zip.nextEntry?.name == "manifest.json") { "不是声迹完整备份文件，普通录音导出不能用于恢复" }
                 val bytes = ByteArrayOutputStream()
                 val buffer = ByteArray(256 * 1024)
                 while (true) {
@@ -118,7 +118,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     require(bytes.size() + n <= MAX_METADATA) { "备份文字数据过大" }; bytes.write(buffer, 0, n)
                 }
                 val manifest = JSONObject(bytes.toString("UTF-8"))
-                require(manifest.getString("format") == "sonfolio-memory") { "不是声迹完整备份文件，普通原音导出不能用于恢复" }
+                require(manifest.getString("format") == "sonfolio-memory") { "不是声迹完整备份文件，普通录音导出不能用于恢复" }
                 // 旧版 manifest 写的是 "version"；新版分开 formatVersion 与 databaseSchema。
                 val formatVersion = manifest.optInt("formatVersion", manifest.optInt("version", 0))
                 require(formatVersion in 1..FORMAT_VERSION) { "不支持此备份版本，请使用相应版本的声迹" }
@@ -137,7 +137,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     row.put("localPath", if (extension == "wav") file.path else "")
                     if (extension == "m4a") row.put("compressedPath", file.path)
                     if (row.getString("processingState") != "AUDIO_DELETED") {
-                        require(row.getString("backupAudio") == "audio/$id.$extension" && row.getLong("backupBytes") >= 44) { "原音清单无效" }
+                        require(row.getString("backupAudio") == "audio/$id.$extension" && row.getLong("backupBytes") >= 44) { "录音清单无效" }
                         expected[row.getString("backupAudio")] = row
                     } else {
                         // 已清理的切片不指向任何存在的文件。
@@ -146,7 +146,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     }
                 }
                 val required = expected.values.fold(0L) { total, row -> Math.addExact(total, row.getLong("backupBytes")) }
-                require(required >= 0 && directory.usableSpace > required + RESERVE) { "空间不足，需容纳全部原音并另留 512 MB" }
+                require(required >= 0 && directory.usableSpace > required + RESERVE) { "空间不足，需容纳全部录音并另留 512 MB" }
                 while (true) {
                     ensureActive()
                     val entry = zip.nextEntry ?: break
@@ -159,14 +159,14 @@ internal class MemoryBackup(private val context: Context, private val database: 
                         while (true) {
                             ensureActive(); val n = zip.read(buffer); if (n < 0) break
                             count += n
-                            require(count <= row.getLong("backupBytes") && directory.usableSpace > RESERVE) { "原音大小不符或剩余空间不足" }
+                            require(count <= row.getLong("backupBytes") && directory.usableSpace > RESERVE) { "录音大小不符或剩余空间不足" }
                             digest.update(buffer, 0, n); output.write(buffer, 0, n)
                         }
                         output.fd.sync()
                     }
-                    require(count == row.getLong("backupBytes") && hex(digest.digest()) == row.getString("backupSha256")) { "备份原音校验失败，未导入任何记录" }
+                    require(count == row.getLong("backupBytes") && hex(digest.digest()) == row.getString("backupSha256")) { "备份录音校验失败，未导入任何记录" }
                 }
-                require(expected.isEmpty()) { "备份缺少原音文件，未导入任何记录" }
+                require(expected.isEmpty()) { "备份缺少录音文件，未导入任何记录" }
                 ensureActive()
                 withContext(NonCancellable) { database.withTransaction {
                     requireEmpty(); requireIdle()
@@ -218,7 +218,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     }
                     sql.query("PRAGMA foreign_key_check").use { require(!it.moveToFirst()) { "备份关联数据不完整" } }
                 }; committed = true }
-                "已恢复 ${chunks.length()} 份原音记录及转写、标记、总结。模型和 API Key 不在备份内，请在设置重新下载或配置。"
+                "已恢复 ${chunks.length()} 份录音记录及转写、标记、总结。模型和 API Key 不在备份内，请在设置重新下载或配置。"
             }
         } finally {
             // Only this newly-created, validated staging directory is removed on failure.
