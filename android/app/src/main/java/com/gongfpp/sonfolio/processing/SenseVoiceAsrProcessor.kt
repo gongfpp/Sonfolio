@@ -37,7 +37,12 @@ class SenseVoiceAsrProcessor(
             modelConfig = OfflineModelConfig(
                 senseVoice = OfflineSenseVoiceModelConfig(
                     model = model.absolutePath,
-                    language = preferredLanguage.takeUnless { it == "auto" }.orEmpty(),
+                    // SenseVoice 只接受单一语言码；「中英文优先/自动」都交给模型自动判断。
+                    language = when (preferredLanguage) {
+                        "zh" -> "zh"
+                        "en" -> "en"
+                        else -> ""
+                    },
                     useInverseTextNormalization = true,
                 ),
                 tokens = tokens.absolutePath,
