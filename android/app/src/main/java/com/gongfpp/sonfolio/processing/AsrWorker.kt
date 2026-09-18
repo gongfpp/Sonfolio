@@ -94,6 +94,7 @@ class AsrWorker(
                                 modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else when (engine) {
                                     LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
                                     LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor.MODEL_VERSION
+                                    LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor.MODEL_VERSION
                                 },
                                 processingState = ChunkProcessing.ASR_READY,
                                 errorMessage = null,

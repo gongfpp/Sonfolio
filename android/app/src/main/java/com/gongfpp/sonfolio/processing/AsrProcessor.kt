@@ -14,7 +14,8 @@ enum class LocalAsrEngine(
     val supportsHotwords: Boolean,
 ) {
     SENSE_VOICE("sensevoice", "SenseVoice", false),
-    QWEN3_ASR("qwen3-asr", "Qwen3-ASR", true);
+    QWEN3_ASR("qwen3-asr", "Qwen3-ASR", true),
+    FIRE_RED_ASR_CTC("fire-red-asr-ctc", "FireRedASR2-CTC", false);
 
     companion object {
         val DEFAULT = SENSE_VOICE
@@ -36,4 +37,5 @@ internal fun createAsrProcessor(
 ): AsrProcessor = when (engine) {
     LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor(context, language)
     LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor(context, hotwords)
+    LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor(context)
 }

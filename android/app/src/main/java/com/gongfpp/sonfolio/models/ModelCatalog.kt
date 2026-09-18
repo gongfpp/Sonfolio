@@ -38,6 +38,11 @@ object ModelCatalog {
     )
     private fun qwen3(path: String) = sources("csukuangfj2/$QWEN3_PREFIX/resolve/$QWEN3_REVISION/$path")
 
+    // FireRedASR2 的 CTC 分支导出：单个 int8 模型，比 AED 小且非自回归解码更快。
+    private const val FIRE_RED_PREFIX = "sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25"
+    private const val FIRE_RED_REVISION = "423be1acfdc5d8aaa5a485fb6263fe4ea8570b06"
+    private fun fireRed(path: String) = sources("csukuangfj2/$FIRE_RED_PREFIX/resolve/$FIRE_RED_REVISION/$path")
+
     val senseVoice = ModelArtifact(
         id = "sensevoice",
         label = "SenseVoice Small（中英日韩粤 · 239 MB）",
@@ -83,6 +88,20 @@ object ModelCatalog {
         ),
     )
 
+    val fireRedAsrCtc = ModelArtifact(
+        id = "fire-red-asr-ctc",
+        label = "FireRedASR2-CTC（中英与方言 · 776 MB）",
+        kind = ModelKind.SPEECH,
+        files = listOf(
+            ModelFile("speech/fire-red-asr2-ctc/model.int8.onnx", 775861420,
+                "ca3dbabd82170110cc0b343c2890866d449984bc9cd92b9a18371ff80a81bb99",
+                fireRed("model.int8.onnx")),
+            ModelFile("speech/fire-red-asr2-ctc/tokens.txt", 79172,
+                "1bc613de2112d257e61a349c3e72d1b1a9cf19c33d3ca954197ad2171e5ea07b",
+                fireRed("tokens.txt")),
+        ),
+    )
+
     val summary = ModelArtifact(
         id = "qwen-summary",
         label = "手机总结模型（离线）",
@@ -95,7 +114,7 @@ object ModelCatalog {
     )
 
     /** 本地语音识别可选引擎，默认第一个；顺序即设置页展示顺序。 */
-    val speechModels = listOf(senseVoice, qwen3Asr)
+    val speechModels = listOf(senseVoice, qwen3Asr, fireRedAsrCtc)
     val all = speechModels + summary
 
     fun byId(id: String): ModelArtifact? = all.firstOrNull { it.id == id }
