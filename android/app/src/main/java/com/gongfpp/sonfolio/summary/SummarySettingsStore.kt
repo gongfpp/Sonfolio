@@ -72,15 +72,23 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
     }
 
     fun modelFile(config: SummaryConfig = read()): File? {
-        if (config.localFile == DOWNLOADED_MODEL) return com.gongfpp.sonfolio.models.ModelCatalog.file(context.filesDir, com.gongfpp.sonfolio.models.ModelCatalog.summary)
+        if (config.localFile.startsWith(CATALOG_PREFIX)) {
+            val model = com.gongfpp.sonfolio.models.ModelCatalog.summaryById(config.localFile.removePrefix(CATALOG_PREFIX)) ?: return null
+            return com.gongfpp.sonfolio.models.ModelCatalog.file(context.filesDir, model)
+        }
         return config.localFile.takeIf { it.matches(Regex("[a-f0-9-]+\\.gguf")) }?.let { File(context.filesDir, "summary-models/$it") }
     }
 
-    @Synchronized fun useDownloadedModel(activateRevision: String? = null) {
-        val model = com.gongfpp.sonfolio.models.ModelCatalog.summary
+    /** 当前选中的内置总结模型 id；为空表示用的是导入的 GGUF 或尚未选择。 */
+    fun selectedCatalogModelId(config: SummaryConfig = read()): String? =
+        config.localFile.removePrefix(CATALOG_PREFIX).takeIf { config.localFile.startsWith(CATALOG_PREFIX) }
+
+    /** 启用某个已下载的内置总结模型；modelId 默认当前模型。 */
+    @Synchronized fun useDownloadedModel(activateRevision: String? = null, modelId: String = com.gongfpp.sonfolio.models.ModelCatalog.summary.id) {
+        val model = com.gongfpp.sonfolio.models.ModelCatalog.summaryById(modelId) ?: error("未知的总结模型")
         val file = com.gongfpp.sonfolio.models.ModelCatalog.file(context.filesDir, model)
         require(file.isFile && file.length() == model.bytes) { "模型尚未下载完成" }
-        val edit = prefs.edit().putString("local-file", DOWNLOADED_MODEL).putString("local-label", model.label)
+        val edit = prefs.edit().putString("local-file", CATALOG_PREFIX + model.id).putString("local-label", model.label)
         val current = read()
         if (activateRevision != null && current.revision == activateRevision) {
             edit.putString("mode", "LOCAL").putBoolean("automatic", false).putString("revision", UUID.randomUUID().toString())
@@ -104,5 +112,5 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
-    companion object { private const val DOWNLOADED_MODEL = "catalog:qwen-summary" }
+    companion object { const val CATALOG_PREFIX = "catalog:" }
 }

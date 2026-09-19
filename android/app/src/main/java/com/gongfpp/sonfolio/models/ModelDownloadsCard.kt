@@ -62,12 +62,12 @@ import kotlinx.coroutines.withContext
             TextButton(onClick = { manager.cancelUniqueWork("download-model:${model.id}") }) { Text("取消下载") }
         } else if (installed == false) {
             OutlinedButton(onClick = { acceptedLicense = false; confirm = model }) { Text(if (model.kind == ModelKind.SUMMARY) "下载总结模型" else "下载语音识别模型") }
-        } else if (installed == true && model.kind == ModelKind.SUMMARY && summary.mode != com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) {
+        } else if (installed == true && model.kind == ModelKind.SUMMARY && app.summarySettings.selectedCatalogModelId(summary) != model.id) {
             OutlinedButton(onClick = {
-                runCatching { app.summarySettings.useDownloadedModel(summary.revision) }
+                runCatching { app.summarySettings.useDownloadedModel(summary.revision, model.id) }
                     .onSuccess { message = "已启用在手机上总结；自动总结默认关闭，可在下方设置" }
                     .onFailure { message = "启用失败，请重试" }
-            }) { Text("使用已下载的总结模型") }
+            }) { Text("使用这个总结模型") }
         }
         message?.let { Text(it, fontSize = 11.sp) }
     }

@@ -81,7 +81,14 @@ internal fun SummarySettingsCard() {
                 }
             }
             if (mode == SummaryMode.LOCAL) {
-                // 与「本地识别引擎」保持同一套层级：二级面板 + 模型行下钻。
+                val summaryModels = com.gongfpp.sonfolio.models.ModelCatalog.summaryModels
+                val context = LocalContext.current
+                var selectedSummaryId by rememberSaveable {
+                    mutableStateOf(app.summarySettings.selectedCatalogModelId(saved) ?: com.gongfpp.sonfolio.models.ModelCatalog.summary.id)
+                }
+                var summaryModelMenu by remember { mutableStateOf(false) }
+                val selectedSummary = summaryModels.firstOrNull { it.id == selectedSummaryId } ?: summaryModels.first()
+                // 与「本地识别引擎」保持同一套层级：二级面板 + 模型行下拉选择。
                 Surface(
                     Modifier.fillMaxWidth().padding(start = 12.dp),
                     RoundedCornerShape(12.dp),
@@ -92,10 +99,35 @@ internal fun SummarySettingsCard() {
                             Text("手机端总结设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                             com.gongfpp.sonfolio.HelpHint(
                                 title = "本地总结怎么用",
-                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。内置约 491 MB 的 Qwen2.5-0.5B-Instruct GGUF，下载后即可离线使用。",
+                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。可选内置模型：体积越小越快，较大的模型质量更好但更慢；下载后在这里切换即可。",
                             )
                         }
-                        com.gongfpp.sonfolio.models.ModelDownloadControl(com.gongfpp.sonfolio.models.ModelCatalog.summary)
+                        Box {
+                            OutlinedButton(onClick = { summaryModelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                                Text("总结模型：${selectedSummary.label} ▾")
+                            }
+                            DropdownMenu(summaryModelMenu, { summaryModelMenu = false }) {
+                                summaryModels.forEach { option ->
+                                    // 用只比大小的 available（不哈希大文件）；真正启用前仍会完整校验。
+                                    val installed = com.gongfpp.sonfolio.models.ModelCatalog.available(context.filesDir, option)
+                                    DropdownMenuItem(
+                                        text = { Text(option.label + if (installed) "" else "（未下载）") },
+                                        onClick = {
+                                            selectedSummaryId = option.id
+                                            summaryModelMenu = false
+                                            if (installed) {
+                                                runCatching { app.summarySettings.useDownloadedModel(saved.revision, option.id) }
+                                                    .onSuccess { message = "已切换总结模型：${option.label}" }
+                                                    .onFailure { message = "切换失败：${it.message}" }
+                                            } else {
+                                                message = "请先下载该模型"
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        com.gongfpp.sonfolio.models.ModelDownloadControl(selectedSummary)
                     }
                 }
             }

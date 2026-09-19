@@ -104,7 +104,7 @@ object ModelCatalog {
 
     val summary = ModelArtifact(
         id = "qwen-summary",
-        label = "手机总结模型（离线）",
+        label = "Qwen2.5-0.5B（离线总结 · 491 MB）",
         kind = ModelKind.SUMMARY,
         files = listOf(
             ModelFile("summary/qwen2.5-0.5b-instruct-q4_k_m.gguf", 491400032,
@@ -113,11 +113,26 @@ object ModelCatalog {
         ),
     )
 
+    /** Qwen3-0.6B：更新一代、中文更好，体积更小；官方仓只发 Q8，这里用 unsloth 的 Q4_K_M。 */
+    val summaryQwen3 = ModelArtifact(
+        id = "qwen3-summary",
+        label = "Qwen3-0.6B（离线总结 · 397 MB）",
+        kind = ModelKind.SUMMARY,
+        files = listOf(
+            ModelFile("summary/Qwen3-0.6B-Q4_K_M.gguf", 396705472,
+                "ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a",
+                sources("unsloth/Qwen3-0.6B-GGUF/resolve/50968a4468ef4233ed78cd7c3de230dd1d61a56b/Qwen3-0.6B-Q4_K_M.gguf")),
+        ),
+    )
+
     /** 本地语音识别可选引擎，默认第一个；顺序即设置页展示顺序。 */
     val speechModels = listOf(senseVoice, qwen3Asr, fireRedAsrCtc)
-    val all = speechModels + summary
+    /** 可选的本地总结模型，设置页用下拉选择；summary 是默认（体积最小最快）。 */
+    val summaryModels = listOf(summary, summaryQwen3)
+    val all = speechModels + summaryModels
 
     fun byId(id: String): ModelArtifact? = all.firstOrNull { it.id == id }
+    fun summaryById(id: String): ModelArtifact? = summaryModels.firstOrNull { it.id == id }
 
     fun file(filesDir: File, file: ModelFile) = File(filesDir, "models/${file.relativePath}")
 
