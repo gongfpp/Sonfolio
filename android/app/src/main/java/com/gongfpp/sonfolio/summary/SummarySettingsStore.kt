@@ -63,6 +63,14 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
         }.getOrElse { error("无法读取 API Key，请在设置中重新填写") }
     }
 
+    /** OpenCode Go 路由所需的稳定会话标识；同一安装保持不变。 */
+    @Synchronized internal fun sessionId(): String {
+        prefs.getString("session-id", null)?.let { return it }
+        val id = UUID.randomUUID().toString()
+        prefs.edit().putString("session-id", id).apply()
+        return id
+    }
+
     @Synchronized internal fun keyForModelList(endpoint: String, draft: String): String {
         if (draft.isNotBlank()) return draft.trim()
         val current = read()

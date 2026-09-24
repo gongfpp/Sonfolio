@@ -39,7 +39,7 @@ internal class RemoteSummaryTransport(
                 when (SummaryProvider.fromEndpoint(endpoint)) {
                     SummaryProvider.DEEPSEEK -> request.put("thinking", JSONObject().put("type", "disabled"))
                     SummaryProvider.QWEN -> request.put("enable_thinking", false)
-                    SummaryProvider.CUSTOM -> Unit
+                    SummaryProvider.OPENCODE_GO, SummaryProvider.CUSTOM -> Unit
                 }
                 val conn = open(endpoint).also { connection.set(it) }
                 conn.instanceFollowRedirects = false
@@ -47,6 +47,11 @@ internal class RemoteSummaryTransport(
                 conn.requestMethod = "POST"; conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 conn.setRequestProperty("Authorization", "Bearer $secret")
+                // OpenCode Go 要求请求带稳定会话标识，否则返回 400 MissingSessionID。
+                if (SummaryProvider.fromEndpoint(endpoint) == SummaryProvider.OPENCODE_GO) {
+                    conn.setRequestProperty("x-opencode-session", store.sessionId())
+                    conn.setRequestProperty("User-Agent", "sonfolio-android/1.0")
+                }
                 verifyTransport(continuation.isActive && store.read().revision == config.revision) { "总结配置已改变，任务已取消" }
                 conn.outputStream.use { it.write(request.toString().toByteArray(Charsets.UTF_8)) }
                 verifyTransport(conn.responseCode in 200..299) {
@@ -104,8 +109,12 @@ class LocalSummaryService : Service() {
             val reply = Message.obtain(null, 1)
             reply.data = try {
                 val model = File(requireNotNull(request.data.getString("model"))).canonicalFile
-                val catalogModel = com.gongfpp.sonfolio.models.ModelCatalog.file(filesDir, com.gongfpp.sonfolio.models.ModelCatalog.summary).canonicalFile
-                require((model.parentFile == File(filesDir, "summary-models").canonicalFile || model == catalogModel) && model.extension == "gguf" && model.isFile)
+                // 只接受导入目录或内置总结模型目录下的 GGUF，避免任意路径传入 native。
+                val allowedDirs = listOf(
+                    File(filesDir, "summary-models").canonicalFile,
+                    File(filesDir, "models/summary").canonicalFile,
+                )
+                require(model.parentFile in allowedDirs && model.extension == "gguf" && model.isFile)
                 val system = requireNotNull(request.data.getString("system"))
                 val user = requireNotNull(request.data.getString("user"))
                 require(system.length + user.length <= 24_000)

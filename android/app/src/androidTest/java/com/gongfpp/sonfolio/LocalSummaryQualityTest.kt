@@ -14,17 +14,24 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /**
- * 固定质量集 + 当前已安装的本地 GGUF 模型，输出可对比的评测报告。
- * 模型不存在时跳过；换模型后重跑一次即可得到 0.5B 与新模型的对照数据。
+ * 固定质量集 + 指定已安装的本地 GGUF 模型，输出可对比的评测报告。
+ * 默认第一个内置总结模型；用 `-e summaryModelId <id>` 换模型重跑即可得到对照数据。
+ * 模型不存在时跳过，不在测试中自动下载。
  */
 class LocalSummaryQualityTest {
     @Test fun qualityReportForInstalledModel() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val file = ModelCatalog.file(context.filesDir, ModelCatalog.summary)
+        val modelId = InstrumentationRegistry.getArguments().getString("summaryModelId")
+            ?: ModelCatalog.summaryModels.first().id
+        val artifact = ModelCatalog.summaryById(modelId) ?: ModelCatalog.summaryModels.first()
+        val file = ModelCatalog.file(context.filesDir, artifact)
         assumeTrue("需提前下载验收模型，不在测试中自动下载", file.isFile)
         // 质量集随测试 APK 打包，必须从 instrumentation 上下文读取。
         val assets = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.assets
-        val cases = loadQualitySet(assets.open("summary-quality-set.json").readBytes().decodeToString())
+        val allCases = loadQualitySet(assets.open("summary-quality-set.json").readBytes().decodeToString())
+        // 慢设备上可只跑前若干条做快速对照：-e caseLimit 6
+        val caseLimit = InstrumentationRegistry.getArguments().getString("caseLimit")?.toIntOrNull() ?: allCases.size
+        val cases = allCases.take(caseLimit.coerceAtLeast(1))
         var parsed = 0
         val outputs = mutableMapOf<String, String>()
         LocalSummaryTransport(context).withSession(file) { send ->
@@ -41,7 +48,7 @@ class LocalSummaryQualityTest {
         val totalPhrases = cases.sumOf { it.expectKeyPhrases.size }
         val factHits = cases.sumOf { case -> case.expectKeyPhrases.count { phrase -> phrase in (outputs[case.id] ?: "") } }
         val violations = cases.sumOf { case -> case.forbidden.count { phrase -> phrase in (outputs[case.id] ?: "") } }
-        println("本地模型质量报告：$parsed/${cases.size} 段输出可解析；事实命中 $factHits/$totalPhrases；禁止内容出现 $violations 次")
+        println("本地模型质量报告（${artifact.id}）：$parsed/${cases.size} 段输出可解析；事实命中 $factHits/$totalPhrases；禁止内容出现 $violations 次")
         cases.forEach { case ->
             println("  ${case.id} 输出：${outputs[case.id]?.take(160)?.replace('\n', ' ')}")
         }

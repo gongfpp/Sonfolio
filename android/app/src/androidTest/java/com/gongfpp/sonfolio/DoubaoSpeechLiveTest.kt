@@ -35,7 +35,7 @@ class DoubaoSpeechLiveTest {
         val file = File(wavPath)
         require(file.isFile && file.length() > 44L) { "WAV 素材不存在或为空：$wavPath" }
         val durationMillis = (file.length() - 44L) / 2L / 16L
-        require(durationMillis in 1..30_000) { "素材时长需在 1–30 秒，当前 ${durationMillis}ms" }
+        require(durationMillis >= 1_000) { "素材时长至少 1 秒，当前 ${durationMillis}ms" }
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val name = "qa-doubao-live"
@@ -45,11 +45,21 @@ class DoubaoSpeechLiveTest {
                 token, true, appId = appId)
             val config = store.read()
             store.authorizeChunk("live", config.revision)
+            val transport = RemoteSpeechTransport(store)
+            // 与生产一致：把音频切成 ≤30 秒窗口逐个上传。
             val startedAt = System.currentTimeMillis()
-            val text = RemoteSpeechTransport(store).transcribeWindow(
-                file, DetectedSpeechWindow(0, durationMillis), config, "live", startedAt, "zh",
-            )
+            val pieces = mutableListOf<String>()
+            var start = 0L
+            while (start < durationMillis) {
+                val end = minOf(start + 30_000L, durationMillis)
+                pieces += transport.transcribeWindow(
+                    file, DetectedSpeechWindow(start, end), config, "live", startedAt, "zh",
+                )
+                start = end
+            }
+            val text = pieces.joinToString("")
             println("DOUBAO_LIVE_MS=${System.currentTimeMillis() - startedAt}")
+            println("DOUBAO_LIVE_WINDOWS=${pieces.size}")
             println("DOUBAO_LIVE_TEXT=$text")
             assertTrue("豆包未返回文字", text.isNotBlank())
         } finally {

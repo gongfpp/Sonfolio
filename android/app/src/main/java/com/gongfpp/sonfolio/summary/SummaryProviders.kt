@@ -10,6 +10,7 @@ import org.json.JSONObject
 internal enum class SummaryProvider(val label: String, val endpoint: String, val defaults: List<String>, val help: String) {
     DEEPSEEK("DeepSeek", "https://api.deepseek.com/chat/completions", listOf("deepseek-v4-flash", "deepseek-v4-pro"), "https://platform.deepseek.com/api_keys"),
     QWEN("通义千问 · 中国内地", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", listOf("qwen-plus", "qwen3-max"), "https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
+    OPENCODE_GO("OpenCode Go", "https://opencode.ai/zen/go/v1/chat/completions", listOf("deepseek-v4.1-flash", "glm-5.3-flash"), "https://opencode.ai/auth"),
     CUSTOM("自定义 · 高级", "", emptyList(), "");
 
     companion object {
@@ -26,8 +27,11 @@ internal object SummaryModelDirectory {
         val result = linkedSetOf<String>()
         for (page in 1..20) {
             ensureActive()
-            val address = if (provider == SummaryProvider.DEEPSEEK) "https://api.deepseek.com/models"
-                else "https://dashscope.aliyuncs.com/api/v1/models?capabilities=TG&providers=qwen&page_no=$page&page_size=100"
+            val address = when (provider) {
+                SummaryProvider.DEEPSEEK -> "https://api.deepseek.com/models"
+                SummaryProvider.OPENCODE_GO -> "https://opencode.ai/zen/go/v1/models"
+                else -> "https://dashscope.aliyuncs.com/api/v1/models?capabilities=TG&providers=qwen&page_no=$page&page_size=100"
+            }
             val conn = URL(address).openConnection() as HttpsURLConnection
             try {
                 conn.instanceFollowRedirects = false
