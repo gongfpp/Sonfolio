@@ -99,7 +99,7 @@ internal fun SummarySettingsCard() {
                             Text("手机端总结设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                             com.gongfpp.sonfolio.HelpHint(
                                 title = "本地总结怎么用",
-                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。可选内置模型：体积越小越快，较大的模型质量更好但更慢；下载后在这里切换即可。",
+                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。当前内置 Qwen2.5-0.5B（约 491 MB）；下载后即可启用，未下载时可用基础整理或在线总结。",
                             )
                         }
                         Box {
