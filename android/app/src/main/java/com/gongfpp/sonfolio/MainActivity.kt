@@ -1471,6 +1471,21 @@ private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBac
                     }
                 }
             }) { Text("重新纠错本日") }
+            TextButton(onClick = {
+                val app = context.applicationContext as SonfolioApplication
+                if (app.summarySettings.read().mode == com.gongfpp.sonfolio.summary.SummaryMode.BASIC) {
+                    Toast.makeText(context, "请先在设置里选择「在手机上总结」或「在线总结」", Toast.LENGTH_LONG).show()
+                } else {
+                    scope.launch {
+                        val result = runCatching { withContext(Dispatchers.IO) { app.summaryCoordinator.enqueue("day:$localDate") } }
+                        Toast.makeText(
+                            context,
+                            if (result.isSuccess) "已把本日加入 AI 总结队列" else (result.exceptionOrNull()?.message ?: "无法加入总结队列"),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }) { Text("重新总结本日") }
         }
     }
 }

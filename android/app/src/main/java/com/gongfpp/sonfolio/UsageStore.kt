@@ -47,17 +47,4 @@ class UsageStore(context: Context, name: String = "usage-stats") {
         }.sortedByDescending { it.calls }
         return Snapshot(month(), asr, llm)
     }
-
-    /** 预估费用（元）。单价是粗估值，实际以各服务商账单为准。 */
-    fun estimatedCost(snapshot: Snapshot): Double {
-        val asr = snapshot.asr.sumOf { row -> row.seconds / 3600.0 * (ASR_CNY_PER_HOUR[row.provider] ?: 0.0) }
-        val llm = snapshot.llm.sumOf { row -> row.tokens / 1_000_000.0 * LLM_CNY_PER_MILLION_TOKENS }
-        return asr + llm
-    }
-
-    companion object {
-        /** 仅用于提醒的粗估单价；豆包按音频小时、LLM 按百万 Token。 */
-        val ASR_CNY_PER_HOUR = mapOf("DOUBAO" to 1.2)
-        const val LLM_CNY_PER_MILLION_TOKENS = 2.0
-    }
 }

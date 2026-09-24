@@ -18,16 +18,15 @@ import java.util.Locale
 internal fun UsageCard() {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     var snapshot by remember { mutableStateOf(app.usageStore.snapshot()) }
-    val cost = app.usageStore.estimatedCost(snapshot)
     Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("本月在线用量", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
                 HelpHint(
-                    title = "在线用量与费用说明",
+                    title = "在线用量说明",
                     body = "只统计本机发出的在线识别、总结与纠错调用，按月归零，不记录任何音频或文字内容。\n\n" +
-                        "预估费用按内置粗估单价计算（豆包识别按音频小时、在线总结按 Token），可能与实际账单不同，请以各服务商控制台为准。\n\n" +
-                        "OpenCode Go 这类订阅制服务不按次计费，Token 只作参考。历史录音不会自动上传。",
+                        "识别按音频时长、总结/纠错按模型返回的 Token 数统计；单价与账单以各服务商控制台为准，这里不做费用估算。\n\n" +
+                        "OpenCode Go 这类订阅制服务按模型分别计算额度，不按次计费。历史录音不会自动上传。",
                 )
                 TextButton(onClick = { snapshot = app.usageStore.snapshot() }) { Text("刷新", fontSize = 12.sp) }
             }
@@ -47,10 +46,6 @@ internal fun UsageCard() {
                         Text("${row.model}：${row.calls} 次 · ${row.tokens} tokens", fontSize = 12.sp)
                     }
                 }
-                Text(
-                    "预估费用：约 ¥${String.format(Locale.US, "%.2f", cost)}（粗估，以官方账单为准）",
-                    fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
-                )
             }
         }
     }

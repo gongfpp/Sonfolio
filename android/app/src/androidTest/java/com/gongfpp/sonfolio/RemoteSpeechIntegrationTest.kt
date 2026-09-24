@@ -114,6 +114,43 @@ class RemoteSpeechIntegrationTest {
         }
     }
 
+    @Test fun doubaoLongAudioMapsUtterancesBackToOriginalTimeline() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "qa-doubao-long-${System.nanoTime()}"
+        val store = TranscriptionSettingsStore(context, name)
+        val file = File(context.cacheDir, "$name.wav")
+        try {
+            file.writeBytes(RemoteSpeechTransport.wav(FloatArray(16_000 * 3)))
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true, appId = "1000000001")
+            val config = store.read()
+            store.authorizeChunk("chunk", config.revision)
+            val submit = FakeConnection(URL(config.provider.endpoint), 200, "{}", mapOf("X-Api-Status-Code" to "20000000"))
+            // 拼接后：窗口A 0–1000ms、间隔 200ms、窗口B 1200–2200ms（原 2000–3000ms）。
+            val queryBody = "{\"result\":{\"text\":\"第一句第二句\",\"utterances\":[" +
+                "{\"start_time\":0,\"end_time\":1000,\"text\":\"第一句\"}," +
+                "{\"start_time\":1300,\"end_time\":2000,\"text\":\"第二句\"}]}}"
+            val query = FakeConnection(URL(config.provider.queryEndpoint!!), 200, queryBody, mapOf("X-Api-Status-Code" to "20000000"))
+            val connections = ArrayDeque(listOf(submit, query))
+            val transport = RemoteSpeechTransport(store) { connections.removeFirst() }
+            val utterances = transport.transcribeLong(
+                file,
+                listOf(DetectedSpeechWindow(0, 1_000), DetectedSpeechWindow(2_000, 3_000)),
+                config, "chunk", 0,
+            )
+            assertEquals(2, utterances.size)
+            assertEquals("第一句", utterances[0].text)
+            assertEquals(0L, utterances[0].startMillis)
+            assertEquals(1_000L, utterances[0].endMillis)
+            // 第二句在拼接后的 1300ms 落在窗口B（原 2000ms 起），映射回 2100–2800ms。
+            assertEquals("第二句", utterances[1].text)
+            assertEquals(2_100L, utterances[1].startMillis)
+            assertEquals(2_800L, utterances[1].endMillis)
+        } finally {
+            store.clearKey(); context.deleteSharedPreferences(name); file.delete()
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("sonfolio-$name") }
+        }
+    }
+
     @Test fun multipartAndResponseErrorsDoNotExposeServerPayloads() {
         val config = TranscriptionConfig(provider = SpeechProvider.SILICONFLOW, model = "FunAudioLLM/SenseVoiceSmall")
         val request = RemoteSpeechTransport.request(config, RemoteSpeechTransport.wav(floatArrayOf(0f, .5f, -.5f)), "zh")

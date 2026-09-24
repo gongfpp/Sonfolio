@@ -34,9 +34,9 @@ internal class RemoteSpeechTransport(
         val wav = wav(samples)
         // 豆包录音文件识别走异步 submit/query，两次请求共用同一个 X-Api-Request-Id。
         if (config.provider == SpeechProvider.DOUBAO) {
-            val text = transcribeDoubao(config, wav, chunkId, startedAt)
+            val result = doubaoRecognize(config, wav, chunkId, startedAt)
             usage?.recordAsr(config.provider.name, window.durationMillis / 1_000)
-            return@withContext text
+            return@withContext doubaoResultText(result)
         }
         val key = store.apiKey(config, chunkId, startedAt)
         val request = request(config, wav, language)
@@ -87,8 +87,9 @@ internal class RemoteSpeechTransport(
     /**
      * 豆包录音文件识别：先 submit 提交音频，再轮询 query 直到出结果；两次请求共用同一个
      * X-Api-Request-Id。单个窗口失败由调用方按窗口重试，不会重复提交已成功的窗口。
+     * 返回完整的 result 对象（含 text 与 utterances 分句）。
      */
-    private suspend fun transcribeDoubao(config: TranscriptionConfig, wav: ByteArray, chunkId: String, startedAt: Long): String {
+    private suspend fun doubaoRecognize(config: TranscriptionConfig, wav: ByteArray, chunkId: String, startedAt: Long): JSONObject {
         val appId = store.appId(config, chunkId, startedAt)
         val token = store.apiKey(config, chunkId, startedAt)
         val headers = mapOf(
@@ -101,11 +102,20 @@ internal class RemoteSpeechTransport(
         val body = JSONObject()
             .put("user", JSONObject().put("uid", appId))
             .put("audio", JSONObject().put("format", "wav").put("data", Base64.encodeToString(wav, Base64.NO_WRAP)))
-            .put("request", JSONObject().put("model_name", "bigmodel").put("enable_itn", true).put("enable_punc", true))
+            .put("request", JSONObject().put("model_name", "bigmodel").put("enable_itn", true).put("enable_punc", true)
+                .put("show_utterances", true))
             .toString().toByteArray(Charsets.UTF_8)
         val submitted = post(config, config.provider.endpoint, "application/json; charset=utf-8", headers, body)
         check(submitted.status in 200..299 && submitted.apiCode == "20000000") { doubaoError(submitted) }
-        return pollDoubao(config, config.provider.queryEndpoint!!, headers, chunkId, startedAt)
+        // 轮询超时按音频时长放大：长音频处理更久，6 分钟素材留 7 分钟余量。
+        val audioMillis = ((wav.size - 44).coerceAtLeast(0) / 2L / 16L)
+        return pollDoubao(config, config.provider.queryEndpoint!!, headers, chunkId, startedAt, 60_000L + audioMillis)
+    }
+
+    private fun doubaoResultText(result: JSONObject): String {
+        val text = result.optString("text", "")
+        require(text.length <= 20_000) { "识别文字超过单片段限制" }
+        return text.trim()
     }
 
     /**
@@ -115,7 +125,7 @@ internal class RemoteSpeechTransport(
     suspend fun test(config: TranscriptionConfig, chunkId: String, startedAt: Long): String = withContext(Dispatchers.IO) {
         val wav = wav(FloatArray(16_000))
         if (config.provider == SpeechProvider.DOUBAO) {
-            transcribeDoubao(config, wav, chunkId, startedAt)
+            doubaoRecognize(config, wav, chunkId, startedAt)
             usage?.recordAsr(config.provider.name, 1)
             "连通成功：豆包识别服务已响应（静音样例，未上传真实录音）"
         } else {
@@ -133,16 +143,16 @@ internal class RemoteSpeechTransport(
     }
 
     private suspend fun pollDoubao(config: TranscriptionConfig, url: String, headers: Map<String, String>,
-        chunkId: String, startedAt: Long): String {
-        val deadline = System.currentTimeMillis() + 60_000
+        chunkId: String, startedAt: Long, timeoutMillis: Long): JSONObject {
+        val deadline = System.currentTimeMillis() + timeoutMillis
         while (true) {
             currentCoroutineContext().ensureActive()
             check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
             val result = post(config, url, "application/json; charset=utf-8", headers, "{}".toByteArray(Charsets.UTF_8))
             check(result.status in 200..299) { doubaoError(result) }
             when (result.apiCode) {
-                "20000000" -> return parseDoubao(result.body)
-                "20000003" -> return ""
+                "20000000" -> return runCatching { JSONObject(result.body).optJSONObject("result") }.getOrNull() ?: JSONObject()
+                "20000003" -> return JSONObject()
                 "20000001", "20000002" -> {
                     check(System.currentTimeMillis() < deadline) { "识别等待超时，录音已保留；重试可能再次计费" }
                     delay(700)
@@ -187,6 +197,65 @@ internal class RemoteSpeechTransport(
             finally { guard.cancel(); connection.disconnect() }
         }
 
+    data class RecognizedUtterance(val text: String, val startMillis: Long, val endMillis: Long)
+
+    /**
+     * 云端长音频：把人声窗口去掉静音后拼接成一段（窗口之间补 200ms 静音），整段 submit，
+     * 再用返回的分句时间戳映射回原始录音时间轴。单次最多 5 分钟人声，超出则分批上传。
+     */
+    suspend fun transcribeLong(file: File, windows: List<DetectedSpeechWindow>, config: TranscriptionConfig,
+        chunkId: String, startedAt: Long): List<RecognizedUtterance> = withContext(Dispatchers.IO) {
+        require(config.provider == SpeechProvider.DOUBAO) { "只有豆包支持长音频整段识别" }
+        require(windows.isNotEmpty())
+        val gapSamples = 16_000 * 200 / 1_000
+        val maxSamples = 16_000 * 300
+        val pieces = windows.map { w -> w to WavPcmReader.readWindow(file, 16_000, w.startOffsetMillis, w.endOffsetMillis) }
+        val batches = mutableListOf<MutableList<Pair<DetectedSpeechWindow, FloatArray>>>()
+        var current = mutableListOf<Pair<DetectedSpeechWindow, FloatArray>>()
+        var count = 0
+        for (piece in pieces) {
+            if (current.isNotEmpty() && count + gapSamples + piece.second.size > maxSamples) {
+                batches += current; current = mutableListOf(); count = 0
+            }
+            if (current.isNotEmpty()) count += gapSamples
+            current += piece; count += piece.second.size
+        }
+        if (current.isNotEmpty()) batches += current
+        val out = mutableListOf<RecognizedUtterance>()
+        for (batch in batches) {
+            ensureActive()
+            val totalSamples = batch.sumOf { it.second.size } + gapSamples * (batch.size - 1)
+            val concat = FloatArray(totalSamples)
+            val anchors = mutableListOf<LongArray>() // [concatStartMs, originalStart, originalEnd]
+            var cursor = 0
+            batch.forEachIndexed { index, (window, samples) ->
+                if (index > 0) cursor += gapSamples
+                anchors += longArrayOf(cursor * 1_000L / 16_000, window.startOffsetMillis, window.endOffsetMillis)
+                samples.copyInto(concat, cursor); cursor += samples.size
+            }
+            val result = doubaoRecognize(config, wavLong(concat), chunkId, startedAt)
+            usage?.recordAsr(config.provider.name, totalSamples / 16_000L)
+            val utterances = result.optJSONArray("utterances")
+            if (utterances == null) {
+                val text = result.optString("text", "").trim()
+                if (text.isNotEmpty()) out += RecognizedUtterance(text, batch.first().first.startOffsetMillis, batch.last().first.endOffsetMillis)
+                continue
+            }
+            for (i in 0 until utterances.length()) {
+                val utterance = utterances.optJSONObject(i) ?: continue
+                val text = utterance.optString("text", "").trim()
+                if (text.isEmpty()) continue
+                val concatStart = utterance.optLong("start_time", 0L)
+                val concatEnd = utterance.optLong("end_time", concatStart)
+                val anchor = anchors.lastOrNull { it[0] <= concatStart } ?: anchors.first()
+                val start = (anchor[1] + (concatStart - anchor[0]).coerceAtLeast(0)).coerceIn(anchor[1], anchor[2])
+                val end = (anchor[1] + (concatEnd - anchor[0]).coerceAtLeast(0)).coerceIn(start, anchor[2])
+                out += RecognizedUtterance(text, start, end)
+            }
+        }
+        out.sortedBy { it.startMillis }
+    }
+
     private fun doubaoError(result: HttpResult): String = when {
         result.status == 401 || result.status == 403 || result.apiCode == "45000030" ->
             "识别密钥无效、APP ID 不匹配或账号未开通该识别资源，请检查转文字设置"
@@ -199,13 +268,22 @@ internal class RemoteSpeechTransport(
     companion object {
         internal fun wav(samples: FloatArray): ByteArray {
             require(samples.size <= 16_000 * 30)
-            return ByteBuffer.allocate(44 + samples.size * 2).order(ByteOrder.LITTLE_ENDIAN).apply {
+            return buildWav(samples)
+        }
+
+        /** 长音频 WAV（≤5 分钟人声），仅用于云端整段上传。 */
+        internal fun wavLong(samples: FloatArray): ByteArray {
+            require(samples.size <= 16_000 * 300)
+            return buildWav(samples)
+        }
+
+        private fun buildWav(samples: FloatArray): ByteArray =
+            ByteBuffer.allocate(44 + samples.size * 2).order(ByteOrder.LITTLE_ENDIAN).apply {
                 put("RIFF".toByteArray()); putInt(36 + samples.size * 2); put("WAVEfmt ".toByteArray())
                 putInt(16); putShort(1); putShort(1); putInt(16_000); putInt(32_000); putShort(2); putShort(16)
                 put("data".toByteArray()); putInt(samples.size * 2)
                 samples.forEach { putShort((it * 32768).toInt().coerceIn(-32768, 32767).toShort()) }
             }.array()
-        }
 
         internal fun request(config: TranscriptionConfig, wav: ByteArray, language: String): Pair<String, ByteArray> {
             require(config.model in config.provider.models)

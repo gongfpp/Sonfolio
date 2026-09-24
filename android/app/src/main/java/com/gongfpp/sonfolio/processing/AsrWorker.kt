@@ -59,51 +59,84 @@ class AsrWorker(
             val windows = segments.map {
                 DetectedSpeechWindow(it.startOffsetMillis, it.endOffsetMillis)
             }
-            val texts = when {
-                segments.isEmpty() -> emptyList()
-                config.mode == TranscriptionMode.REMOTE -> remoteTranscribe(
-                    app, dao, file, segments, config, chunk.id, chunk.startedAtMillis, language,
-                )
-                else -> {
-                    // 只有支持热词的引擎才读取个人词汇，避免每次本地转写都查库。
-                    val hotwords = if (engine.supportsHotwords) app.vocabularyRepository.hotwords() else ""
-                    val localTexts = InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords)
-                    // 不能静默丢文字：整段为空时明确报错并保留录音，让用户改用 SenseVoice 重试。
-                    if (engine == LocalAsrEngine.QWEN3_ASR && windows.isNotEmpty() && localTexts.all { it.isBlank() }) {
-                        error("Qwen3-ASR 本次没有返回文字（可能是纯音乐/噪声或模型异常）；录音已保留，可在设置改用 SenseVoice 后重试")
-                    }
-                    localTexts
-                }
-            }
-            check(segments.size == texts.size) { "转写片段数量不完整，录音保留，请重试" }
-            check(app.transcriptionSettings.read().revision == config.revision) { "转文字设置已改变，请继续处理以使用新设置" }
-            app.database.withTransaction {
-                dao.deleteTranscriptsForChunk(chunkId)
-                segments.zip(texts).forEach { (segment, text) ->
-                    if (text.isNotBlank()) {
+            if (config.mode == TranscriptionMode.REMOTE && config.provider == SpeechProvider.DOUBAO && segments.isNotEmpty()) {
+                // 云端长音频：去掉静音后整段上传，保留豆包返回的分句与时间戳。
+                val utterances = RemoteSpeechTransport(app.transcriptionSettings, app.usageStore)
+                    .transcribeLong(file, windows, config, chunk.id, chunk.startedAtMillis)
+                check(app.transcriptionSettings.read().revision == config.revision) { "转文字设置已改变，请继续处理以使用新设置" }
+                app.database.withTransaction {
+                    dao.deleteTranscriptsForChunk(chunkId)
+                    utterances.forEachIndexed { index, utterance ->
+                        if (utterance.text.isBlank()) return@forEachIndexed
+                        val segment = segments.firstOrNull { it.startOffsetMillis <= utterance.startMillis && it.endOffsetMillis >= utterance.startMillis }
+                            ?: segments.minByOrNull { kotlin.math.abs(it.startOffsetMillis - utterance.startMillis) }
+                            ?: return@forEachIndexed
                         dao.insertTranscript(
                             TranscriptEntity(
-                                id = "transcript-${segment.id}",
+                                id = "transcript-${chunk.id}-u$index",
                                 speechSegmentId = segment.id,
                                 conversationId = null,
-                                startedAtMillis = chunk.startedAtMillis + segment.startOffsetMillis,
-                                endedAtMillis = chunk.startedAtMillis + segment.endOffsetMillis,
-                                text = text,
-                                languageTag = remoteLanguageTag(config, language),
-                                modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else engine.displayName,
-                                modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else when (engine) {
-                                    LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
-                                    LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor.MODEL_VERSION
-                                    LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor.MODEL_VERSION
-                                },
+                                startedAtMillis = chunk.startedAtMillis + utterance.startMillis,
+                                endedAtMillis = chunk.startedAtMillis + utterance.endMillis,
+                                text = utterance.text,
+                                languageTag = "auto",
+                                modelName = config.model,
+                                modelVersion = "remote:${config.provider.name}:long-v1",
                                 processingState = ChunkProcessing.ASR_READY,
                                 errorMessage = null,
                             ),
                         )
                     }
-                    dao.updateSpeechSegmentState(segment.id, ChunkProcessing.ASR_READY)
+                    segments.forEach { dao.updateSpeechSegmentState(it.id, ChunkProcessing.ASR_READY) }
+                    dao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待第 4 步整理对话")
                 }
-                dao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待第 4 步整理对话")
+            } else {
+                val texts = when {
+                    segments.isEmpty() -> emptyList()
+                    config.mode == TranscriptionMode.REMOTE -> remoteTranscribe(
+                        app, dao, file, segments, config, chunk.id, chunk.startedAtMillis, language,
+                    )
+                    else -> {
+                        // 只有支持热词的引擎才读取个人词汇，避免每次本地转写都查库。
+                        val hotwords = if (engine.supportsHotwords) app.vocabularyRepository.hotwords() else ""
+                        val localTexts = InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords)
+                        // 不能静默丢文字：整段为空时明确报错并保留录音，让用户改用 SenseVoice 重试。
+                        if (engine == LocalAsrEngine.QWEN3_ASR && windows.isNotEmpty() && localTexts.all { it.isBlank() }) {
+                            error("Qwen3-ASR 本次没有返回文字（可能是纯音乐/噪声或模型异常）；录音已保留，可在设置改用 SenseVoice 后重试")
+                        }
+                        localTexts
+                    }
+                }
+                check(segments.size == texts.size) { "转写片段数量不完整，录音保留，请重试" }
+                check(app.transcriptionSettings.read().revision == config.revision) { "转文字设置已改变，请继续处理以使用新设置" }
+                app.database.withTransaction {
+                    dao.deleteTranscriptsForChunk(chunkId)
+                    segments.zip(texts).forEach { (segment, text) ->
+                        if (text.isNotBlank()) {
+                            dao.insertTranscript(
+                                TranscriptEntity(
+                                    id = "transcript-${segment.id}",
+                                    speechSegmentId = segment.id,
+                                    conversationId = null,
+                                    startedAtMillis = chunk.startedAtMillis + segment.startOffsetMillis,
+                                    endedAtMillis = chunk.startedAtMillis + segment.endOffsetMillis,
+                                    text = text,
+                                    languageTag = remoteLanguageTag(config, language),
+                                    modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else engine.displayName,
+                                    modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else when (engine) {
+                                        LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
+                                        LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor.MODEL_VERSION
+                                        LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor.MODEL_VERSION
+                                    },
+                                    processingState = ChunkProcessing.ASR_READY,
+                                    errorMessage = null,
+                                ),
+                            )
+                        }
+                        dao.updateSpeechSegmentState(segment.id, ChunkProcessing.ASR_READY)
+                    }
+                    dao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待第 4 步整理对话")
+                }
             }
             // Scheduling errors leave persisted text pending; opening the app can re-enqueue it.
             runCatching { AssemblyWorker.enqueue(applicationContext, chunkId) }
