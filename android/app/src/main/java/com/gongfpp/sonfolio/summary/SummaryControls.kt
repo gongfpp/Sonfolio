@@ -10,9 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -20,6 +22,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gongfpp.sonfolio.HelpHint
 import com.gongfpp.sonfolio.SonfolioApplication
 import kotlinx.coroutines.*
+
+/** 已保存密钥在输入框中的占位显示，避免把空框误认为没有配置。 */
+private const val SAVED_SECRET_MASK = "*****"
 
 @Composable
 internal fun SummarySettingsCard() {
@@ -40,6 +45,7 @@ internal fun SummarySettingsCard() {
         if (endpoint.isBlank()) { endpoint = provider.endpoint; model = provider.defaults.firstOrNull().orEmpty() }
     }
     var apiKey by remember { mutableStateOf("") } // 不写入页面恢复状态、日志或剪贴板。
+    var keyTouched by remember { mutableStateOf(false) }
     var automatic by rememberSaveable { mutableStateOf(saved.automatic) }
     var consent by remember(endpoint, mode) { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -137,7 +143,7 @@ internal fun SummarySettingsCard() {
                     DropdownMenu(providerMenu, { providerMenu = false }) {
                         SummaryProvider.entries.forEach { option -> DropdownMenuItem(text = { Text(option.label) }, onClick = {
                             if (option != provider) {
-                                provider = option; endpoint = option.endpoint; model = option.defaults.firstOrNull().orEmpty(); apiKey = ""
+                                provider = option; endpoint = option.endpoint; model = option.defaults.firstOrNull().orEmpty(); apiKey = ""; keyTouched = false
                             }
                             providerMenu = false
                         }) }
@@ -172,9 +178,15 @@ internal fun SummarySettingsCard() {
                         Text("支持 Chat Completions 与 JSON 输出协议。修改接口地址必须重新填写密钥。", fontSize = 11.sp)
                     }
                 }
-                OutlinedTextField(apiKey, { apiKey = it }, Modifier.fillMaxWidth(), label = { Text(if (saved.hasKey && saved.endpoint == endpoint) "总结服务密钥（已保存，留空保留）" else "总结服务密钥") },
+                val showSavedKey = !keyTouched && saved.hasKey && saved.endpoint == endpoint
+                OutlinedTextField(
+                    value = if (showSavedKey) SAVED_SECRET_MASK else apiKey,
+                    onValueChange = { keyTouched = true; apiKey = it },
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused && showSavedKey) { keyTouched = true; apiKey = "" } },
+                    label = { Text(if (showSavedKey) "总结服务密钥（已保存）" else "总结服务密钥") },
                     trailingIcon = { IconButton(onClick = { keyHelp = true }) { Text("？") } },
-                    singleLine = true, enabled = !busy, visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = if (showSavedKey) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
                 if (provider.help.isNotBlank()) TextButton(onClick = {
                     runCatching { uriHandler.openUri(provider.help) }.onFailure { message = "无法打开浏览器，请到提供商官网创建 API Key" }
@@ -184,7 +196,7 @@ internal fun SummarySettingsCard() {
                     Checkbox(consent, { consent = it }, enabled = !busy)
                     Text("我同意将所选对话或日期的转写文字发送到上述服务；总结请求不上传音频。", fontSize = 12.sp)
                 }
-                if (saved.hasKey) TextButton(enabled = !busy, onClick = { action(onSuccess = { apiKey = ""; mode = SummaryMode.BASIC }) {
+                if (saved.hasKey) TextButton(enabled = !busy, onClick = { action(onSuccess = { apiKey = ""; keyTouched = false; mode = SummaryMode.BASIC }) {
                     app.summarySettings.clearKey(); app.summaryCoordinator.cancelAll(); "已删除密钥，并切回本地基础整理"
                 } }) { Text("删除已保存密钥") }
             }
@@ -200,10 +212,11 @@ internal fun SummarySettingsCard() {
                 }
             }
             Button(enabled = !busy, onClick = {
-                val key = apiKey
+                // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。
+                val key = if (keyTouched) apiKey else ""
                 val chosenMode = mode; val chosenEndpoint = endpoint; val chosenModel = model
                 val chosenAutomatic = automatic; val chosenConsent = consent
-                action(onSuccess = { apiKey = "" }) {
+                action(onSuccess = { apiKey = ""; keyTouched = false }) {
                     app.summarySettings.save(chosenMode, chosenEndpoint, chosenModel, key, chosenAutomatic, chosenConsent)
                     app.summaryCoordinator.cancelAll()
                     "总结设置已保存，旧队列已取消，已有小结保留"

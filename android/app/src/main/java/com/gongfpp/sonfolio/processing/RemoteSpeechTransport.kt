@@ -96,9 +96,31 @@ internal class RemoteSpeechTransport(
             .put("audio", JSONObject().put("format", "wav").put("data", Base64.encodeToString(wav, Base64.NO_WRAP)))
             .put("request", JSONObject().put("model_name", "bigmodel").put("enable_itn", true).put("enable_punc", true))
             .toString().toByteArray(Charsets.UTF_8)
-        val submitted = post(config, config.provider.endpoint, headers, body)
+        val submitted = post(config, config.provider.endpoint, "application/json; charset=utf-8", headers, body)
         check(submitted.status in 200..299 && submitted.apiCode == "20000000") { doubaoError(submitted) }
         return pollDoubao(config, config.provider.queryEndpoint!!, headers, chunkId, startedAt)
+    }
+
+    /**
+     * 连通性自检：只发送 1 秒静音，验证密钥、地域与模型权限，不读取真实录音。返回可直接展示的结果。
+     * 在线调用可能产生极少量费用；豆包对静音返回「静音音频」但同样验证了鉴权与资源。
+     */
+    suspend fun test(config: TranscriptionConfig, chunkId: String, startedAt: Long): String = withContext(Dispatchers.IO) {
+        val wav = wav(FloatArray(16_000))
+        if (config.provider == SpeechProvider.DOUBAO) {
+            transcribeDoubao(config, wav, chunkId, startedAt)
+            "连通成功：豆包识别服务已响应（静音样例，未上传真实录音）"
+        } else {
+            val key = store.apiKey(config, chunkId, startedAt)
+            val request = request(config, wav, "zh")
+            val result = post(config, config.provider.endpoint, request.first, mapOf("Authorization" to "Bearer $key"), request.second)
+            check(result.status in 200..299) { when (result.status) {
+                401, 403 -> "连通失败：识别密钥无效、地域不匹配或无模型权限"
+                429 -> "连通失败：识别服务限流或额度不足"
+                else -> "连通失败：识别服务返回 HTTP ${result.status}"
+            } }
+            "连通成功：${config.provider.label} 识别服务已响应（静音样例，未上传真实录音）"
+        }
     }
 
     private suspend fun pollDoubao(config: TranscriptionConfig, url: String, headers: Map<String, String>,
@@ -107,7 +129,7 @@ internal class RemoteSpeechTransport(
         while (true) {
             currentCoroutineContext().ensureActive()
             check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
-            val result = post(config, url, headers, "{}".toByteArray(Charsets.UTF_8))
+            val result = post(config, url, "application/json; charset=utf-8", headers, "{}".toByteArray(Charsets.UTF_8))
             check(result.status in 200..299) { doubaoError(result) }
             when (result.apiCode) {
                 "20000000" -> return parseDoubao(result.body)
@@ -122,7 +144,8 @@ internal class RemoteSpeechTransport(
     }
 
     /** 单次 HTTPS POST；沿用与单请求路径一致的取消、超时和响应大小限制。 */
-    private suspend fun post(config: TranscriptionConfig, url: String, headers: Map<String, String>, body: ByteArray): HttpResult =
+    private suspend fun post(config: TranscriptionConfig, url: String, contentType: String,
+        headers: Map<String, String>, body: ByteArray): HttpResult =
         coroutineScope {
             val connection = open(URL(url))
             val guard = launch(Dispatchers.IO) {
@@ -134,7 +157,7 @@ internal class RemoteSpeechTransport(
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = 15_000; connection.readTimeout = 60_000
                 connection.requestMethod = "POST"; connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Content-Type", contentType)
                 headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 connection.setFixedLengthStreamingMode(body.size)
                 connection.outputStream.use { it.write(body) }

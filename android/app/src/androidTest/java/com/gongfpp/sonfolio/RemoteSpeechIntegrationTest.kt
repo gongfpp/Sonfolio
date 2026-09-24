@@ -89,6 +89,31 @@ class RemoteSpeechIntegrationTest {
         }
     }
 
+    @Test fun connectivityTestSendsSilenceAndReportsSuccess() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "qa-conn-${System.nanoTime()}"
+        val store = TranscriptionSettingsStore(context, name)
+        try {
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.QWEN, "qwen3-asr-flash", "qa-only", true)
+            val qwen = store.read()
+            store.authorizeChunk("chunk", qwen.revision)
+            val qwenConn = FakeConnection(URL(qwen.provider.endpoint), 200, "{\"choices\":[{\"message\":{\"content\":\"\"}}]}")
+            assertTrue(RemoteSpeechTransport(store) { qwenConn }.test(qwen, "chunk", 0).startsWith("连通成功"))
+            assertTrue(qwenConn.sent.size() > 44) // 发送了 1 秒静音 WAV
+
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true, appId = "1000000001")
+            val doubao = store.read()
+            store.authorizeChunk("chunk2", doubao.revision)
+            val submit = FakeConnection(URL(doubao.provider.endpoint), 200, "{}", mapOf("X-Api-Status-Code" to "20000000"))
+            val query = FakeConnection(URL(doubao.provider.queryEndpoint!!), 200, "{\"result\":{\"text\":\"\"}}", mapOf("X-Api-Status-Code" to "20000003"))
+            val conns = ArrayDeque(listOf(submit, query))
+            assertTrue(RemoteSpeechTransport(store) { conns.removeFirst() }.test(doubao, "chunk2", 0).startsWith("连通成功"))
+        } finally {
+            store.clearKey(); context.deleteSharedPreferences(name)
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("sonfolio-$name") }
+        }
+    }
+
     @Test fun multipartAndResponseErrorsDoNotExposeServerPayloads() {
         val config = TranscriptionConfig(provider = SpeechProvider.SILICONFLOW, model = "FunAudioLLM/SenseVoiceSmall")
         val request = RemoteSpeechTransport.request(config, RemoteSpeechTransport.wav(floatArrayOf(0f, .5f, -.5f)), "zh")

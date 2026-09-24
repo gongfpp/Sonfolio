@@ -248,7 +248,8 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         val input = SummaryInput("conversation:connection-test", listOf(SummaryText("test", 0, 1, "这是一段连接测试文字，不包含用户录音。我们决定明天上午检查录音按钮。", false)))
         val text = generate(config, SummaryPrompt.SYSTEM, SummaryPrompt.user(input, input.parts(500).single(), null, 0, 1))
         AiSummary.parse(text)
-        return "测试通过：已返回结构化小结；未发送真实录音或转写"
+        val where = if (config.mode == SummaryMode.LOCAL) "本地模型" else "在线服务"
+        return "连通成功：$where 已返回结构化小结；未发送真实录音或转写"
     }
 
     internal suspend fun generate(config: SummaryConfig, system: String, user: String): String {

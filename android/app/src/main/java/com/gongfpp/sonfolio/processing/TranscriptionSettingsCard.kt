@@ -10,11 +10,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -24,6 +26,9 @@ import com.gongfpp.sonfolio.models.ModelCatalog
 import com.gongfpp.sonfolio.models.ModelDownloadControl
 import kotlinx.coroutines.*
 
+/** 已保存密钥在输入框中的占位显示，避免把空框误认为没有配置。 */
+private const val SAVED_SECRET_MASK = "*****"
+
 @Composable internal fun TranscriptionSettingsCard() {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.transcriptionSettings.config.collectAsStateWithLifecycle()
@@ -32,6 +37,7 @@ import kotlinx.coroutines.*
     var model by rememberSaveable { mutableStateOf(saved.model) }
     var localEngine by rememberSaveable { mutableStateOf(saved.localEngine) }
     var key by remember { mutableStateOf("") }
+    var keyTouched by remember { mutableStateOf(false) }
     var appId by rememberSaveable { mutableStateOf(saved.appId) }
     var consent by remember(mode, provider) { mutableStateOf(false) }
     var providerMenu by remember { mutableStateOf(false) }
@@ -93,7 +99,7 @@ import kotlinx.coroutines.*
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("识别提供商：${provider.label} ▾") }
                     DropdownMenu(providerMenu, { providerMenu = false }) {
                         SpeechProvider.entries.forEach { option -> DropdownMenuItem(text = { Text(option.label) }, onClick = {
-                            if (option != provider) { provider = option; model = option.models.first(); key = ""; appId = "" }
+                            if (option != provider) { provider = option; model = option.models.first(); key = ""; keyTouched = false; appId = "" }
                             providerMenu = false
                         }) }
                     }
@@ -103,10 +109,17 @@ import kotlinx.coroutines.*
                         label = { Text(if (saved.appId.isNotBlank() && provider == saved.provider) "APP ID（已保存，留空保留）" else "APP ID") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 }
-                OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
-                    label = { Text("${if (provider.needsAppId) "Access Token" else "识别密钥"}${if (saved.hasKey && provider == saved.provider) "（已保存，留空保留）" else ""}") },
+                val showSavedKey = !keyTouched && saved.hasKey && provider == saved.provider
+                OutlinedTextField(
+                    value = if (showSavedKey) SAVED_SECRET_MASK else key,
+                    onValueChange = { keyTouched = true; key = it },
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused && showSavedKey) { keyTouched = true; key = "" } },
+                    singleLine = true, enabled = !busy,
+                    label = { Text("${if (provider.needsAppId) "Access Token" else "识别密钥"}${if (showSavedKey) "（已保存）" else ""}") },
                     trailingIcon = { IconButton(onClick = { keyHelp = true }) { Text("？") } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), visualTransformation = PasswordVisualTransformation())
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = if (showSavedKey) VisualTransformation.None else PasswordVisualTransformation(),
+                )
                 TextButton(onClick = { runCatching { uriHandler.openUri(provider.keyPage) }.onFailure { message = "无法打开浏览器，请到提供商官网创建识别密钥" } }) {
                     Text(if (provider.needsAppId) "打开 ${provider.label} 控制台获取 APP ID 与 Access Token ↗" else "获取 ${provider.label} 识别密钥 ↗")
                 }
@@ -148,7 +161,9 @@ import kotlinx.coroutines.*
             Button(enabled = !busy, onClick = {
                 if (busy) return@Button
                 busy = true
-                val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val chosenKey = key; val allowed = consent
+                val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val allowed = consent
+                // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。
+                val chosenKey = if (keyTouched) key else ""
                 val chosenEngine = localEngine; val chosenAppId = appId
                 scope.launch {
                     try {
@@ -156,12 +171,25 @@ import kotlinx.coroutines.*
                             app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenAppId, chosenEngine)
                             app.recordingRepository.enqueuePendingAsr()
                         }
-                        key = ""; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"
+                        key = ""; keyTouched = false; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) { message = error.message ?: "设置保存失败，请重试" }
                     finally { busy = false }
                 }
             }) { Text("保存转文字设置") }
+            OutlinedButton(enabled = !busy, onClick = {
+                if (busy) return@OutlinedButton
+                busy = true
+                val current = saved
+                scope.launch {
+                    try {
+                        message = withContext(Dispatchers.IO) { runTranscriptionTest(app, current) }
+                    } catch (error: CancellationException) { throw error }
+                    catch (error: Exception) { message = "连通失败：${error.message ?: "未知错误"}" }
+                    finally { busy = false }
+                }
+            }) { Text("测试已保存配置") }
+            Text("本地测试只检查模型是否就绪；在线测试发送 1 秒静音样例，不读取真实录音，可能产生极少量调用。", fontSize = 11.sp)
             if (saved.hasKey) TextButton(enabled = !busy, onClick = {
                 runCatching { app.transcriptionSettings.clearKey() }.onSuccess {
                     mode = TranscriptionMode.LOCAL; key = ""; appId = ""; message = "识别密钥已删除，已恢复本地识别"
@@ -200,4 +228,19 @@ import kotlinx.coroutines.*
     if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("如何获取识别密钥") },
         text = { Text("点击卡片中的“获取识别密钥”进入官方控制台，登录并创建密钥，再粘贴到此处。密钥不是聊天 App 的密码，只在本机加密保存；请勿分享或公开截图。各提供商、各地域的密钥不能混用，请在官方设置费用限额。") },
         confirmButton = { TextButton(onClick = { keyHelp = false }) { Text("知道了") } })
+}
+
+/** 已保存配置的连通性自检：本地看模型是否就绪，在线发 1 秒静音验证鉴权与端点。 */
+private suspend fun runTranscriptionTest(app: SonfolioApplication, config: TranscriptionConfig): String = when (config.mode) {
+    TranscriptionMode.LOCAL -> {
+        val model = ModelCatalog.byId(config.localEngine.artifactId)
+        if (model != null && ModelCatalog.available(app.filesDir, model)) {
+            "连通成功：本地识别模型已就绪（${config.localEngine.displayName}）"
+        } else {
+            "连通失败：本地识别模型尚未下载，请先下载模型"
+        }
+    }
+    TranscriptionMode.REMOTE ->
+        if (!config.hasKey) "连通失败：请先保存在线识别密钥"
+        else RemoteSpeechTransport(app.transcriptionSettings).test(config, "connection-test", System.currentTimeMillis())
 }
