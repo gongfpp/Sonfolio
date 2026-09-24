@@ -72,6 +72,7 @@ Sonfolio 的总结很容易在否定句、条件句、疑问句、多人讨论�
 ## 结果记录
 
 （总结：**Qwen2.5-0.5B 真机质量基线**。2026-09-24 Redmi Note 8 Pro（TCP ADB）：20/20 段输出可解析，事实命中 23/37，禁止内容 0。曾并列的 Qwen3-0.6B 在同一机型、同一质量集上生成极慢（约 1.3–2 tok/s，当时设备热限频到 500MHz）且输出明显更长，在 native 150 秒预算内跑不完，无法作为本地总结模型，已从 `ModelCatalog` 移除。若要在更新设备上重评，可临时加回并复测。过程中另修复 `LocalSummaryService` 只放行 `ModelCatalog.summary` 一个模型的缺陷——此前其它内置总结模型会被 native 服务直接拒绝。）
+（在线总结：**OpenCode Go 真机连通性**。2026-09-24 Redmi Note 8 Pro（TCP ADB）：`deepseek-v4.1-flash` 经生产 `RemoteSummaryTransport` 返回合法结构化 JSON，约 8.0 秒；设置页「测试已保存配置」通过。注意 OpenCode Go 定位为编码 Agent 订阅，用于总结属预期外用途。）
 （ASR：**Qwen3-ASR 0.6B int8 真机可用**。2026-09-17 Redmi Note 8 Pro（Android 10）实测 6 条素材：粤语 CER **0.000**、英文 0.069、中文极快语速 0.154、中文绕口令 0.079，全部优于上限；带噪电话对话 0.321（上限已按实测放宽到 0.35，含“减速摄像头”等少量幻觉）。**已知缺陷**：歌曲/清唱素材 qiqiu1 返回固定字符串 `language`，暂列为 known issue 不计入硬断言，待排查。）
 （ASR：**FireRedASR2-CTC int8 真机可对比**。2026-09-18 同一设备同一素材：中文快语速 0.177、绕口令 0.121、带噪对话 0.264、**歌曲 0.228（无 Qwen3 的 `language` 缺陷）**、粤语 0.053、英文 0.282；平均 CER **0.188**，整轮 105.8 s（Qwen3 平均 0.270、158 s）。结论：FireRedASR2-CTC 体积更小（776 MB vs 987 MB）、更快，中文（含噪声与歌曲）更稳；Qwen3-ASR 在干净中文与英文上更好。中文为主可优先 FireRed，英文/中英混说可优先 Qwen3，默认仍是体积最小最快的 SenseVoice。）
 （踩坑记录：评测音频必须重写为标准 44 字节头 WAV 再推送。ffmpeg/afconvert 会在 `fmt` 与 `data` 之间插入 `LIST`/`FLLR` chunk，而应用内的 `WavPcmReader` 只解析固定 44 字节头，会把这类文件读成近乎空音频——第一轮“Qwen3 全部空转写”的结论正是由此误判，`scripts/prepare-asr-eval.mjs` 现已加入重写步骤。）
