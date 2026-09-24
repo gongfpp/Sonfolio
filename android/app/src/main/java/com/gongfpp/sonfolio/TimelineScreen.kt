@@ -87,6 +87,8 @@ internal fun TodayScreen(
     val conversations by remember(date) { viewModel.observeTimeline(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val recordingChunks by remember(date) { viewModel.observeChunks(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = emptyList())
     val calendar by viewModel.calendarSpans.collectAsStateWithLifecycle()
+    val activeSummaryRuns by viewModel.observeActiveSummaryRunCount().collectAsStateWithLifecycle(initialValue = 0)
+    val runningSummaryRuns by viewModel.observeRunningSummaryRunCount().collectAsStateWithLifecycle(initialValue = 0)
     var gapClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(gaps.any { it.endedAtMillis == null }) {
         while (gaps.any { it.endedAtMillis == null }) { gapClock = System.currentTimeMillis(); delay(1_000) }
@@ -164,7 +166,21 @@ internal fun TodayScreen(
                 onOpenRaw = { onOpen(AppScreen.RawRecordings(date.toString())) },
             )
         }
-        item(key = "timeline-title") { SectionTitle("对话时间线") }
+        item(key = "timeline-title") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SectionTitle("对话时间线")
+                Spacer(Modifier.weight(1f))
+                if (activeSummaryRuns > 0) {
+                    Surface(shape = RoundedCornerShape(999.dp), color = AmberPale) {
+                        Text(
+                            "AI 整理中 $runningSummaryRuns/$activeSummaryRuns",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            color = Color(0xFF694E00), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
         if (timelineEntries.isEmpty()) {
             item(key = "empty") {
                 Text(

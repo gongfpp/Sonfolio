@@ -114,6 +114,12 @@ interface ConversationDao {
     @Query("SELECT * FROM summary_runs WHERE sourceKey = :key")
     fun observeSummaryRun(key: String): Flow<SummaryRunEntity?>
 
+    @Query("SELECT COUNT(*) FROM summary_runs WHERE state IN ('QUEUED','RUNNING')")
+    fun observeActiveSummaryRunCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM summary_runs WHERE state = 'RUNNING'")
+    fun observeRunningSummaryRunCount(): Flow<Int>
+
     @Query("SELECT * FROM summary_runs WHERE sourceKey = :key")
     suspend fun getSummaryRun(key: String): SummaryRunEntity?
 

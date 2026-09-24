@@ -388,7 +388,15 @@ internal fun SummaryCard(
             }
             if (pending) {
                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                Text("正在整理「$theme」…", modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 11.sp)
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "正在整理「$theme」…可离开此页，后台会继续；长时间无变化可取消后重试",
+                        modifier = Modifier.weight(1f), color = InkSoft, fontSize = 11.sp,
+                    )
+                    TextButton(onClick = {
+                        scope.launch { runCatching { withContext(Dispatchers.IO) { app.summaryCoordinator.cancel(sourceKey) } } }
+                    }) { Text("取消", fontSize = 11.sp) }
+                }
             } else if (run?.state == "READY" && run?.outputJson != null) {
                 Text("AI 总结 · 请结合原文核对", modifier = Modifier.padding(top = 8.dp), color = Green, fontSize = 11.sp)
             } else if (updatedAtMillis != null) {

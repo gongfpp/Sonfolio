@@ -148,6 +148,24 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         }
     } }
 
+    /**
+     * 启动时清理孤儿总结/纠错记录：WorkManager 已无对应未完成任务时，把仍停在 QUEUED/RUNNING
+     * 的行标为 FAILED，避免界面一直显示「正在整理」但实际没有任何任务在跑。
+     */
+    suspend fun recoverOrphanedRuns() = withContext(Dispatchers.IO) {
+        val activeKeys = work.getWorkInfosByTag(TAG).get().filter { !it.state.isFinished }
+            .flatMap { info -> info.tags.filter { it.startsWith("summary-key:") }.map { it.removePrefix("summary-key:") } }
+            .toSet()
+        dao.getSummaryRuns().filter { it.state in listOf("QUEUED", "RUNNING") && it.sourceKey !in activeKeys }.forEach { run ->
+            val correction = run.sourceKey.startsWith("correction:")
+            dao.updateSummaryRun(
+                run.sourceKey, "FAILED",
+                if (correction) "上次纠错未完成，可重新纠错" else "上次整理未完成，可重新生成",
+                System.currentTimeMillis(),
+            )
+        }
+    }
+
     suspend fun cancel(key: String) {
         work.cancelAllWorkByTag("summary-key:$key").result.get()
         dao.updateSummaryRun(key, "CANCELLED", "已取消，已有小结保留", System.currentTimeMillis())
@@ -252,13 +270,16 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         dao.updateSummaryRun(runKey, "CANCELLED", "已取消，原文保留", System.currentTimeMillis())
     }
 
+    /** 只验证连通性：本地确认模型已就绪，在线发一个最小请求（不发送转写内容）。 */
     suspend fun test(config: SummaryConfig): String {
         check(config.mode != SummaryMode.BASIC) { "基础整理不需要测试连接" }
-        val input = SummaryInput("conversation:connection-test", listOf(SummaryText("test", 0, 1, "这是一段连接测试文字，不包含用户录音。我们决定明天上午检查录音按钮。", false)))
-        val text = generate(config, SummaryPrompt.SYSTEM, SummaryPrompt.user(input, input.parts(500).single(), null, 0, 1))
-        AiSummary.parse(text)
-        val where = if (config.mode == SummaryMode.LOCAL) "本地模型" else "在线服务"
-        return "连通成功：$where 已返回结构化小结；未发送真实录音或转写"
+        if (config.mode == SummaryMode.LOCAL) {
+            require(app.summarySettings.modelFile(config)?.isFile == true) { "本地模型尚未下载，请先下载" }
+            return "连通成功：本地模型已就绪（未运行推理）"
+        }
+        RemoteSummaryTransport(app.summarySettings, app.usageStore)
+            .generate(config, "你是连接测试助手。", "只回复：ok", maxTokens = 8, jsonMode = false)
+        return "连通成功：${config.model} 已响应（只发了一个最小请求）"
     }
 
     internal suspend fun generate(config: SummaryConfig, system: String, user: String): String {

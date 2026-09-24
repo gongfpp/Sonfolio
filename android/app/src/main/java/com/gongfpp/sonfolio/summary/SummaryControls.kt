@@ -11,6 +11,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -49,6 +50,7 @@ internal fun SummarySettingsCard() {
     var automatic by rememberSaveable { mutableStateOf(saved.automatic) }
     var correctionOnline by remember { mutableStateOf(app.preferences.correctionOnlineEnabled) }
     var consent by remember(endpoint, mode) { mutableStateOf(false) }
+    var consentWarning by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -193,9 +195,20 @@ internal fun SummarySettingsCard() {
                     runCatching { uriHandler.openUri(provider.help) }.onFailure { message = "无法打开浏览器，请到提供商官网创建 API Key" }
                 }) { Text("获取 ${provider.label} API Key ↗") }
                 Text("密钥只保存在本机加密存储；修改服务地址后需重新填写密钥。", fontSize = 11.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(consent, { consent = it }, enabled = !busy)
-                    Text("我同意将所选对话或日期的转写文字发送到上述服务；总结请求不上传音频。", fontSize = 12.sp)
+                val consentWarningActive = consentWarning && !consent
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (consentWarningActive) Color(0xFFFDECEA) else Color.Transparent,
+                    border = if (consentWarningActive) BorderStroke(1.dp, Color(0xFFB23B2E)) else null,
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(consent, { consent = it; if (it) consentWarning = false }, enabled = !busy)
+                        Text(
+                            "我同意将所选对话或日期的转写文字发送到上述服务；总结请求不上传音频。",
+                            fontSize = 12.sp,
+                            color = if (consentWarningActive) Color(0xFFB23B2E) else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
                 if (saved.hasKey) TextButton(enabled = !busy, onClick = { action(onSuccess = { apiKey = ""; keyTouched = false; mode = SummaryMode.BASIC }) {
                     app.summarySettings.clearKey(); app.summaryCoordinator.cancelAll(); "已删除密钥，并切回本地基础整理"
@@ -225,7 +238,15 @@ internal fun SummarySettingsCard() {
                     Text("本地模型会自动完成一次错别字与标点纠错（离线、无费用）。", Modifier.padding(top = 4.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Button(enabled = !busy, onClick = {
+            val canSave = mode != SummaryMode.REMOTE || consent
+            Button(
+                enabled = !busy,
+                colors = if (canSave) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                onClick = {
+                if (!canSave) { consentWarning = true; message = "请先勾选下方的同意项，再保存设置"; return@Button }
                 // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。
                 val key = if (keyTouched) apiKey else ""
                 val chosenMode = mode; val chosenEndpoint = endpoint; val chosenModel = model
@@ -238,7 +259,7 @@ internal fun SummarySettingsCard() {
             }) { Text("保存总结设置") }
             if (saved.mode != SummaryMode.BASIC) {
                 OutlinedButton(enabled = !busy, onClick = { action { app.summaryCoordinator.test(app.summarySettings.read()) } }) { Text("测试已保存配置") }
-                Text("测试只使用固定样例，不读取真实转写；在线总结测试也可能计费。", fontSize = 11.sp)
+                Text("只验证连通性：本地确认模型就绪；在线只发一个最小请求，不读取真实转写。", fontSize = 11.sp)
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             message?.let { Text(it, fontSize = 12.sp) }

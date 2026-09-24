@@ -11,6 +11,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +41,7 @@ private const val SAVED_SECRET_MASK = "*****"
     var keyTouched by remember { mutableStateOf(false) }
     var appId by rememberSaveable { mutableStateOf(saved.appId) }
     var consent by remember(mode, provider) { mutableStateOf(false) }
+    var consentWarning by remember { mutableStateOf(false) }
     var providerMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
     var keyHelp by remember { mutableStateOf(false) }
@@ -146,9 +148,20 @@ private const val SAVED_SECRET_MASK = "*****"
                         )
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(consent, { consent = it }, enabled = !busy)
-                    Text("我同意将保存设置之后开始的录音中的人声音频上传至上述提供商，并承担可能的流量和调用费用。", fontSize = 12.sp)
+                val consentWarningActive = consentWarning && !consent
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (consentWarningActive) Color(0xFFFDECEA) else Color.Transparent,
+                    border = if (consentWarningActive) BorderStroke(1.dp, Color(0xFFB23B2E)) else null,
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(consent, { consent = it; if (it) consentWarning = false }, enabled = !busy)
+                        Text(
+                            "我同意将保存设置之后开始的录音中的人声音频上传至上述提供商，并承担可能的流量和调用费用。",
+                            fontSize = 12.sp,
+                            color = if (consentWarningActive) Color(0xFFB23B2E) else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     HelpHint(
@@ -160,8 +173,16 @@ private const val SAVED_SECRET_MASK = "*****"
                     Text("只上传人声片段，不上传整段录音。", fontSize = 11.sp)
                 }
             }
-            Button(enabled = !busy, onClick = {
+            val canSave = mode != TranscriptionMode.REMOTE || consent
+            Button(
+                enabled = !busy,
+                colors = if (canSave) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                onClick = {
                 if (busy) return@Button
+                if (!canSave) { consentWarning = true; message = "请先勾选下方的同意项，再保存设置"; return@Button }
                 busy = true
                 val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val allowed = consent
                 // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。

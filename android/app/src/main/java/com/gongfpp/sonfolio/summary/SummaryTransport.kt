@@ -24,7 +24,7 @@ internal class RemoteSummaryTransport(
     private val usage: com.gongfpp.sonfolio.UsageStore? = null,
     private val open: (String) -> HttpsURLConnection = { URL(it).openConnection() as HttpsURLConnection },
 ) {
-    suspend fun generate(config: SummaryConfig, system: String, user: String): String = suspendCancellableCoroutine { continuation ->
+    suspend fun generate(config: SummaryConfig, system: String, user: String, maxTokens: Int = 1600, jsonMode: Boolean = true): String = suspendCancellableCoroutine { continuation ->
         val connection = AtomicReference<HttpsURLConnection?>()
         val future = executor.submit {
             try {
@@ -33,10 +33,10 @@ internal class RemoteSummaryTransport(
                     throw SummaryTransportFailure("总结配置已改变或密钥不可用，请检查已保存配置")
                 }
                 val endpoint = validateSummaryEndpoint(config.endpoint)
-                val request = JSONObject().put("model", config.model).put("stream", false).put("max_tokens", 1600)
+                val request = JSONObject().put("model", config.model).put("stream", false).put("max_tokens", maxTokens)
                     .put("messages", JSONArray().put(JSONObject().put("role", "system").put("content", system))
                         .put(JSONObject().put("role", "user").put("content", user)))
-                    .put("response_format", JSONObject().put("type", "json_object"))
+                if (jsonMode) request.put("response_format", JSONObject().put("type", "json_object"))
                 when (SummaryProvider.fromEndpoint(endpoint)) {
                     SummaryProvider.DEEPSEEK -> request.put("thinking", JSONObject().put("type", "disabled"))
                     SummaryProvider.QWEN -> request.put("enable_thinking", false)

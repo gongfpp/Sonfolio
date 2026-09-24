@@ -56,6 +56,9 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
     fun observeConversationSummary(conversationId: String): Flow<com.gongfpp.sonfolio.data.local.ConversationSummaryEntity?> =
         repository.observeConversationSummary(conversationId)
 
+    fun observeActiveSummaryRunCount() = sonfolioApplication.database.conversationDao().observeActiveSummaryRunCount()
+    fun observeRunningSummaryRunCount() = sonfolioApplication.database.conversationDao().observeRunningSummaryRunCount()
+
     init {
         viewModelScope.launch {
             if (!RecordingService.isRunningInProcess) {
@@ -69,6 +72,8 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
                 .onFailure { android.util.Log.e("SonfolioViewModel", "刷新处理约束失败", it) }
             runCatching { sonfolioApplication.summaryCoordinator.refreshConstraints() }
                 .onFailure { android.util.Log.e("SonfolioViewModel", "刷新总结约束失败", it) }
+            runCatching { sonfolioApplication.summaryCoordinator.recoverOrphanedRuns() }
+                .onFailure { android.util.Log.e("SonfolioViewModel", "清理孤儿总结失败", it) }
             runCatching {
                 recordingRepository.recoverOrphanedRunningStates()
                 recordingRepository.enqueuePendingVad()
