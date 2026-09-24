@@ -55,13 +55,14 @@ class ConversationRepository(
      * affected local days and continuous conversations crossing their boundaries. */
     private suspend fun rebuildRegion(startedAt: Long?, endedAt: Long?): Boolean {
         val fallbackZone = ZoneId.systemDefault()
+        val mergeGapMillis = preferences.conversationGapMinutes * 60_000L
         /** 日期归属属于事实数据：优先使用录音发生时的时区，历史空值才回退设备时区。 */
         fun rowZone(row: TranscriptAudioRow): ZoneId = runCatching { ZoneId.of(row.recordedZoneId) }.getOrNull() ?: fallbackZone
         suspend fun expandToCompleteDays(start: Long, end: Long, zone: ZoneId): Pair<Long, Long> {
             var rangeStart = start
             var rangeEnd = end
             while (true) {
-                val neighbors = conversationDao.getReadyRowsInWindow(rangeStart - CONVERSATION_MERGE_GAP_MILLIS, rangeEnd + CONVERSATION_MERGE_GAP_MILLIS)
+                val neighbors = conversationDao.getReadyRowsInWindow(rangeStart - mergeGapMillis, rangeEnd + mergeGapMillis)
                 val previous = conversationDao.getConversationsInWindow(rangeStart, rangeEnd)
                 val first = minOf(rangeStart, neighbors.minOfOrNull { it.startedAtMillis } ?: rangeStart, previous.minOfOrNull { it.startedAtMillis } ?: rangeStart)
                 val last = maxOf(rangeEnd, neighbors.maxOfOrNull { it.endedAtMillis } ?: rangeEnd, previous.maxOfOrNull { it.endedAtMillis } ?: rangeEnd)
@@ -107,13 +108,18 @@ class ConversationRepository(
             ?: conversationDao.getSummaryRuns()).associateBy { it.sourceKey }
         val aiRuns = scopedSummaryRuns()
         val markers = database.recordingDao().getMarkersInWindow(rangeStart, rangeEnd)
-        val filterSnapshot = preferences.minimumSpeechSeconds to preferences.minimumTextCharacters
+        val titleMode = preferences.titleMode
+        // 任一影响分组/标题的偏好变化都要触发重建，避免旧计划写回。
+        val filterSnapshot = listOf(
+            preferences.minimumSpeechSeconds, preferences.minimumTextCharacters,
+            preferences.conversationGapMinutes, preferences.titleMode.name,
+        )
 
         val groups = mutableListOf<MutableList<TranscriptAudioRow>>()
         var groupEnd = Long.MIN_VALUE
         rows.forEach { row ->
             val current = groups.lastOrNull()
-            if (current == null || row.startedAtMillis - groupEnd > CONVERSATION_MERGE_GAP_MILLIS || gaps.any {
+            if (current == null || row.startedAtMillis - groupEnd > mergeGapMillis || gaps.any {
                     it.startedAtMillis < row.startedAtMillis && (it.endedAtMillis ?: Long.MAX_VALUE) > groupEnd
                 }) {
                 groups += mutableListOf(row)
@@ -144,7 +150,8 @@ class ConversationRepository(
             usedIds += id
             val summary = summaries.getValue(group.first().transcriptId)
             val ai = cached("conversation:$id", group.map { it.copy(conversationId = id) })
-            // 用户数据所有权：本组原对话的用户标题/备注优先保留；合并时从并入的对话继承。
+            val firstSentenceTitle = LocalSummaryEngine.titleFromFirstSentence(group.map { it.text })
+            // 用户数据所有权：本组原对话的用户标题优先保留；合并时从并入的对话继承。
             val olds = group.mapNotNull { row -> row.conversationId?.let(oldById::get) }.distinctBy { it.id }
             val survivor = olds.firstOrNull { it.id == id }
             val inherited = olds.filter { it.id != id }
@@ -155,11 +162,15 @@ class ConversationRepository(
                 startedAtMillis = start,
                 endedAtMillis = end,
                 zoneId = groupZone.id,
-                generatedTitle = ai?.title ?: summary.title,
+                generatedTitle = when (titleMode) {
+                    TitleMode.FIRST_SENTENCE -> firstSentenceTitle
+                    TitleMode.AI -> ai?.title ?: summary.title
+                    TitleMode.AI_OR_FIRST -> ai?.title ?: firstSentenceTitle
+                },
                 titleOverride = survivor?.titleOverride ?: inherited.firstNotNullOfOrNull { it.titleOverride },
                 briefSummary = ai?.brief ?: summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
-                note = survivor?.note ?: inherited.firstNotNullOfOrNull { it.note },
+                note = null,
                 localStartDate = Instant.ofEpochMilli(start).atZone(groupZone).toLocalDate().toString(),
             )
         }
@@ -230,7 +241,10 @@ class ConversationRepository(
                 gaps != database.recordingDao().getGapsInWindow(rangeStart, rangeEnd) ||
                 markers != database.recordingDao().getMarkersInWindow(rangeStart, rangeEnd) ||
                 aiRuns != scopedSummaryRuns() ||
-                filterSnapshot != (preferences.minimumSpeechSeconds to preferences.minimumTextCharacters)) return@withTransaction false
+                filterSnapshot != listOf(
+                    preferences.minimumSpeechSeconds, preferences.minimumTextCharacters,
+                    preferences.conversationGapMinutes, preferences.titleMode.name,
+                )) return@withTransaction false
             // A previously merged ID can reappear after a split/filter change. A live ID must
             // never redirect to another conversation through an obsolete alias.
             entities.map { it.id }.chunked(400).forEach { conversationDao.removeAliasesForCanonicalIds(it) }
@@ -302,12 +316,6 @@ class ConversationRepository(
     /** 用户放弃手工标题，回到自动生成标题。 */
     suspend fun resetConversationTitle(conversationId: String) {
         conversationDao.resetConversationTitle(conversationId)
-    }
-
-    /** 用户写/清空简短备注（限 200 字）。 */
-    suspend fun updateConversationNote(conversationId: String, note: String?) {
-        val trimmed = note?.trim()?.take(200)?.takeIf { it.isNotEmpty() }
-        conversationDao.updateConversationNote(conversationId, trimmed)
     }
 
     /** 撤销这段对话涉及的标记。 */
@@ -479,7 +487,6 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         startedAtMillis = startedAtMillis,
         endedAtMillis = endedAtMillis,
         isMarked = isMarked,
-        note = note,
         titleOverride = titleOverride,
     )
 }

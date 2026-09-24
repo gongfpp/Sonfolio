@@ -134,12 +134,16 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.resetConversationTitle(conversationId) }
     }
 
-    fun updateConversationNote(conversationId: String, note: String?) {
-        viewModelScope.launch { repository.updateConversationNote(conversationId, note) }
-    }
-
     fun removeConversationMarker(conversationId: String) {
         viewModelScope.launch { repository.removeMarkerForConversation(conversationId) }
+    }
+
+    /** 录音结束后补标记：从 markedAtMillis 向前 windowMillis 标记，并重建时间线以更新高亮。 */
+    fun addBackwardMarker(markedAtMillis: Long, windowMillis: Long) {
+        viewModelScope.launch {
+            recordingRepository.markBackwards(markedAtMillis, windowMillis)
+            rebuildConversations()
+        }
     }
 
     fun updateTranscriptText(transcriptId: String, text: String, onCandidates: (List<String>) -> Unit = {}) {

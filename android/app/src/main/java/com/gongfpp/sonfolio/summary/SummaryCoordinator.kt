@@ -178,7 +178,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         Unit
     }
 
-    /** 逐批纠错并把结果落库；由 CorrectionWorker 调用。 */
+    /** 逐批纠错并把结果落库；由详情页 CorrectionWorker 调用。 */
     suspend fun correct(key: String) {
         val config = app.summarySettings.read()
         val runKey = correctionKey(key)
@@ -187,22 +187,41 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             dao.updateSummaryRun(runKey, "FAILED", "暂无可纠错的转写", System.currentTimeMillis())
             return
         }
-        val parts = source.rows.chunked(CORRECTION_BATCH_LINES)
+        dao.updateSummaryRun(runKey, "RUNNING", "正在纠错…", System.currentTimeMillis())
+        val result = correctRows(config, source.rows.map { it.id to it.text })
+        app.conversationRepository.applyTranscriptCorrections(result.corrections)
+        val detail = buildString {
+            append(if (result.corrections.isEmpty()) "没有发现需要纠正的内容" else "已纠正 ${result.corrections.size} 句")
+            if (result.skipped > 0) append("，${result.skipped} 句因模型输出不稳定已跳过")
+        }
+        dao.saveSummaryRun(
+            SummaryRunEntity(
+                runKey, source.fingerprint, config.mode.name, identity(config),
+                """{"count":${result.corrections.size},"skipped":${result.skipped}}""", "READY", detail, System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    data class CorrectionResult(val corrections: Map<String, String>, val skipped: Int)
+
+    /** 逐批纠错并返回「转写 id → 纠正后文字」；详情手动与流水线第 5 步共用。 */
+    suspend fun correctRows(config: SummaryConfig, rows: List<Pair<String, String>>): CorrectionResult {
+        if (rows.isEmpty()) return CorrectionResult(emptyMap(), 0)
+        val parts = rows.chunked(CORRECTION_BATCH_LINES)
         val corrections = LinkedHashMap<String, String>()
         var skipped = 0
         withTimeout(CORRECTION_TIMEOUT_MILLIS) {
-            parts.forEachIndexed { index, part ->
+            parts.forEach { part ->
                 ensureActive()
-                dao.updateSummaryRun(runKey, "RUNNING", if (parts.size <= 1) "正在纠错…" else "正在纠错 ${index + 1}/${parts.size}", System.currentTimeMillis())
                 val raw = withGenerator(config) { generate ->
-                    generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(part.map { it.text }))
+                    generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(part.map { it.second }))
                 }
                 val texts = runCatching { CorrectionPrompt.parse(raw, part.size) }.getOrNull()
                 when {
                     texts != null -> part.forEachIndexed { i, row ->
                         val corrected = texts[i]
-                        if (corrected.isNotEmpty() && corrected != row.text && !CorrectionPrompt.looksLikeLeak(corrected)) {
-                            corrections[row.id] = corrected
+                        if (corrected.isNotEmpty() && corrected != row.second && !CorrectionPrompt.looksLikeLeak(corrected)) {
+                            corrections[row.first] = corrected
                         }
                     }
                     // 小模型给不出稳定句数：对短批次逐句重试，仍失败就保留原文而不是整份失败。
@@ -211,12 +230,12 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
                             ensureActive()
                             val single = runCatching {
                                 val one = withGenerator(config) { generate ->
-                                    generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(listOf(row.text)))
+                                    generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(listOf(row.second)))
                                 }
                                 CorrectionPrompt.parse(one, 1).single()
                             }.getOrNull()
-                            if (single != null && single.isNotEmpty() && single != row.text && !CorrectionPrompt.looksLikeLeak(single)) {
-                                corrections[row.id] = single
+                            if (single != null && single.isNotEmpty() && single != row.second && !CorrectionPrompt.looksLikeLeak(single)) {
+                                corrections[row.first] = single
                             } else if (single == null) skipped++
                         }
                     }
@@ -224,17 +243,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
                 }
             }
         }
-        app.conversationRepository.applyTranscriptCorrections(corrections)
-        val detail = buildString {
-            append(if (corrections.isEmpty()) "没有发现需要纠正的内容" else "已纠正 ${corrections.size} 句")
-            if (skipped > 0) append("，$skipped 句因模型输出不稳定已跳过")
-        }
-        dao.saveSummaryRun(
-            SummaryRunEntity(
-                runKey, source.fingerprint, config.mode.name, identity(config),
-                """{"count":${corrections.size},"skipped":$skipped}""", "READY", detail, System.currentTimeMillis(),
-            ),
-        )
+        return CorrectionResult(corrections, skipped)
     }
 
     suspend fun cancelCorrection(key: String) {

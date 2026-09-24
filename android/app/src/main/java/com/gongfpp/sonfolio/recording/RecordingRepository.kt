@@ -165,6 +165,20 @@ class RecordingRepository(
         )
     }
 
+    /** 录音结束后补标记：把 markedAtMillis 向前 windowMillis 标记为重要，支持秒级窗口。 */
+    suspend fun markBackwards(markedAtMillis: Long, windowMillis: Long) {
+        val window = windowMillis.coerceIn(30_000L, MAX_MARK_MINUTES * 60_000L)
+        recordingDao.insertMarker(
+            MarkerEntity(
+                id = UUID.randomUUID().toString(),
+                markedAtMillis = markedAtMillis,
+                windowBeforeMillis = window,
+                windowAfterMillis = 0L,
+                note = null,
+            ),
+        )
+    }
+
     suspend fun recordGap(
         startedAtMillis: Long,
         endedAtMillis: Long,
@@ -236,12 +250,16 @@ class RecordingRepository(
                     recordingDao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "应用退出后等待重新处理")
                     recordingDao.resetInterruptedSpeechSegmentsFor(chunkId)
                 }
+                ChunkProcessing.CORRECTION_RUNNING -> recordingDao.updateProcessingState(chunkId, ChunkProcessing.CORRECTION_PENDING, "应用退出后等待重新处理")
             }
             state = recordingDao.getChunk(chunkId)?.processingState ?: return
         }
         if (state in setOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) {
             recordingDao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待整理")
             processingScheduler?.enqueueAssembly(chunkId)
+        } else if (state in setOf(ChunkProcessing.CORRECTION_PENDING, ChunkProcessing.CORRECTION_FAILED)) {
+            recordingDao.updateProcessingState(chunkId, ChunkProcessing.CORRECTION_PENDING, "等待错别字与标点纠错")
+            processingScheduler?.enqueueCorrection(chunkId, manual = true)
         } else if (state in setOf(ChunkProcessing.ASR_FAILED, ChunkProcessing.VAD_READY)) {
             recordingDao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, null)
             processingScheduler?.enqueueAsr(chunkId, manual = true)
@@ -269,6 +287,10 @@ class RecordingRepository(
                     recordingDao.resetInterruptedSpeechSegmentsFor(chunk.id)
                     processingScheduler?.enqueueAsr(chunk.id)
                 }
+                ChunkProcessing.CORRECTION_RUNNING -> {
+                    recordingDao.updateProcessingState(chunk.id, ChunkProcessing.CORRECTION_PENDING, "应用退出后等待重新处理")
+                    processingScheduler?.enqueueCorrection(chunk.id)
+                }
             }
         }
     }
@@ -278,6 +300,7 @@ class RecordingRepository(
         recordingDao.getChunksWaitingForAsr().forEach { chunk ->
             processingScheduler?.enqueueAsr(chunk.id)
         }
+        recordingDao.getChunksWaitingForCorrection().forEach { processingScheduler?.enqueueCorrection(it) }
         recordingDao.getChunksWaitingForCompression().forEach { chunk ->
             processingScheduler?.enqueueCompression(chunk.id)
         }

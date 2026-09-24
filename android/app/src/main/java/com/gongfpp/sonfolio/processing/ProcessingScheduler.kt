@@ -21,6 +21,20 @@ class ProcessingScheduler(context: Context) {
     private val appContext = context.applicationContext
     fun enqueueAssembly(chunkId: String) = AssemblyWorker.enqueue(appContext, chunkId)
 
+    /** 第 5 步纠错；manual=true 表示用户「继续处理」，不受仅充电约束。 */
+    fun enqueueCorrection(chunkId: String, manual: Boolean = false) {
+        runCatching {
+            val request = OneTimeWorkRequestBuilder<TranscriptCorrectionWorker>()
+                .setConstraints(if (manual) Constraints.NONE else constraints())
+                .setInputData(workDataOf("chunk" to chunkId))
+                .addTag(TranscriptCorrectionWorker.TAG)
+                .build()
+            WorkManager.getInstance(appContext).enqueueUniqueWork(
+                "sonfolio-correct-$chunkId", ExistingWorkPolicy.KEEP, request,
+            )
+        }.onFailure { Log.e("ProcessingScheduler", "无法加入纠错队列，文字保持原样", it) }
+    }
+
     /** 整理完成后的录音压缩；约束比 ASR 宽松，但避免低电与低存储时写入大文件。 */
     fun enqueueCompression(chunkId: String) {
         runCatching {
@@ -99,7 +113,8 @@ class ProcessingScheduler(context: Context) {
         val manager = WorkManager.getInstance(appContext)
         val vad = manager.getWorkInfosForUniqueWork("sonfolio-vad-$audioChunkId").get()
         val asr = manager.getWorkInfosByTag("sonfolio-asr-chunk-$audioChunkId").get()
-        (vad + asr).any { !it.state.isFinished }
+        val correction = manager.getWorkInfosForUniqueWork("sonfolio-correct-$audioChunkId").get()
+        (vad + asr + correction).any { !it.state.isFinished }
     }
 
     private fun constraints() = Constraints.Builder()

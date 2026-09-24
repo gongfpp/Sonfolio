@@ -354,7 +354,10 @@ private fun TodayScreen(
     LaunchedEffect(gaps.any { it.endedAtMillis == null }) {
         while (gaps.any { it.endedAtMillis == null }) { gapClock = System.currentTimeMillis(); delay(1_000) }
     }
-    val day = remember(date, conversations, recordingChunks, gaps, gapClock) { DayTimeline.build(date, conversations, recordingChunks, gaps, nowMillis = gapClock) }
+    val mergeGapMillis = (LocalContext.current.applicationContext as SonfolioApplication).preferences.conversationGapMinutes * 60_000L
+    val day = remember(date, conversations, recordingChunks, gaps, gapClock, mergeGapMillis) {
+        DayTimeline.build(date, conversations, recordingChunks, gaps, nowMillis = gapClock, mergeGapMillis = mergeGapMillis)
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val timelineEntries = remember(date, day) { day.timelineEntries() }
@@ -751,8 +754,16 @@ private fun RecordingCard(
                     color = Color(0xFFFFE9B8), fontSize = 11.sp,
                 )
             }
-            TextButton(onClick = { sliceHelp = true }, modifier = Modifier.padding(start = 6.dp)) {
-                Text("切片说明 ⓘ", color = onWhite.copy(alpha = .9f), fontSize = 11.sp)
+            Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { sliceHelp = true }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text("切片说明 ⓘ", color = onWhite.copy(alpha = .9f), fontSize = 11.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                HelpHint(
+                    title = "标记和没标记的区别",
+                    body = "标记会把这次标记覆盖的整段连续对话高亮，并在搜索与一日回顾里作为「值得记住」的重点；标记附近的录音也不会被自动压缩或清理。\n\n没有标记的对话只按时间和内容正常展示，不进入重点区。标记只影响展示与保留，不修改转写文字。",
+                    tint = onWhite.copy(alpha = .9f),
+                )
             }
             if (sliceHelp) AlertDialog(onDismissRequest = { sliceHelp = false },
                 title = { Text("文件切片不等于对话切割") },
@@ -969,7 +980,7 @@ private fun RealConversationScreen(
     var playLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playNonce by rememberSaveable(conversationId) { mutableLongStateOf(0L) }
     var titleDraft by remember(conversationId) { mutableStateOf<String?>(null) }
-    var noteDraft by remember(conversationId) { mutableStateOf<String?>(null) }
+    var markerDialog by remember(conversationId) { mutableStateOf(false) }
     var editingLine by remember(conversationId) { mutableStateOf<TranscriptLine?>(null) }
     var editLineText by remember(conversationId) { mutableStateOf("") }
     var vocabularyPrompt by remember(conversationId) { mutableStateOf<List<String>>(emptyList()) }
@@ -995,7 +1006,7 @@ private fun RealConversationScreen(
         ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val payload = buildConversationText(title, meta, summary, conversation?.note, structuredSummary, lines)
+        val payload = buildConversationText(title, meta, summary, structuredSummary, lines)
         exportScope.launch(Dispatchers.IO) {
             val result = runCatching {
                 exportContext.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray()) } ?: error("无法打开导出目标")
@@ -1037,6 +1048,7 @@ private fun RealConversationScreen(
                         onBack = onBack,
                         actions = buildList {
                             add("改标题" to { titleDraft = conversation?.title ?: "" })
+                            add("标记" to { markerDialog = true })
                             if (conversation?.isMarked == true) add("取消标记" to { viewModel.removeConversationMarker(conversationId) })
                             add("导出文本" to { exportTextLauncher.launch("sonfolio-对话文本.txt") })
                         },
@@ -1046,27 +1058,12 @@ private fun RealConversationScreen(
                     if (marked.isNotEmpty()) {
                         Surface(Modifier.fillMaxWidth().padding(bottom = 10.dp), RoundedCornerShape(10.dp), color = AmberPale) {
                             Text(
-                                "★ 已高亮 ${formatReadableDuration(marked.maxOf { it.endedAtMillis } - marked.minOf { it.startedAtMillis })} · 标记覆盖整段连续对话",
+                                "★ 标记 ${formatReadableDuration(marked.maxOf { it.endedAtMillis } - marked.minOf { it.startedAtMillis })} · 覆盖整段连续对话",
                                 modifier = Modifier.padding(10.dp), color = Color(0xFF694E00), fontSize = 12.sp, fontWeight = FontWeight.Bold,
                             )
                         }
                     }
-                    SummaryCard(summary, origin, structuredSummary?.generatedAtMillis?.takeIf { origin != "本地提取式小结" })
-                    if (conversation?.note.isNullOrBlank()) {
-                        TextButton(onClick = { noteDraft = "" }) { Text("＋ 添加备注", fontSize = 12.sp) }
-                    } else {
-                        Surface(Modifier.fillMaxWidth().padding(top = 8.dp), RoundedCornerShape(12.dp), color = Color(0xFFF4F1E4)) {
-                            Column(Modifier.padding(12.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("备注", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                                    TextButton(onClick = { noteDraft = conversation?.note ?: "" }) { Text("编辑", fontSize = 12.sp) }
-                                }
-                                Text(conversation!!.note!!, color = Color(0xFF4A4632), fontSize = 12.5.sp, lineHeight = 19.sp)
-                            }
-                        }
-                    }
-                    com.gongfpp.sonfolio.summary.SummaryAction("conversation:$conversationId")
-                    com.gongfpp.sonfolio.summary.CorrectionAction(conversationId)
+                    SummaryCard("conversation:$conversationId", title, summary, origin, structuredSummary?.generatedAtMillis?.takeIf { origin != "本地提取式小结" })
                     Spacer(Modifier.height(16.dp))
                     Surface(Modifier.fillMaxWidth().height(1.dp), color = Line) {}
                     Row(
@@ -1164,16 +1161,22 @@ private fun RealConversationScreen(
                 dismissButton = { TextButton(onClick = { titleDraft = null }) { Text("取消") } },
             )
         }
-        noteDraft?.let { draft ->
-            var value by remember(draft) { mutableStateOf(draft) }
+        if (markerDialog) {
+            val point = lines.firstOrNull { it.id == seekLineId }?.endedAtMillis
+                ?: conversation?.endedAtMillis ?: System.currentTimeMillis()
             AlertDialog(
-                onDismissRequest = { noteDraft = null },
-                title = { Text("对话备注") },
+                onDismissRequest = { markerDialog = false },
+                title = { Text("标记") },
                 text = { Column {
-                    OutlinedTextField(value, { value = it }, label = { Text("简短备注（最多 200 字）") }, minLines = 2)
+                    Text("从选中的转写行（未选中则从这场对话的结尾）向前标记为重要。", fontSize = 12.sp, color = InkSoft, modifier = Modifier.padding(bottom = 6.dp))
+                    listOf(30 to "30 秒", 60 to "1 分", 180 to "3 分", 300 to "5 分", 600 to "10 分", 1200 to "20 分", 1800 to "30 分").forEach { (seconds, label) ->
+                        TextButton(onClick = {
+                            viewModel.addBackwardMarker(point, seconds * 1_000L)
+                            markerDialog = false
+                        }) { Text("标记 向前 $label") }
+                    }
                 } },
-                confirmButton = { TextButton(onClick = { viewModel.updateConversationNote(conversationId, value); noteDraft = null }) { Text("保存") } },
-                dismissButton = { TextButton(onClick = { noteDraft = null }) { Text("取消") } },
+                confirmButton = { TextButton(onClick = { markerDialog = false }) { Text("取消") } },
             )
         }
         editingLine?.let { line ->
@@ -1343,20 +1346,59 @@ private fun formatPlaybackTime(millis: Long): String {
 }
 
 @Composable
-private fun SummaryCard(summary: String, origin: String = "本地基础整理", updatedAtMillis: Long? = null) {
+private fun SummaryCard(
+    sourceKey: String,
+    theme: String,
+    summary: String,
+    origin: String = "本地基础整理",
+    updatedAtMillis: Long? = null,
+) {
+    val app = LocalContext.current.applicationContext as SonfolioApplication
+    val config by app.summarySettings.config.collectAsStateWithLifecycle()
+    val run by remember(sourceKey) { app.summaryCoordinator.observe(sourceKey) }.collectAsStateWithLifecycle(initialValue = null)
+    val scope = rememberCoroutineScope()
+    var error by remember(sourceKey) { mutableStateOf<String?>(null) }
+    val pending = run?.state in listOf("QUEUED", "RUNNING")
     Surface(shape = RoundedCornerShape(15.dp), color = PaleGreen, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(19.dp))
                 Text("本段小结", modifier = Modifier.padding(start = 9.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Surface(shape = CircleShape, color = Color.White.copy(alpha = .55f)) {
-                    Text("⌁  $origin", modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = Green, fontSize = 11.sp)
+                if (config.mode == com.gongfpp.sonfolio.summary.SummaryMode.BASIC) {
+                    Surface(shape = CircleShape, color = Color.White.copy(alpha = .55f)) {
+                        Text("⌁  $origin", modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = Green, fontSize = 11.sp)
+                    }
+                } else {
+                    TextButton(
+                        enabled = !pending,
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { app.summaryCoordinator.enqueue(sourceKey) }
+                                    error = null
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (e: Exception) { error = e.message ?: "无法加入总结队列" }
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) {
+                        Text(if (run?.outputJson == null) "生成 AI 总结" else "重新生成 AI 总结", fontSize = 12.sp)
+                    }
                 }
             }
-            Text(summary, modifier = Modifier.padding(top = 12.dp), color = Color(0xFF344039), fontSize = 14.sp, lineHeight = 23.sp)
-            if (updatedAtMillis != null) {
+            if (pending) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                Text("正在整理「$theme」…", modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 11.sp)
+            } else if (run?.state == "READY" && run?.outputJson != null) {
+                Text("AI 总结 · 请结合原文核对", modifier = Modifier.padding(top = 8.dp), color = Green, fontSize = 11.sp)
+            } else if (updatedAtMillis != null) {
                 Text("AI 更新于 ${formatDateTime(updatedAtMillis)}", modifier = Modifier.padding(top = 8.dp), color = InkSoft, fontSize = 11.sp)
             }
+            run?.message?.takeIf { it.isNotBlank() && !pending && run?.state != "READY" }?.let {
+                Text(it, modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 11.sp)
+            }
+            Text(summary, modifier = Modifier.padding(top = 12.dp), color = Color(0xFF344039), fontSize = 14.sp, lineHeight = 23.sp)
+            error?.let { Text(it, modifier = Modifier.padding(top = 6.dp), color = Color(0xFFB23B2E), fontSize = 11.sp) }
         }
     }
 }
@@ -1409,17 +1451,15 @@ private fun parseJsonArray(value: String?): List<String> = runCatching {
     (0 until array.length()).mapNotNull { array.optString(it).takeIf { s -> s.isNotBlank() } }
 }.getOrDefault(emptyList())
 
-/** 把一段对话（小结、备注、结构化要点、逐句转写）整理成可导出的纯文本。 */
+/** 把一段对话（小结、结构化要点、逐句转写）整理成可导出的纯文本。 */
 private fun buildConversationText(
     title: String,
     meta: String,
     summary: String,
-    note: String?,
     structured: ConversationSummaryEntity?,
     lines: List<TranscriptLine>,
 ): String = buildString {
     appendLine("$title（$meta）")
-    if (!note.isNullOrBlank()) appendLine("备注：$note")
     appendLine()
     appendLine("【小结】")
     appendLine(summary)
@@ -1636,6 +1676,8 @@ private fun SettingsScreen(
         com.gongfpp.sonfolio.processing.TranscriptionSettingsCard()
         com.gongfpp.sonfolio.PersonalVocabularyCard()
         com.gongfpp.sonfolio.summary.SummarySettingsCard()
+        SectionTitle("整理")
+        OrganizeSettingsCard(preferences, onRebuildConversations)
         SectionTitle("录音")
         Surface(Modifier.fillMaxWidth().padding(top = 17.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2057,9 +2099,9 @@ private fun RawRecordingRow(
         chunk.speechCount == 0 -> "处理结束 · 未检测到人声，不生成对话"
         chunk.transcriptCount == 0 -> "处理结束 · 检测到人声但未识别出文字，可回听录音"
         chunk.visibleTranscriptCount == 0 -> "处理结束 · 低于过滤阈值，对话已隐藏，录音保留"
-        else -> "4/4 对话与基础小结已完成 · AI 总结可在对话详情生成"
+        else -> "${ChunkProcessing.TOTAL_STAGES}/${ChunkProcessing.TOTAL_STAGES} 对话、纠错与基础小结已完成 · AI 总结可在对话详情生成"
     } else {
-        "${(progress.active ?: progress.completed).coerceIn(1, ChunkProcessing.TOTAL_STAGES)}/4 ${ChunkProcessing.labelOf(chunk.processingState)}"
+        "${(progress.active ?: progress.completed).coerceIn(1, ChunkProcessing.TOTAL_STAGES)}/${ChunkProcessing.TOTAL_STAGES} ${ChunkProcessing.labelOf(chunk.processingState)}"
     }
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("raw-audio-row").combinedClickable(enabled = enabled, onClick = onPlay, onLongClick = onLongClick, onLongClickLabel = "选择录音"),

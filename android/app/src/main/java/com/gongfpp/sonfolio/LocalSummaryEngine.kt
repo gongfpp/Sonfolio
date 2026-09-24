@@ -23,6 +23,18 @@ internal object LocalSummaryEngine {
         "学习笔记" to listOf("学习", "课程", "知识", "读书", "考试"),
     )
 
+    /**
+     * 取第一句有信息量的转写做标题：去掉控制标记、语气词与标点，截断到 ~14 字。
+     * 离线可用，不依赖关键词表，也不调用模型。
+     */
+    fun titleFromFirstSentence(texts: List<String>): String {
+        val sentence = texts.asSequence()
+            .flatMap { it.replace(Regex("<\\|[^>]+\\|>"), "").split(Regex("(?<=[。！？!?；;])|[\\r\\n]+")).asSequence() }
+            .map { it.trim().replace(Regex("\\s+"), "").trim('。', '，', '、', '！', '？', '.', ',', '!', '?', '；', ';', '：', ':') }
+            .firstOrNull { it.count { c -> c.isLetterOrDigit() || c in '\u4E00'..'\u9FFF' } >= 4 }
+        return sentence?.take(14) ?: "未识别"
+    }
+
     fun summarize(texts: List<String>): Summary {
         val sentences = texts.flatMap { text ->
             text.replace(Regex("<\\|[^>]+\\|>"), "")

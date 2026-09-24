@@ -97,6 +97,7 @@ internal data class DayTimeline(
             gaps: List<RecordingGapEntity>,
             zone: ZoneId = ZoneId.systemDefault(),
             nowMillis: Long = System.currentTimeMillis(),
+            mergeGapMillis: Long = CONVERSATION_MERGE_GAP_MILLIS,
         ): DayTimeline {
             val window = DayWindow.of(date, zone)
             val dayChunks = chunks.filter { it.processingState != ChunkProcessing.AUDIO_DELETED && window.overlaps(it.startedAtMillis, it.savedEndMillis()) }.sortedBy { it.startedAtMillis }
@@ -104,7 +105,7 @@ internal data class DayTimeline(
             return DayTimeline(
                 conversations.filter { window.overlaps(it.startedAtMillis, it.endedAtMillis) }.sortedBy { it.startedAtMillis },
                 dayChunks,
-                buildPendingUnits(dayChunks, dayGaps),
+                buildPendingUnits(dayChunks, dayGaps, mergeGapMillis),
                 dayGaps,
                 unionDuration(dayChunks.mapNotNull { window.clip(it.startedAtMillis, it.savedEndMillis()) }),
                 unionDuration(dayGaps.mapNotNull { window.clip(it.startedAtMillis, it.endedAtMillis ?: nowMillis) }),
@@ -115,6 +116,7 @@ internal data class DayTimeline(
         private fun buildPendingUnits(
             dayChunks: List<AudioChunkPreview>,
             gaps: List<RecordingGapEntity>,
+            mergeGapMillis: Long,
         ): List<PendingUnit> {
             val groups = mutableListOf<MutableList<AudioChunkPreview>>()
             dayChunks.filter { it.processingState != ChunkProcessing.ASR_READY }.forEach { chunk ->
@@ -123,7 +125,7 @@ internal data class DayTimeline(
                 val gapInside = current != null && groupEnd != null && gaps.any {
                     it.startedAtMillis < chunk.startedAtMillis && (it.endedAtMillis ?: Long.MAX_VALUE) > groupEnd
                 }
-                if (current == null || groupEnd == null || chunk.startedAtMillis - groupEnd > CONVERSATION_MERGE_GAP_MILLIS || gapInside) {
+                if (current == null || groupEnd == null || chunk.startedAtMillis - groupEnd > mergeGapMillis || gapInside) {
                     groups += mutableListOf(chunk)
                 } else {
                     current += chunk

@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
@@ -22,13 +23,18 @@ import androidx.compose.ui.unit.dp
  * 避免设置页被大段文字淹没。
  */
 @Composable
-internal fun HelpHint(title: String, body: String, modifier: Modifier = Modifier) {
+internal fun HelpHint(
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     var open by remember { mutableStateOf(false) }
     IconButton(onClick = { open = true }, modifier = modifier.size(26.dp)) {
         Icon(
             Icons.Outlined.HelpOutline,
             contentDescription = title,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = tint,
             modifier = Modifier.size(17.dp),
         )
     }

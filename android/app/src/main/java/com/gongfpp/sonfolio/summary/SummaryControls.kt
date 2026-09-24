@@ -47,6 +47,7 @@ internal fun SummarySettingsCard() {
     var apiKey by remember { mutableStateOf("") } // 不写入页面恢复状态、日志或剪贴板。
     var keyTouched by remember { mutableStateOf(false) }
     var automatic by rememberSaveable { mutableStateOf(saved.automatic) }
+    var correctionOnline by remember { mutableStateOf(app.preferences.correctionOnlineEnabled) }
     var consent by remember(endpoint, mode) { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -210,6 +211,19 @@ internal fun SummarySettingsCard() {
                             "开启后只自动处理新完成转写涉及的对话和日期，不重做全部历史；低电量时等待，失败可重试。",
                     )
                 }
+                if (mode == SummaryMode.REMOTE) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(correctionOnline, { value -> correctionOnline = value; app.preferences.setCorrectionOnlineEnabled(value) }, enabled = !busy)
+                        Text("转写后自动用该模型纠错（在线会持续计费）", Modifier.padding(start = 8.dp).weight(1f), fontSize = 12.sp)
+                        HelpHint(
+                            title = "自动纠错（第 5 步）",
+                            body = "转写整理完成后，用总结模型纠正错别字与标点；原文保留在「原始版本」，可随时撤销。\n\n" +
+                                "本地模型默认自动纠错，离线且无费用；在线模型会把整段转写文字发到外部服务并计费，所以默认关闭，需要在这里单独打开。",
+                        )
+                    }
+                } else {
+                    Text("本地模型会自动完成一次错别字与标点纠错（离线、无费用）。", Modifier.padding(top = 4.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             Button(enabled = !busy, onClick = {
                 // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。
@@ -269,52 +283,4 @@ internal fun SummaryAction(sourceKey: String) {
     }
 }
 
-/**
- * 对话详情里的「AI 纠错」入口：用已配置的总结模型（本地 GGUF 或在线 API）纠正错别字与标点，
- * 原始转写保留在 originalText。默认不自动触发，每场对话单独执行。
- */
-@Composable
-internal fun CorrectionAction(conversationId: String) {
-    val app = LocalContext.current.applicationContext as SonfolioApplication
-    val config by app.summarySettings.config.collectAsStateWithLifecycle()
-    val key = "conversation:$conversationId"
-    val run by remember(key) {
-        app.database.conversationDao().observeSummaryRun(app.summaryCoordinator.correctionKey(key))
-    }.collectAsStateWithLifecycle(initialValue = null)
-    val scope = rememberCoroutineScope()
-    var error by remember(key) { mutableStateOf<String?>(null) }
-    val pending = run?.state in listOf("QUEUED", "RUNNING")
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(when {
-            run?.state == "READY" -> "AI 纠错 · ${run?.message ?: "原文保留"}"
-            run?.message != null -> run!!.message!!
-            config.mode == SummaryMode.BASIC -> "AI 纠错需要先在设置里选择「在手机上总结」或「在线总结」作为纠错模型"
-            config.mode == SummaryMode.LOCAL -> "用本地小模型纠正错别字与标点，能力有限；原始转写保留，可随时撤销。想要更好效果可在设置改用「在线总结」"
-            else -> "用所选在线模型纠正错别字与标点；原始转写保留，可随时撤销"
-        }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row {
-            if (config.mode != SummaryMode.BASIC && !pending) TextButton(onClick = {
-                scope.launch {
-                    try { withContext(Dispatchers.IO) { app.summaryCoordinator.enqueueCorrection(key) }; error = null }
-                    catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { error = e.message ?: "无法加入纠错队列" }
-                }
-            }) { Text(if (run?.state == "READY") "重新纠错" else "AI 纠错") }
-            if (pending) TextButton(onClick = {
-                scope.launch {
-                    try { withContext(Dispatchers.IO) { app.summaryCoordinator.cancelCorrection(key) }; error = null }
-                    catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { error = "取消失败，请重试" }
-                }
-            }) { Text("取消纠错") }
-            if (!pending && run?.state == "READY") TextButton(onClick = {
-                scope.launch {
-                    try { withContext(Dispatchers.IO) { app.conversationRepository.revertTranscriptCorrections(conversationId) }; error = null }
-                    catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { error = "撤销失败，请重试" }
-                }
-            }) { Text("撤销纠错") }
-        }
-        error?.let { Text(it, fontSize = 11.sp) }
-    }
-}
+

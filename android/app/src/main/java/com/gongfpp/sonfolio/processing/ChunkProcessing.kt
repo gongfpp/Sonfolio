@@ -18,16 +18,20 @@ object ChunkProcessing {
     const val ASR_FAILED = "ASR_FAILED"
     const val ASSEMBLY_PENDING = "ASSEMBLY_PENDING"
     const val ASSEMBLY_FAILED = "ASSEMBLY_FAILED"
+    const val CORRECTION_PENDING = "CORRECTION_PENDING"
+    const val CORRECTION_RUNNING = "CORRECTION_RUNNING"
+    const val CORRECTION_FAILED = "CORRECTION_FAILED"
     const val AUDIO_DELETED = "AUDIO_DELETED"
     const val FAILED = "FAILED"
 
-    const val TOTAL_STAGES = 4
+    const val TOTAL_STAGES = 5
     const val STAGE_SAVE = 1
     const val STAGE_VOICE = 2
     const val STAGE_TRANSCRIBE = 3
     const val STAGE_ASSEMBLE = 4
+    const val STAGE_CORRECTION = 5
 
-    val stageTitles = listOf("保存录音", "找人声", "转写", "整理对话")
+    val stageTitles = listOf("保存录音", "找人声", "转写", "整理对话", "纠错")
 
     /** completed = 已完成阶段数；active = 正在进行的阶段（1–4，无则 null）；failed = 当前阶段失败。 */
     data class StageProgress(val completed: Int, val active: Int?, val failed: Boolean) {
@@ -45,6 +49,8 @@ object ChunkProcessing {
         ASR_FAILED -> StageProgress(STAGE_VOICE, STAGE_TRANSCRIBE, true)
         ASSEMBLY_PENDING -> StageProgress(STAGE_TRANSCRIBE, STAGE_ASSEMBLE, false)
         ASSEMBLY_FAILED -> StageProgress(STAGE_TRANSCRIBE, STAGE_ASSEMBLE, true)
+        CORRECTION_PENDING, CORRECTION_RUNNING -> StageProgress(STAGE_ASSEMBLE, STAGE_CORRECTION, false)
+        CORRECTION_FAILED -> StageProgress(STAGE_ASSEMBLE, STAGE_CORRECTION, true)
         ASR_READY, AUDIO_DELETED -> StageProgress(TOTAL_STAGES, null, false)
         else -> StageProgress(0, STAGE_SAVE, false)
     }
@@ -60,6 +66,9 @@ object ChunkProcessing {
         ASR_FAILED -> "转写失败，录音已保留"
         ASSEMBLY_PENDING -> "文字已保存，等待整理对话"
         ASSEMBLY_FAILED -> "整理对话失败，文字已保存"
+        CORRECTION_PENDING -> "等待错别字与标点纠错"
+        CORRECTION_RUNNING -> "正在纠错"
+        CORRECTION_FAILED -> "纠错失败，文字已保留"
         ASR_READY -> "已整理完成"
         AUDIO_DELETED -> "录音已清理，文字保留"
         FAILED -> "录音文件异常，录音保留"
@@ -69,14 +78,14 @@ object ChunkProcessing {
     /** 带阶段编号的短文案，例如「③ 转写」，用于列表行。 */
     fun stagedLabelOf(state: String): String {
         val progress = progressOf(state)
-        return if (progress.isDone) "已完成" else "①②③④"[progress.active!!.coerceIn(1, TOTAL_STAGES) - 1] + " " + labelOf(state)
+        return if (progress.isDone) "已完成" else "①②③④⑤"[progress.active!!.coerceIn(1, TOTAL_STAGES) - 1] + " " + labelOf(state)
     }
 
-    val runningStates = setOf(RECORDING, VAD_RUNNING, ASR_RUNNING)
+    val runningStates = setOf(RECORDING, VAD_RUNNING, ASR_RUNNING, CORRECTION_RUNNING)
 
     /** 需要用户点「继续处理」才可能推进的状态；运行中的任务交给 WorkManager 自恢复，不显示按钮。 */
     val actionableStates = setOf(
-        RECORDED, RECOVERED, VAD_READY, VAD_FAILED, ASR_FAILED, FAILED, ASSEMBLY_PENDING, ASSEMBLY_FAILED,
+        RECORDED, RECOVERED, VAD_READY, VAD_FAILED, ASR_FAILED, FAILED, ASSEMBLY_PENDING, ASSEMBLY_FAILED, CORRECTION_FAILED,
     )
 
     fun isActionable(state: String): Boolean = state in actionableStates

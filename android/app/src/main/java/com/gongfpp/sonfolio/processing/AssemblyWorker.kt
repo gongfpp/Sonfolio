@@ -15,12 +15,18 @@ class AssemblyWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (chunk.processingState !in listOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) return Result.success()
         return try {
             app.conversationRepository.rebuildFromTranscripts(chunk.startedAtMillis, chunk.endedAtMillis ?: chunk.startedAtMillis)
-            dao.updateProcessingState(id, ChunkProcessing.ASR_READY, null)
-            try { app.summaryCoordinator.enqueueForNewChunk(id) }
-            catch (error: CancellationException) { throw error }
-            catch (_: Exception) { dao.updateProcessingState(id, ChunkProcessing.ASR_READY, "基础整理已完成；AI 未能排队，请进入对话手动生成") }
-            // 转写完成后异步压缩录音；失败只影响存储体积，不回头影响录音与文字。
-            app.processingScheduler.enqueueCompression(id)
+            if (TranscriptCorrectionWorker.correctionEnabled(app, app.summarySettings.read().mode)) {
+                // 第 5 步：先纠错，再由 TranscriptCorrectionWorker 完成并排队 AI 总结。
+                dao.updateProcessingState(id, ChunkProcessing.CORRECTION_PENDING, "等待错别字与标点纠错")
+                app.processingScheduler.enqueueCorrection(id)
+            } else {
+                dao.updateProcessingState(id, ChunkProcessing.ASR_READY, null)
+                try { app.summaryCoordinator.enqueueForNewChunk(id) }
+                catch (error: CancellationException) { throw error }
+                catch (_: Exception) { dao.updateProcessingState(id, ChunkProcessing.ASR_READY, "基础整理已完成；AI 未能排队，请进入对话手动生成") }
+                // 转写完成后异步压缩录音；失败只影响存储体积，不回头影响录音与文字。
+                app.processingScheduler.enqueueCompression(id)
+            }
             Result.success()
         } catch (error: CancellationException) { throw error }
         catch (_: Exception) {

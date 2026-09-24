@@ -14,7 +14,6 @@ data class ConversationPreview(
     val startedAtMillis: Long,
     val endedAtMillis: Long,
     val isMarked: Boolean = false,
-    val note: String? = null,
     /** 为空表示标题仍是自动生成的；展示标题见 title。 */
     val titleOverride: String? = null,
 )
