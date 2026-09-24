@@ -32,6 +32,7 @@ import kotlinx.coroutines.*
     var model by rememberSaveable { mutableStateOf(saved.model) }
     var localEngine by rememberSaveable { mutableStateOf(saved.localEngine) }
     var key by remember { mutableStateOf("") }
+    var appId by rememberSaveable { mutableStateOf(saved.appId) }
     var consent by remember(mode, provider) { mutableStateOf(false) }
     var providerMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
@@ -92,32 +93,41 @@ import kotlinx.coroutines.*
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("识别提供商：${provider.label} ▾") }
                     DropdownMenu(providerMenu, { providerMenu = false }) {
                         SpeechProvider.entries.forEach { option -> DropdownMenuItem(text = { Text(option.label) }, onClick = {
-                            if (option != provider) { provider = option; model = option.models.first(); key = "" }
+                            if (option != provider) { provider = option; model = option.models.first(); key = ""; appId = "" }
                             providerMenu = false
                         }) }
                     }
                 }
+                if (provider.needsAppId) {
+                    OutlinedTextField(appId, { appId = it }, Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
+                        label = { Text(if (saved.appId.isNotBlank() && provider == saved.provider) "APP ID（已保存，留空保留）" else "APP ID") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
                 OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
-                    label = { Text(if (saved.hasKey && provider == saved.provider) "识别密钥（已保存，留空保留）" else "识别密钥") },
+                    label = { Text("${if (provider.needsAppId) "Access Token" else "识别密钥"}${if (saved.hasKey && provider == saved.provider) "（已保存，留空保留）" else ""}") },
                     trailingIcon = { IconButton(onClick = { keyHelp = true }) { Text("？") } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), visualTransformation = PasswordVisualTransformation())
-                TextButton(onClick = { runCatching { uriHandler.openUri(provider.keyPage) }.onFailure { message = "无法打开浏览器，请到提供商官网创建识别密钥" } }) { Text("获取 ${provider.label} 识别密钥 ↗") }
+                TextButton(onClick = { runCatching { uriHandler.openUri(provider.keyPage) }.onFailure { message = "无法打开浏览器，请到提供商官网创建识别密钥" } }) {
+                    Text(if (provider.needsAppId) "打开 ${provider.label} 控制台获取 APP ID 与 Access Token ↗" else "获取 ${provider.label} 识别密钥 ↗")
+                }
                 var advancedModel by remember { mutableStateOf(false) }
                 TextButton(onClick = { advancedModel = !advancedModel }) { Text("高级：选择识别模型") }
                 if (advancedModel) {
                     Box {
-                        OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("语音模型：$model ▾") }
+                        OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("语音模型：${provider.modelLabel(model)} ▾") }
                         DropdownMenu(modelMenu, { modelMenu = false }) {
-                            provider.models.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { model = option; modelMenu = false }) }
+                            provider.models.forEach { option -> DropdownMenuItem(text = { Text(provider.modelLabel(option)) }, onClick = { model = option; modelMenu = false }) }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("内置官方语音模型，不是聊天总结模型。", fontSize = 11.sp, modifier = Modifier.weight(1f))
                         HelpHint(
                             title = "在线识别模型与语言",
-                            body = if (provider == SpeechProvider.QWEN)
-                                "使用北京地域的密钥，支持下方「主要语言」设置。内置模型来自官方文档，不是聊天总结模型。"
-                            else "此提供商自动判断语言，不支持强制指定主要语言。内置模型来自官方文档，不是聊天总结模型。",
+                            body = when (provider) {
+                                SpeechProvider.QWEN -> "使用北京地域的密钥，支持下方「主要语言」设置。内置模型来自官方文档，不是聊天总结模型。"
+                                SpeechProvider.DOUBAO -> "使用火山引擎控制台「语音技术」应用的 APP ID 与 Access Token；Secret Key 不需要。识别在云端自动判断中英文与方言，不支持强制指定主要语言，也不使用本地「个人词汇」热词。"
+                                else -> "此提供商自动判断语言，不支持强制指定主要语言。内置模型来自官方文档，不是聊天总结模型。"
+                            },
                         )
                     }
                 }
@@ -139,11 +149,11 @@ import kotlinx.coroutines.*
                 if (busy) return@Button
                 busy = true
                 val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val chosenKey = key; val allowed = consent
-                val chosenEngine = localEngine
+                val chosenEngine = localEngine; val chosenAppId = appId
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenEngine)
+                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenAppId, chosenEngine)
                             app.recordingRepository.enqueuePendingAsr()
                         }
                         key = ""; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"
@@ -154,7 +164,7 @@ import kotlinx.coroutines.*
             }) { Text("保存转文字设置") }
             if (saved.hasKey) TextButton(enabled = !busy, onClick = {
                 runCatching { app.transcriptionSettings.clearKey() }.onSuccess {
-                    mode = TranscriptionMode.LOCAL; key = ""; message = "识别密钥已删除，已恢复本地识别"
+                    mode = TranscriptionMode.LOCAL; key = ""; appId = ""; message = "识别密钥已删除，已恢复本地识别"
                     scope.launch { app.recordingRepository.enqueuePendingAsr() }
                 }.onFailure { message = "删除密钥失败，请重试" }
             }) { Text("删除识别密钥") }

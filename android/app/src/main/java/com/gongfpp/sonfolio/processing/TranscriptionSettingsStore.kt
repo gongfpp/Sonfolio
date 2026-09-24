@@ -15,9 +15,30 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class TranscriptionMode(val label: String) { LOCAL("在手机上识别"), REMOTE("在线识别") }
 
-enum class SpeechProvider(val label: String, val endpoint: String, val models: List<String>, val keyPage: String) {
+enum class SpeechProvider(
+    val label: String,
+    val endpoint: String,
+    val models: List<String>,
+    val keyPage: String,
+    /** 豆包等需要 APP ID + Access Token 双凭证的提供商用第二个字段，其余为 null。 */
+    val queryEndpoint: String? = null,
+    val needsAppId: Boolean = false,
+    /** 资源 ID 等技术标识对用户不友好时的显示名；缺省直接显示原值。 */
+    val modelLabels: Map<String, String> = emptyMap(),
+) {
     QWEN("通义千问 · 中国内地", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", listOf("qwen3-asr-flash"), "https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
     SILICONFLOW("硅基流动", "https://api.siliconflow.cn/v1/audio/transcriptions", listOf("FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"), "https://cloud.siliconflow.cn/account/ak"),
+    DOUBAO(
+        "豆包 · 火山引擎",
+        "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit",
+        listOf("volc.seedasr.auc"),
+        "https://console.volcengine.com/speech/app",
+        queryEndpoint = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query",
+        needsAppId = true,
+        modelLabels = mapOf("volc.seedasr.auc" to "豆包录音文件识别 2.0"),
+    );
+
+    fun modelLabel(model: String): String = modelLabels[model] ?: model
 }
 
 data class TranscriptionConfig(
@@ -26,6 +47,7 @@ data class TranscriptionConfig(
     val model: String = SpeechProvider.QWEN.models.first(),
     val localEngine: LocalAsrEngine = LocalAsrEngine.DEFAULT,
     val hasKey: Boolean = false,
+    val appId: String = "",
     val revision: String = "initial",
     val allowedAfterMillis: Long = Long.MAX_VALUE,
 )
@@ -39,11 +61,14 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
 
     @Synchronized fun read(): TranscriptionConfig {
         val provider = runCatching { SpeechProvider.valueOf(prefs.getString("provider", "QWEN")!!) }.getOrDefault(SpeechProvider.QWEN)
+        val appId = prefs.getString("app-id", "").orEmpty()
         return TranscriptionConfig(
             mode = runCatching { TranscriptionMode.valueOf(prefs.getString("mode", "LOCAL")!!) }.getOrDefault(TranscriptionMode.LOCAL),
             provider = provider, model = prefs.getString("model", provider.models.first()).orEmpty(),
             localEngine = LocalAsrEngine.fromName(prefs.getString("local-engine", null)),
-            hasKey = !prefs.getString("secret", null).isNullOrBlank(), revision = prefs.getString("revision", "initial").orEmpty(),
+            // 双凭证提供商只有 Access Token 或只有 APP ID 都不算配置完整。
+            hasKey = !prefs.getString("secret", null).isNullOrBlank() && (!provider.needsAppId || appId.isNotBlank()),
+            appId = appId, revision = prefs.getString("revision", "initial").orEmpty(),
             allowedAfterMillis = prefs.getLong("allowed-after", Long.MAX_VALUE),
         )
     }
@@ -54,28 +79,37 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
         model: String,
         key: String,
         consent: Boolean,
+        appId: String = "",
         localEngine: LocalAsrEngine = read().localEngine,
     ) {
         val old = read()
         require(model in provider.models) { "请选择提供商支持的语音模型" }
         require(key.length <= 4096 && key.trim().all { it.code in 33..126 }) { "API Key 不能包含空白或控制字符" }
+        require(appId.length <= 128 && appId.trim().all { it.code in 33..126 }) { "APP ID 不能包含空白或控制字符" }
         if (mode == TranscriptionMode.REMOTE) {
             require(consent) { "请单独确认上传人声音频；文字总结的授权不能代替音频授权" }
             require(key.isNotBlank() || (old.provider == provider && old.hasKey)) { "请填写此提供商的 API Key" }
+            if (provider.needsAppId) {
+                val effectiveAppId = appId.trim().ifBlank { if (old.provider == provider) old.appId else "" }
+                require(effectiveAppId.isNotBlank()) { "请填写豆包 APP ID" }
+            }
         }
         val edit = prefs.edit().putString("mode", mode.name).putString("provider", provider.name).putString("model", model)
             .putString("local-engine", localEngine.name)
             .putString("revision", UUID.randomUUID().toString())
             .putLong("allowed-after", if (mode == TranscriptionMode.REMOTE) System.currentTimeMillis() else Long.MAX_VALUE)
             .remove("granted-chunks")
-        if (old.provider != provider) edit.remove("secret")
+        if (old.provider != provider) edit.remove("secret").remove("app-id")
         if (key.isNotBlank()) edit.putString("secret", encrypt(key.trim()))
+        if (provider.needsAppId) {
+            edit.putString("app-id", appId.trim().ifBlank { if (old.provider == provider) old.appId else "" })
+        }
         check(edit.commit()) { "转文字设置保存失败，原配置保留" }
         state.value = read()
     }
 
     @Synchronized fun clearKey() {
-        check(prefs.edit().remove("secret").remove("granted-chunks").putString("mode", "LOCAL")
+        check(prefs.edit().remove("secret").remove("app-id").remove("granted-chunks").putString("mode", "LOCAL")
             .putLong("allowed-after", Long.MAX_VALUE).putString("revision", UUID.randomUUID().toString()).commit())
         state.value = read()
     }
@@ -98,6 +132,12 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)))
             String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
         }.getOrElse { error("无法读取识别 API Key，请在设置中重新填写") }
+    }
+
+    /** 双凭证提供商的 APP ID（非机密，明文保存）；调用前同样要求已授权。 */
+    @Synchronized internal fun appId(expected: TranscriptionConfig, chunkId: String, startedAt: Long): String {
+        check(isAuthorized(expected, chunkId, startedAt)) { "尚未授权上传这份历史录音，请在原始录音中点击继续处理并确认" }
+        return prefs.getString("app-id", "").orEmpty()
     }
 
     private fun encrypt(text: String): String {

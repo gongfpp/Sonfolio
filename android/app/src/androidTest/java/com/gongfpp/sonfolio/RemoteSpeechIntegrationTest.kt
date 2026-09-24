@@ -53,6 +53,42 @@ class RemoteSpeechIntegrationTest {
         }
     }
 
+    @Test fun doubaoSubmitsThenPollsAndKeepsAppIdOutOfTheAudioField() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "qa-doubao-${System.nanoTime()}"
+        val store = TranscriptionSettingsStore(context, name)
+        val file = File(context.cacheDir, "$name.wav")
+        try {
+            file.writeBytes(RemoteSpeechTransport.wav(FloatArray(16_000)))
+            assertThrows(IllegalArgumentException::class.java) {
+                store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true)
+            }
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true, appId = "1000000001")
+            val config = store.read()
+            assertTrue(config.hasKey)
+            assertEquals("1000000001", config.appId)
+            store.authorizeChunk("chunk", config.revision)
+            val submit = FakeConnection(URL(config.provider.endpoint), 200, "{}", mapOf("X-Api-Status-Code" to "20000000"))
+            val query = FakeConnection(URL(config.provider.queryEndpoint!!), 200, "{\"result\":{\"text\":\"豆包转写\"}}", mapOf("X-Api-Status-Code" to "20000000"))
+            val connections = ArrayDeque(listOf(submit, query))
+            val transport = RemoteSpeechTransport(store) { connections.removeFirst() }
+            assertEquals(listOf("豆包转写"), transport.transcribe(file, listOf(DetectedSpeechWindow(0, 1_000)), config, "chunk", 0, "zh"))
+            assertEquals("1000000001", submit.sentHeaders["X-Api-App-Key"])
+            assertEquals("volc.seedasr.auc", submit.sentHeaders["X-Api-Resource-Id"])
+            assertEquals(submit.sentHeaders["X-Api-Request-Id"], query.sentHeaders["X-Api-Request-Id"])
+            val body = JSONObject(submit.sent.toString("UTF-8"))
+            assertTrue(body.getJSONObject("audio").getString("data").isNotBlank())
+            assertEquals("bigmodel", body.getJSONObject("request").getString("model_name"))
+            assertFalse(submit.sent.toString("UTF-8").contains(file.name))
+            assertEquals("豆包转写", RemoteSpeechTransport.parseDoubao("{\"result\":{\"text\":\"豆包转写\"}}"))
+            try { RemoteSpeechTransport.parseDoubao("{\"header\":{\"message\":\"secret-server-echo\"}}"); fail() }
+            catch (error: IllegalStateException) { assertFalse(error.message.orEmpty().contains("secret-server-echo")) }
+        } finally {
+            store.clearKey(); context.deleteSharedPreferences(name); file.delete()
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("sonfolio-$name") }
+        }
+    }
+
     @Test fun multipartAndResponseErrorsDoNotExposeServerPayloads() {
         val config = TranscriptionConfig(provider = SpeechProvider.SILICONFLOW, model = "FunAudioLLM/SenseVoiceSmall")
         val request = RemoteSpeechTransport.request(config, RemoteSpeechTransport.wav(floatArrayOf(0f, .5f, -.5f)), "zh")
@@ -65,11 +101,16 @@ class RemoteSpeechIntegrationTest {
         catch (error: IllegalStateException) { assertFalse(error.message.orEmpty().contains("secret-server-echo")) }
     }
 
-    private class FakeConnection(url: URL, private val status: Int, private val response: String) : HttpsURLConnection(url) {
+    private class FakeConnection(url: URL, private val status: Int, private val response: String,
+        private val headers: Map<String, String> = emptyMap()) : HttpsURLConnection(url) {
         val sent = ByteArrayOutputStream()
+        val sentHeaders = mutableMapOf<String, String>()
         override fun getOutputStream() = sent
         override fun getInputStream() = response.byteInputStream()
         override fun getResponseCode() = status
+        override fun setRequestProperty(key: String, value: String) { sentHeaders[key] = value }
+        override fun getHeaderField(name: String?): String? =
+            headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
         override fun disconnect() = Unit
         override fun usingProxy() = false
         override fun connect() = Unit

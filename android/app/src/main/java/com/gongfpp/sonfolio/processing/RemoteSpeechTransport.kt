@@ -27,11 +27,14 @@ internal class RemoteSpeechTransport(
     suspend fun transcribeWindow(file: File, window: DetectedSpeechWindow, config: TranscriptionConfig,
         chunkId: String, startedAt: Long, language: String): String = withContext(Dispatchers.IO) {
         ensureActive()
-        val key = store.apiKey(config, chunkId, startedAt)
         require(window.startOffsetMillis >= 0 && window.endOffsetMillis > window.startOffsetMillis &&
             window.endOffsetMillis - window.startOffsetMillis <= 30_000) { "人声片段超过安全上传范围，请重新检测人声" }
         val samples = WavPcmReader.readWindow(file, 16_000, window.startOffsetMillis, window.endOffsetMillis)
-        val request = request(config, wav(samples), language)
+        val wav = wav(samples)
+        // 豆包录音文件识别走异步 submit/query，两次请求共用同一个 X-Api-Request-Id。
+        if (config.provider == SpeechProvider.DOUBAO) return@withContext transcribeDoubao(config, wav, chunkId, startedAt)
+        val key = store.apiKey(config, chunkId, startedAt)
+        val request = request(config, wav, language)
         coroutineScope {
             val connection = open(URL(config.provider.endpoint))
             val guard = launch(Dispatchers.IO) {
@@ -72,6 +75,95 @@ internal class RemoteSpeechTransport(
         }
     }
 
+    private class HttpResult(val status: Int, val apiCode: String?, val body: String)
+
+    /**
+     * 豆包录音文件识别：先 submit 提交音频，再轮询 query 直到出结果；两次请求共用同一个
+     * X-Api-Request-Id。单个窗口失败由调用方按窗口重试，不会重复提交已成功的窗口。
+     */
+    private suspend fun transcribeDoubao(config: TranscriptionConfig, wav: ByteArray, chunkId: String, startedAt: Long): String {
+        val appId = store.appId(config, chunkId, startedAt)
+        val token = store.apiKey(config, chunkId, startedAt)
+        val headers = mapOf(
+            "X-Api-App-Key" to appId,
+            "X-Api-Access-Key" to token,
+            "X-Api-Resource-Id" to config.model,
+            "X-Api-Request-Id" to UUID.randomUUID().toString(),
+            "X-Api-Sequence" to "-1",
+        )
+        val body = JSONObject()
+            .put("user", JSONObject().put("uid", appId))
+            .put("audio", JSONObject().put("format", "wav").put("data", Base64.encodeToString(wav, Base64.NO_WRAP)))
+            .put("request", JSONObject().put("model_name", "bigmodel").put("enable_itn", true).put("enable_punc", true))
+            .toString().toByteArray(Charsets.UTF_8)
+        val submitted = post(config, config.provider.endpoint, headers, body)
+        check(submitted.status in 200..299 && submitted.apiCode == "20000000") { doubaoError(submitted) }
+        return pollDoubao(config, config.provider.queryEndpoint!!, headers, chunkId, startedAt)
+    }
+
+    private suspend fun pollDoubao(config: TranscriptionConfig, url: String, headers: Map<String, String>,
+        chunkId: String, startedAt: Long): String {
+        val deadline = System.currentTimeMillis() + 60_000
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
+            val result = post(config, url, headers, "{}".toByteArray(Charsets.UTF_8))
+            check(result.status in 200..299) { doubaoError(result) }
+            when (result.apiCode) {
+                "20000000" -> return parseDoubao(result.body)
+                "20000003" -> return ""
+                "20000001", "20000002" -> {
+                    check(System.currentTimeMillis() < deadline) { "识别等待超时，录音已保留；重试可能再次计费" }
+                    delay(700)
+                }
+                else -> error(doubaoError(result))
+            }
+        }
+    }
+
+    /** 单次 HTTPS POST；沿用与单请求路径一致的取消、超时和响应大小限制。 */
+    private suspend fun post(config: TranscriptionConfig, url: String, headers: Map<String, String>, body: ByteArray): HttpResult =
+        coroutineScope {
+            val connection = open(URL(url))
+            val guard = launch(Dispatchers.IO) {
+                try { store.config.first { it.revision != config.revision } }
+                finally { connection.disconnect() }
+            }
+            try {
+                ensureActive()
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = 15_000; connection.readTimeout = 60_000
+                connection.requestMethod = "POST"; connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+                connection.setFixedLengthStreamingMode(body.size)
+                connection.outputStream.use { it.write(body) }
+                val status = connection.responseCode
+                val response = (if (status in 200..299) connection.inputStream else connection.errorStream)?.use { input ->
+                    val output = ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                    while (true) {
+                        ensureActive()
+                        val count = input.read(buffer); if (count < 0) break
+                        require(output.size() + count <= 1_048_576) { "识别响应超过限制" }
+                        output.write(buffer, 0, count)
+                    }
+                    output.toString("UTF-8")
+                }.orEmpty()
+                HttpResult(status, connection.getHeaderField("X-Api-Status-Code"), response)
+            } catch (error: CancellationException) { throw error }
+            catch (error: java.io.IOException) { error("识别网络中断或超时，录音已保留；重试可能再次计费") }
+            finally { guard.cancel(); connection.disconnect() }
+        }
+
+    private fun doubaoError(result: HttpResult): String = when {
+        result.status == 401 || result.status == 403 || result.apiCode == "45000030" ->
+            "识别密钥无效、APP ID 不匹配或账号未开通该识别资源，请检查转文字设置"
+        result.status == 429 || result.apiCode == "55000031" -> "识别服务限流或额度不足，稍后在原始录音中重试"
+        result.apiCode == "45000002" -> "人声片段为空，已跳过"
+        result.apiCode == "45000151" -> "音频格式不被豆包支持，录音已保留"
+        else -> "识别服务返回错误（${result.apiCode ?: "HTTP ${result.status}"}）；录音已保留，可稍后重试"
+    }
+
     companion object {
         internal fun wav(samples: FloatArray): ByteArray {
             require(samples.size <= 16_000 * 30)
@@ -107,6 +199,14 @@ internal class RemoteSpeechTransport(
                 val json = JSONObject(response)
                 if (provider == SpeechProvider.QWEN) json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
                 else json.getString("text")
+            } catch (_: Exception) { error("识别服务响应格式不兼容，未覆盖原有文字") }
+            require(text.length <= 20_000) { "识别文字超过单片段限制" }
+            return text.trim()
+        }
+
+        internal fun parseDoubao(response: String): String {
+            val text = try {
+                JSONObject(response).getJSONObject("result").optString("text", "")
             } catch (_: Exception) { error("识别服务响应格式不兼容，未覆盖原有文字") }
             require(text.length <= 20_000) { "识别文字超过单片段限制" }
             return text.trim()

@@ -89,7 +89,7 @@ class AsrWorker(
                                 startedAtMillis = chunk.startedAtMillis + segment.startOffsetMillis,
                                 endedAtMillis = chunk.startedAtMillis + segment.endOffsetMillis,
                                 text = text,
-                                languageTag = if (config.mode == TranscriptionMode.REMOTE && config.provider == SpeechProvider.SILICONFLOW) "auto" else language,
+                                languageTag = remoteLanguageTag(config, language),
                                 modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else engine.displayName,
                                 modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else when (engine) {
                                     LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
@@ -179,7 +179,7 @@ class AsrWorker(
                                 startedAtMillis = startedAt + segment.startOffsetMillis,
                                 endedAtMillis = startedAt + segment.endOffsetMillis,
                                 text = text,
-                                languageTag = if (config.provider == SpeechProvider.SILICONFLOW) "auto" else language,
+                                languageTag = remoteLanguageTag(config, language),
                                 modelName = config.model,
                                 modelVersion = versionTag,
                                 processingState = ChunkProcessing.ASR_READY,
@@ -196,6 +196,11 @@ class AsrWorker(
         results.forEach { (segment, result) -> textBySegment[segment.id] = result.getOrThrow() }
         return segments.map { textBySegment.getValue(it.id) }
     }
+
+    /** 在线提供商自动判断语言的记为 auto；通义千问按「主要语言」强制指定。 */
+    private fun remoteLanguageTag(config: TranscriptionConfig, language: String): String =
+        if (config.mode == TranscriptionMode.REMOTE &&
+            (config.provider == SpeechProvider.SILICONFLOW || config.provider == SpeechProvider.DOUBAO)) "auto" else language
 
     companion object {
         const val AUDIO_CHUNK_ID = "audio_chunk_id"
