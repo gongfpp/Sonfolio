@@ -268,7 +268,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
     internal suspend fun <T> withGenerator(config: SummaryConfig, block: suspend (suspend (String, String) -> String) -> T): T {
         check(app.summarySettings.read().revision == config.revision) { "总结配置已改变，任务已取消" }
         return when (config.mode) {
-            SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings).generate(config, system, user) }
+            SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings, app.usageStore).generate(config, system, user) }
             SummaryMode.LOCAL -> localMutex.withLock {
                 val file = app.summarySettings.modelFile(config)
                 require(file?.isFile == true) { "请先在设置中下载总结模型" }

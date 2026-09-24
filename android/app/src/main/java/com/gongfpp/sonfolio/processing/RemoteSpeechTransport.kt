@@ -16,6 +16,7 @@ import javax.net.ssl.HttpsURLConnection
 /** Uploads only bounded VAD windows, never the whole original recording or its filename. */
 internal class RemoteSpeechTransport(
     private val store: TranscriptionSettingsStore,
+    private val usage: com.gongfpp.sonfolio.UsageStore? = null,
     private val open: (URL) -> HttpsURLConnection = { it.openConnection() as HttpsURLConnection },
 ) {
     suspend fun transcribe(file: File, windows: List<DetectedSpeechWindow>, config: TranscriptionConfig,
@@ -32,7 +33,11 @@ internal class RemoteSpeechTransport(
         val samples = WavPcmReader.readWindow(file, 16_000, window.startOffsetMillis, window.endOffsetMillis)
         val wav = wav(samples)
         // 豆包录音文件识别走异步 submit/query，两次请求共用同一个 X-Api-Request-Id。
-        if (config.provider == SpeechProvider.DOUBAO) return@withContext transcribeDoubao(config, wav, chunkId, startedAt)
+        if (config.provider == SpeechProvider.DOUBAO) {
+            val text = transcribeDoubao(config, wav, chunkId, startedAt)
+            usage?.recordAsr(config.provider.name, window.durationMillis / 1_000)
+            return@withContext text
+        }
         val key = store.apiKey(config, chunkId, startedAt)
         val request = request(config, wav, language)
         coroutineScope {
@@ -68,7 +73,9 @@ internal class RemoteSpeechTransport(
                     output.toString("UTF-8")
                 }
                 check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
-                parse(config.provider, response)
+                val text = parse(config.provider, response)
+                usage?.recordAsr(config.provider.name, window.durationMillis / 1_000)
+                text
             } catch (error: CancellationException) { throw error }
             catch (error: java.io.IOException) { error("识别网络中断或超时，录音已保留；重试可能再次计费") }
             finally { guard.cancel(); connection.disconnect() }
@@ -109,6 +116,7 @@ internal class RemoteSpeechTransport(
         val wav = wav(FloatArray(16_000))
         if (config.provider == SpeechProvider.DOUBAO) {
             transcribeDoubao(config, wav, chunkId, startedAt)
+            usage?.recordAsr(config.provider.name, 1)
             "连通成功：豆包识别服务已响应（静音样例，未上传真实录音）"
         } else {
             val key = store.apiKey(config, chunkId, startedAt)
@@ -119,6 +127,7 @@ internal class RemoteSpeechTransport(
                 429 -> "连通失败：识别服务限流或额度不足"
                 else -> "连通失败：识别服务返回 HTTP ${result.status}"
             } }
+            usage?.recordAsr(config.provider.name, 1)
             "连通成功：${config.provider.label} 识别服务已响应（静音样例，未上传真实录音）"
         }
     }

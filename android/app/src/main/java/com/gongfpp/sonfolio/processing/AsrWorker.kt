@@ -139,7 +139,7 @@ class AsrWorker(
         startedAt: Long,
         language: String,
     ): List<String> {
-        val transport = RemoteSpeechTransport(app.transcriptionSettings)
+        val transport = RemoteSpeechTransport(app.transcriptionSettings, app.usageStore)
         val versionTag = "remote:${config.provider.name}:vad-window-v1"
         val reusable = dao.getTranscriptsForChunk(chunkId)
             .filter { it.modelName == config.model && it.modelVersion == versionTag }

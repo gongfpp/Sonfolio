@@ -21,6 +21,7 @@ private inline fun verifyTransport(condition: Boolean, message: () -> String) {
 
 internal class RemoteSummaryTransport(
     private val store: SummarySettingsStore,
+    private val usage: com.gongfpp.sonfolio.UsageStore? = null,
     private val open: (String) -> HttpsURLConnection = { URL(it).openConnection() as HttpsURLConnection },
 ) {
     suspend fun generate(config: SummaryConfig, system: String, user: String): String = suspendCancellableCoroutine { continuation ->
@@ -72,9 +73,11 @@ internal class RemoteSummaryTransport(
                     }
                     output.toString("UTF-8")
                 }
-                val choice = JSONObject(data).getJSONArray("choices").getJSONObject(0)
+                val body = JSONObject(data)
+                val choice = body.getJSONArray("choices").getJSONObject(0)
                 verifyTransport(choice.optString("finish_reason") != "length") { "模型输出被截断，请重试或更换模型" }
                 val text = choice.getJSONObject("message").getString("content")
+                usage?.recordLlm(config.model, body.optJSONObject("usage")?.optLong("total_tokens") ?: 0L)
                 if (continuation.isActive) continuation.resume(text)
             } catch (error: Throwable) {
                 val message = when (error) {

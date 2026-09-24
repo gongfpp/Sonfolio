@@ -1049,6 +1049,21 @@ private fun RealConversationScreen(
                         actions = buildList {
                             add("改标题" to { titleDraft = conversation?.title ?: "" })
                             add("标记" to { markerDialog = true })
+                            add("重新纠错" to {
+                                val app = exportContext.applicationContext as SonfolioApplication
+                                if (app.summarySettings.read().mode == com.gongfpp.sonfolio.summary.SummaryMode.BASIC) {
+                                    Toast.makeText(exportContext, "请先在设置里选择「在手机上总结」或「在线总结」作为纠错模型", Toast.LENGTH_LONG).show()
+                                } else {
+                                    exportScope.launch {
+                                        val result = runCatching { withContext(Dispatchers.IO) { app.summaryCoordinator.enqueueCorrection("conversation:$conversationId") } }
+                                        Toast.makeText(
+                                            exportContext,
+                                            if (result.isSuccess) "已整场加入纠错队列，完成后显示在转写里" else (result.exceptionOrNull()?.message ?: "无法加入纠错队列"),
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                }
+                            })
                             if (conversation?.isMarked == true) add("取消标记" to { viewModel.removeConversationMarker(conversationId) })
                             add("导出文本" to { exportTextLauncher.launch("sonfolio-对话文本.txt") })
                         },
@@ -1416,6 +1431,8 @@ private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBac
     val calendar by viewModel.calendarSpans.collectAsStateWithLifecycle()
     val recordedDates = remember(calendar) { calendar.filter { !it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
     val organizedDates = remember(calendar) { calendar.filter { it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp)) {
         DetailTopBar("一日回顾", localDate, onBack)
         DateNavigator(LocalDate.parse(localDate), recorded = recordedDates, organized = organizedDates) { localDate = it.toString() }
@@ -1437,7 +1454,24 @@ private fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBac
         AuxiliaryCard("值得记住", parseJsonLines(journal?.memorableJson).ifBlank { "这一天还没有标记重点对话" }, Icons.Default.Star, Amber)
         Text("基于 $sourceCount 场对话整理 · 原始录音仍按你的保留策略保存", modifier = Modifier.padding(top = 20.dp), color = InkSoft, fontSize = 11.sp)
         com.gongfpp.sonfolio.summary.SummaryAction("day:$localDate")
-        TextButton(onClick = viewModel::rebuildConversations) { Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("重新整理") }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = viewModel::rebuildConversations) { Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("重新整理") }
+            TextButton(onClick = {
+                val app = context.applicationContext as SonfolioApplication
+                if (app.summarySettings.read().mode == com.gongfpp.sonfolio.summary.SummaryMode.BASIC) {
+                    Toast.makeText(context, "请先在设置里选择「在手机上总结」或「在线总结」作为纠错模型", Toast.LENGTH_LONG).show()
+                } else {
+                    scope.launch {
+                        val result = runCatching { withContext(Dispatchers.IO) { app.summaryCoordinator.enqueueCorrection("day:$localDate") } }
+                        Toast.makeText(
+                            context,
+                            if (result.isSuccess) "已把本日加入纠错队列" else (result.exceptionOrNull()?.message ?: "无法加入纠错队列"),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }) { Text("重新纠错本日") }
+        }
     }
 }
 
@@ -1674,8 +1708,8 @@ private fun SettingsScreen(
         Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
         SectionTitle("识别与总结")
         com.gongfpp.sonfolio.processing.TranscriptionSettingsCard()
-        com.gongfpp.sonfolio.PersonalVocabularyCard()
         com.gongfpp.sonfolio.summary.SummarySettingsCard()
+        UsageCard()
         SectionTitle("整理")
         OrganizeSettingsCard(preferences, onRebuildConversations)
         SectionTitle("录音")

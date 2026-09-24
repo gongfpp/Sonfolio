@@ -94,6 +94,8 @@ private const val SAVED_SECRET_MASK = "*****"
                         }
                     }
                 }
+                // 个人词汇只对本地 Qwen3-ASR 生效，仅在该引擎被选中时展示，避免常驻设置页造成误解。
+                if (localEngine == LocalAsrEngine.QWEN3_ASR) com.gongfpp.sonfolio.PersonalVocabularyCard()
             } else {
                 Box {
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("识别提供商：${provider.label} ▾") }
@@ -242,5 +244,5 @@ private suspend fun runTranscriptionTest(app: SonfolioApplication, config: Trans
     }
     TranscriptionMode.REMOTE ->
         if (!config.hasKey) "连通失败：请先保存在线识别密钥"
-        else RemoteSpeechTransport(app.transcriptionSettings).test(config, "connection-test", System.currentTimeMillis())
+        else RemoteSpeechTransport(app.transcriptionSettings, app.usageStore).test(config, "connection-test", System.currentTimeMillis())
 }

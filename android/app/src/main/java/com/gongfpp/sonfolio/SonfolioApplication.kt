@@ -18,6 +18,7 @@ class SonfolioApplication : Application() {
         PersonalVocabularyRepository(database.vocabularyDao())
     }
     val processingScheduler by lazy { ProcessingScheduler(this) }
+    val usageStore by lazy { UsageStore(this) }
     val recordingRepository by lazy {
         RecordingRepository(database.recordingDao(), processingScheduler, preferences, java.io.File(filesDir, "capture-journal"))
     }
