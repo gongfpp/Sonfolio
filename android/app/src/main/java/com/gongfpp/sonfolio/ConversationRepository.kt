@@ -32,8 +32,8 @@ class ConversationRepository(
         combine(
             conversationDao.observeTimeline(start, end),
             conversationDao.observeMarkedConversationIds(),
-        ) { entities, markedIds ->
-            entities.map { it.toPreview(markedIds.contains(it.id)) }
+        ) { rows, markedIds ->
+            rows.map { it.conversation.toPreview(markedIds.contains(it.conversation.id), summarySourceLabel(it.summaryModelVersion), it.transcriptCount) }
         }
 
     fun observeConversation(id: String): Flow<ConversationPreview?> = combine(conversationDao.observeConversation(id), conversationDao.observeMarkedConversationIds()) { row, marked -> row?.toPreview(row.id in marked) }
@@ -470,7 +470,7 @@ private fun groupIntersectsMarker(
 }
 
 
-private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview {
+private fun ConversationEntity.toPreview(isMarked: Boolean, summarySource: String? = null, segmentCount: Int = 0): ConversationPreview {
     val zone = runCatching { ZoneId.of(zoneId) }.getOrDefault(ZoneId.systemDefault())
     val start = Instant.ofEpochMilli(startedAtMillis).atZone(zone)
     val durationMillis = endedAtMillis - startedAtMillis
@@ -487,6 +487,8 @@ private fun ConversationEntity.toPreview(isMarked: Boolean): ConversationPreview
         startedAtMillis = startedAtMillis,
         endedAtMillis = endedAtMillis,
         isMarked = isMarked,
+        summarySource = summarySource,
+        segmentCount = segmentCount,
         titleOverride = titleOverride,
     )
 }

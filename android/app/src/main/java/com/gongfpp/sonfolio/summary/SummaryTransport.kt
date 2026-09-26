@@ -24,7 +24,7 @@ internal class RemoteSummaryTransport(
     private val usage: com.gongfpp.sonfolio.UsageStore? = null,
     private val open: (String) -> HttpsURLConnection = { URL(it).openConnection() as HttpsURLConnection },
 ) {
-    suspend fun generate(config: SummaryConfig, system: String, user: String, maxTokens: Int = 1600, jsonMode: Boolean = true): String = suspendCancellableCoroutine { continuation ->
+    suspend fun generate(config: SummaryConfig, system: String, user: String, maxTokens: Int = 2400, jsonMode: Boolean = true): String = suspendCancellableCoroutine { continuation ->
         val connection = AtomicReference<HttpsURLConnection?>()
         val future = executor.submit {
             try {
@@ -39,8 +39,11 @@ internal class RemoteSummaryTransport(
                 if (jsonMode) request.put("response_format", JSONObject().put("type", "json_object"))
                 when (SummaryProvider.fromEndpoint(endpoint)) {
                     SummaryProvider.DEEPSEEK -> request.put("thinking", JSONObject().put("type", "disabled"))
+                    // OpenCode Go 上的 DeepSeek 等也是混合思考模型：不关思考会把 completion 预算耗在推理上，
+                    // 触发 finish_reason=length「模型输出被截断」。
+                    SummaryProvider.OPENCODE_GO -> request.put("thinking", JSONObject().put("type", "disabled"))
                     SummaryProvider.QWEN -> request.put("enable_thinking", false)
-                    SummaryProvider.OPENCODE_GO, SummaryProvider.CUSTOM -> Unit
+                    SummaryProvider.CUSTOM -> Unit
                 }
                 val conn = open(endpoint).also { connection.set(it) }
                 conn.instanceFollowRedirects = false

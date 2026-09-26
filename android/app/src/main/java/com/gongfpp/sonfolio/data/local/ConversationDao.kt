@@ -1,6 +1,7 @@
 package com.gongfpp.sonfolio.data.local
 
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.ColumnInfo
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -21,6 +22,13 @@ data class TranscriptAudioRow(
     @ColumnInfo(name = "originalText") val originalText: String? = null,
     /** 所属切片录音发生时的时区；空值按设备时区回退。 */
     @ColumnInfo(name = "recordedZoneId") val recordedZoneId: String = "",
+)
+
+/** 时间线一行：对话本身 + 它当前小结的来源（null 表示只有本地提取式小结）。 */
+data class ConversationWithSummary(
+    @Embedded val conversation: ConversationEntity,
+    val transcriptCount: Int = 0,
+    val summaryModelVersion: String? = null,
 )
 
 data class TranscriptSearchRow(
@@ -129,21 +137,29 @@ interface ConversationDao {
     @Query("UPDATE summary_runs SET state = :state, message = :message, updatedAtMillis = :now WHERE sourceKey = :key")
     suspend fun updateSummaryRun(key: String, state: String, message: String?, now: Long)
 
-    @Query("SELECT * FROM conversations WHERE startedAtMillis < :end AND endedAtMillis >= :start ORDER BY startedAtMillis ASC")
-    fun observeTimeline(start: Long = Long.MIN_VALUE, end: Long = Long.MAX_VALUE): Flow<List<ConversationEntity>>
-
     @Query(
         """
-        SELECT DISTINCT target.conversationId
-        FROM transcripts target
-        WHERE target.conversationId IS NOT NULL
-          AND EXISTS (
-              SELECT 1
-              FROM transcripts seed, markers m
-              WHERE seed.conversationId = target.conversationId
-                AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-                AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
-          )
+        SELECT c.*,
+               (SELECT COUNT(*) FROM transcripts t WHERE t.conversationId = c.id AND t.text <> '') AS transcriptCount,
+               s.modelVersion AS summaryModelVersion
+        FROM conversations c
+        LEFT JOIN conversation_summaries s ON s.conversationId = c.id
+        WHERE c.startedAtMillis < :end AND c.endedAtMillis >= :start
+        ORDER BY c.startedAtMillis ASC
+        """,
+    )
+    fun observeTimeline(start: Long = Long.MIN_VALUE, end: Long = Long.MAX_VALUE): Flow<List<ConversationWithSummary>>
+
+    // 用 JOIN 而不是相关子查询里的 transcripts×markers 笛卡尔积：6046 条转写时从 5.8s 降到 0.01s，
+    // 否则时间线 combine 会长时间只显示空列表（进去再退出来重现）。
+    @Query(
+        """
+        SELECT DISTINCT t.conversationId
+        FROM transcripts t
+        JOIN markers m
+          ON t.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+         AND t.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
+        WHERE t.conversationId IS NOT NULL
         """,
     )
     fun observeMarkedConversationIds(): Flow<List<String>>

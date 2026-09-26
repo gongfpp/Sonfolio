@@ -14,9 +14,21 @@ data class ConversationPreview(
     val startedAtMillis: Long,
     val endedAtMillis: Long,
     val isMarked: Boolean = false,
+    /** 小结来源（在线 AI · 模型名／本地 AI），null 表示只有本地提取式小结。 */
+    val summarySource: String? = null,
+    /** 这场对话包含的转写句数。 */
+    val segmentCount: Int = 0,
     /** 为空表示标题仍是自动生成的；展示标题见 title。 */
     val titleOverride: String? = null,
 )
+
+/** 小结来源标签；提取式与空值返回 null，表示未生成 AI 总结。 */
+internal fun summarySourceLabel(modelVersion: String?): String? = when {
+    modelVersion == null -> null
+    modelVersion.startsWith("REMOTE:") -> "在线 AI · ${modelVersion.removePrefix("REMOTE:").substringBefore(" @").trim()}"
+    modelVersion.startsWith("LOCAL:") -> "本地 AI · ${modelVersion.removePrefix("LOCAL:").substringBefore(" [").trim()}"
+    else -> null
+}
 
 data class TranscriptLine(
     val id: String,

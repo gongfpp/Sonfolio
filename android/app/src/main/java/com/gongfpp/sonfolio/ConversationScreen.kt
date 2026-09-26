@@ -97,11 +97,13 @@ internal fun RealConversationScreen(
     val title = conversation?.title ?: "未识别"
     val meta = conversation?.let { formatConversationMeta(it) } ?: "正在整理原始对话"
     val summary = conversation?.summary ?: "正在从本地转写中生成本段小结。"
-    val origin = when {
-        structuredSummary?.modelVersion?.startsWith("REMOTE:") == true -> "外部 AI 总结"
-        structuredSummary?.modelVersion?.startsWith("LOCAL:") == true -> "手机本地 AI"
-        else -> "本地提取式小结"
-    }
+    val origin = structuredSummary?.modelVersion?.let { version ->
+        when {
+            version.startsWith("REMOTE:") -> "在线 AI · ${version.removePrefix("REMOTE:").substringBefore(" @").trim()}"
+            version.startsWith("LOCAL:") -> "本地 AI · ${version.removePrefix("LOCAL:").substringBefore(" [").trim()}"
+            else -> "本地提取式小结"
+        }
+    } ?: "本地提取式小结"
     val exportContext = LocalContext.current
     val exportScope = rememberCoroutineScope()
     val exportTextLauncher = rememberLauncherForActivityResult(
@@ -397,10 +399,15 @@ internal fun SummaryCard(
                         scope.launch { runCatching { withContext(Dispatchers.IO) { app.summaryCoordinator.cancel(sourceKey) } } }
                     }) { Text("取消", fontSize = 11.sp) }
                 }
-            } else if (run?.state == "READY" && run?.outputJson != null) {
-                Text("AI 总结 · 请结合原文核对", modifier = Modifier.padding(top = 8.dp), color = Green, fontSize = 11.sp)
-            } else if (updatedAtMillis != null) {
-                Text("AI 更新于 ${formatDateTime(updatedAtMillis)}", modifier = Modifier.padding(top = 8.dp), color = InkSoft, fontSize = 11.sp)
+            } else {
+                val extracted = origin == "本地提取式小结"
+                val time = updatedAtMillis?.let { " · ${formatDateTime(it)}" }.orEmpty()
+                Text(
+                    if (extracted) "来源：$origin（还没生成 AI 总结，可点上方生成）" else "来源：$origin$time · 请结合原文核对",
+                    modifier = Modifier.padding(top = 8.dp),
+                    color = if (extracted) InkSoft else Green,
+                    fontSize = 11.sp,
+                )
             }
             run?.message?.takeIf { it.isNotBlank() && !pending && run?.state != "READY" }?.let {
                 Text(it, modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 11.sp)

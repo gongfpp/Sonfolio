@@ -609,6 +609,12 @@ internal fun TimelineCard(item: ConversationPreview, onClick: () -> Unit) {
                 }
                 if (item.summary.isNotBlank()) {
                     Text(item.summary, modifier = Modifier.padding(top = 3.dp), color = InkSoft, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        (item.summarySource ?: "本地提取式整理") + if (item.segmentCount > 0) " · 共 ${item.segmentCount} 段" else "",
+                        modifier = Modifier.padding(top = 4.dp),
+                        color = if (item.summarySource != null) Green else InkSoft,
+                        fontSize = 10.sp,
+                    )
                 }
                 if (item.isMarked) {
                     Text(
