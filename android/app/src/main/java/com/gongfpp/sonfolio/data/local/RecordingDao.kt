@@ -56,10 +56,7 @@ interface RecordingDao {
     suspend fun getWavRetirementCandidates(cutoff: Long): List<AudioChunkEntity>
 
     @Query("""SELECT DISTINCT s.audioChunkId FROM speech_segments s JOIN transcripts t ON t.speechSegmentId = s.id
-        WHERE t.conversationId IS NOT NULL AND EXISTS (
-            SELECT 1 FROM transcripts seed, markers m WHERE seed.conversationId = t.conversationId
-            AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-            AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis)
+        WHERE t.conversationId IS NOT NULL AND t.conversationId IN $MARKED_CONVERSATIONS_SQL
     """)
     suspend fun getChunksInMarkedConversations(): List<String>
     @Query("SELECT t.id FROM transcripts t JOIN speech_segments s ON t.speechSegmentId = s.id WHERE s.audioChunkId = :chunkId")

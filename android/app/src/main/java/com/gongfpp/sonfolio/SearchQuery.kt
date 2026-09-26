@@ -1,5 +1,6 @@
 package com.gongfpp.sonfolio
 
+import com.gongfpp.sonfolio.data.local.MARKED_CONVERSATIONS_SQL
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -121,9 +122,5 @@ internal data class SearchQuery(
     }
 }
 
-private const val MARKED_SQL = """EXISTS (
-    SELECT 1 FROM transcripts seed, markers m
-    WHERE seed.conversationId = t.conversationId
-      AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-      AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
-)"""
+// 标记集合用共享的不相关子查询，只算一次；旧的逐行 EXISTS 笛卡尔积在 6046 条转写时每次搜索约 5.7s。
+private const val MARKED_SQL = "t.conversationId IN $MARKED_CONVERSATIONS_SQL"

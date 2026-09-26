@@ -150,18 +150,7 @@ interface ConversationDao {
     )
     fun observeTimeline(start: Long = Long.MIN_VALUE, end: Long = Long.MAX_VALUE): Flow<List<ConversationWithSummary>>
 
-    // 用 JOIN 而不是相关子查询里的 transcripts×markers 笛卡尔积：6046 条转写时从 5.8s 降到 0.01s，
-    // 否则时间线 combine 会长时间只显示空列表（进去再退出来重现）。
-    @Query(
-        """
-        SELECT DISTINCT t.conversationId
-        FROM transcripts t
-        JOIN markers m
-          ON t.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-         AND t.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
-        WHERE t.conversationId IS NOT NULL
-        """,
-    )
+    @Query("SELECT DISTINCT t.conversationId FROM transcripts t WHERE t.conversationId IN $MARKED_CONVERSATIONS_SQL")
     fun observeMarkedConversationIds(): Flow<List<String>>
 
     @Query("SELECT * FROM markers ORDER BY markedAtMillis ASC")
@@ -185,13 +174,7 @@ interface ConversationDao {
             a.localPath AS localPath,
             a.startedAtMillis AS chunkStartedAtMillis,
             a.recordedZoneId,
-            CASE WHEN EXISTS (
-                SELECT 1
-                FROM transcripts seed, markers m
-                WHERE seed.conversationId = t.conversationId
-                  AND seed.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
-                  AND seed.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis
-            ) THEN 1 ELSE 0 END AS isMarked
+            CASE WHEN t.conversationId IN $MARKED_CONVERSATIONS_SQL THEN 1 ELSE 0 END AS isMarked
         FROM transcripts t
         JOIN speech_segments s ON s.id = t.speechSegmentId
         JOIN audio_chunks a ON a.id = s.audioChunkId
@@ -237,9 +220,6 @@ interface ConversationDao {
     /** 用户放弃手工标题，回到自动标题。 */
     @Query("UPDATE conversations SET titleOverride = NULL WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
     suspend fun resetConversationTitle(id: String)
-
-    @Query("UPDATE conversations SET note = :note WHERE id = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :id), :id)")
-    suspend fun updateConversationNote(id: String, note: String?)
 
     /** 修正转写：首次修正时把原文字存进 originalText，之后只改 text，原始版本始终保留。 */
     @Query("UPDATE transcripts SET originalText = CASE WHEN originalText IS NULL THEN text ELSE originalText END, text = :text WHERE id = :id")
