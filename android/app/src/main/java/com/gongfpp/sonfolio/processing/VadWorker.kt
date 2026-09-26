@@ -23,8 +23,9 @@ class VadWorker(
         val app = applicationContext as SonfolioApplication
         val dao = app.database.recordingDao()
         val chunk = dao.getChunk(chunkId) ?: return Result.failure()
-        if (chunk.endedAtMillis == null || chunk.processingState == ChunkProcessing.AUDIO_DELETED) return Result.success()
-        if (chunk.processingState in setOf(ChunkProcessing.ASR_READY, ChunkProcessing.ASR_RUNNING, ChunkProcessing.VAD_READY)) return Result.success()
+        if (chunk.endedAtMillis == null) return Result.success()
+        if (ChunkProcessing.isAssembled(chunk.processingState)) return Result.success()
+        if (chunk.processingState in setOf(ChunkProcessing.ASR_RUNNING, ChunkProcessing.VAD_READY)) return Result.success()
         val file = File(chunk.localPath)
         if (!file.exists() || file.length() <= 44L) {
             dao.updateProcessingState(chunkId, ChunkProcessing.VAD_FAILED, "录音文件不存在或为空")

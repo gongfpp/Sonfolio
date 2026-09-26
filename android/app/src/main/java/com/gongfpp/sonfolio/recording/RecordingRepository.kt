@@ -373,7 +373,7 @@ class RecordingRepository(
             ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }.forEach { chunk ->
                 when {
                     chunk.id in protected -> skippedMarked++
-                    chunk.endedAtMillis == null || chunk.processingState != ChunkProcessing.ASR_READY -> skippedNotReady++
+                    chunk.endedAtMillis == null || !ChunkProcessing.isAssembled(chunk.processingState) -> skippedNotReady++
                     else -> {
                         // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。
                         val files = listOfNotNull(File(chunk.localPath), chunk.compressedPath?.let(::File))

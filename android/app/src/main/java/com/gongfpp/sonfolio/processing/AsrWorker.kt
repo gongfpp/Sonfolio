@@ -30,8 +30,9 @@ class AsrWorker(
         val app = applicationContext as SonfolioApplication
         val dao = app.database.recordingDao()
         val chunk = dao.getChunk(chunkId) ?: return Result.failure()
-        if (chunk.endedAtMillis == null || chunk.processingState == ChunkProcessing.AUDIO_DELETED) return Result.success()
-        if (chunk.processingState == ChunkProcessing.ASR_READY) return Result.success()
+        if (chunk.endedAtMillis == null) return Result.success()
+        // 已整理（含其后的纠错阶段）或已清理的切片不再重新识别。
+        if (ChunkProcessing.isAssembled(chunk.processingState)) return Result.success()
         if (chunk.processingState in listOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) {
             AssemblyWorker.enqueue(applicationContext, chunkId); return Result.success()
         }
