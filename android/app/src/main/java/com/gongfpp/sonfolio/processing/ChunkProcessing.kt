@@ -89,4 +89,8 @@ object ChunkProcessing {
     )
 
     fun isActionable(state: String): Boolean = state in actionableStates
+
+    /** 「整理对话」已经完成、其后的纠错不该再让切片回到时间线「进行中」的状态。 */
+    val assembledStates = setOf(ASR_READY, AUDIO_DELETED, CORRECTION_PENDING, CORRECTION_RUNNING, CORRECTION_FAILED)
+    fun isAssembled(state: String): Boolean = state in assembledStates
 }

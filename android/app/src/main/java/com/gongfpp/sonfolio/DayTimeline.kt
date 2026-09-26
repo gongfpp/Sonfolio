@@ -81,7 +81,7 @@ internal data class DayTimeline(
     val gapMillis: Long,
 ) {
     /** 已整理完成的切片数 / 当天切片数，用于「3/20」式的处理进度。 */
-    val processedChunks: Int get() = chunks.count { it.processingState == ChunkProcessing.ASR_READY }
+    val processedChunks: Int get() = chunks.count { ChunkProcessing.isAssembled(it.processingState) }
     val totalChunks: Int get() = chunks.size
 
     /** 对话与进行中单元混合后按时间倒序；新的在上面。 */
@@ -119,7 +119,7 @@ internal data class DayTimeline(
             mergeGapMillis: Long,
         ): List<PendingUnit> {
             val groups = mutableListOf<MutableList<AudioChunkPreview>>()
-            dayChunks.filter { it.processingState != ChunkProcessing.ASR_READY }.forEach { chunk ->
+            dayChunks.filter { !ChunkProcessing.isAssembled(it.processingState) }.forEach { chunk ->
                 val current = groups.lastOrNull()
                 val groupEnd = current?.last()?.savedEndMillis()
                 val gapInside = current != null && groupEnd != null && gaps.any {
