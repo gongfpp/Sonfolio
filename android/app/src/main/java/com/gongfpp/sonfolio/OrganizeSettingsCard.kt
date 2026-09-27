@@ -27,9 +27,9 @@ internal fun OrganizeSettingsCard(preferences: SonfolioPreferences, onRebuildCon
                 Text("对话整理", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "对话整理说明",
-                    body = "自动标题：没有 AI 总结时，标题来自规则或转写的第一句有信息量的话。\n\n" +
-                        "对话合并间隔：相邻语音停顿不超过这个间隔、且中间没有录音缺失，就算同一场对话，可跨越多个 5 分钟切片。间隔调大能减少一整段被拆开，但可能把不相关的内容并到一起。\n\n" +
-                        "当前按时间连续性合并，不是语义主题识别；同一主题停顿过久仍可能被分开。",
+                    body = "**自动标题**：没有 AI 总结时，标题来自规则或转写的第一句有信息量的话。\n\n" +
+                        "**对话合并间隔**：相邻语音停顿不超过这个间隔、且中间没有录音缺失，就算同一场对话，可跨越多个 5 分钟切片。**间隔调大能减少一整段被拆开**，但可能把不相关的内容并到一起。\n\n" +
+                        "当前**按时间连续性合并，不是语义主题识别**；同一主题停顿过久仍可能被分开。",
                 )
             }
             Text("自动标题来源", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

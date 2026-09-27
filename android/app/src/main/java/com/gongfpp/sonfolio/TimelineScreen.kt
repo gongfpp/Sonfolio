@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -301,14 +302,25 @@ internal fun RecentHeatPanel(
                 Text("最近两周", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 TextButton(onClick = onOpenCalendar) { Text("日历 ›", color = Green, fontSize = 12.sp) }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                days.forEach { day ->
-                    val color = when {
-                        day in organized -> Green
-                        day in recorded -> PaleGreenStrong
-                        else -> Color(0xFFEDEDE7)
+            // 参照打卡类日历：周一到周日对齐，格子里显示日期数字，用颜色表示记录状态，今天加高亮环。
+            val cells = remember(days) {
+                val padded = ArrayList<LocalDate?>()
+                repeat(days.first().dayOfWeek.value - 1) { padded.add(null) }
+                padded.addAll(days)
+                padded
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                listOf("一", "二", "三", "四", "五", "六", "日").forEach { label ->
+                    Text(label, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = InkSoft, fontSize = 10.sp)
+                }
+            }
+            cells.chunked(7).forEach { week ->
+                Row(Modifier.fillMaxWidth().padding(top = 3.dp)) {
+                    week.forEach { cell ->
+                        Box(Modifier.weight(1f).aspectRatio(1.05f), contentAlignment = Alignment.Center) {
+                            if (cell != null) CalendarDay(cell, cell in recorded, cell in organized, cell == date)
+                        }
                     }
-                    Box(Modifier.weight(1f).height(16.dp).clip(RoundedCornerShape(4.dp)).background(color))
                 }
             }
             Text(
@@ -522,7 +534,7 @@ internal fun RecordingCard(
                 Spacer(Modifier.weight(1f))
                 HelpHint(
                     title = "标记和没标记的区别",
-                    body = "标记会把这次标记覆盖的整段连续对话高亮，并在搜索与一日回顾里作为「值得记住」的重点；标记附近的录音也不会被自动压缩或清理。\n\n没有标记的对话只按时间和内容正常展示，不进入重点区。标记只影响展示与保留，不修改转写文字。",
+                    body = "标记会把这次标记覆盖的**整段连续对话高亮**，并在搜索与一日回顾里作为「值得记住」的重点；**标记附近的录音不会被自动压缩或清理**。\n\n没有标记的对话只按时间和内容正常展示，不进入重点区。标记只影响展示与保留，**不修改转写文字**。",
                     tint = onWhite.copy(alpha = .9f),
                 )
             }
@@ -628,3 +640,22 @@ internal fun TimelineCard(item: ConversationPreview, onClick: () -> Unit) {
     }
 }
 
+
+/** 迷你日历里的单日格子：有录音浅绿、已整理深绿、今天加高亮环。 */
+@Composable
+private fun CalendarDay(day: LocalDate, recorded: Boolean, organized: Boolean, isToday: Boolean) {
+    val background = when {
+        organized -> Green
+        recorded -> PaleGreenStrong
+        else -> Color.Transparent
+    }
+    val foreground = when {
+        organized -> Color.White
+        recorded -> Color(0xFF1E7046)
+        else -> InkSoft
+    }
+    val base = Modifier.fillMaxSize().padding(2.dp).clip(RoundedCornerShape(8.dp)).background(background)
+    Box(if (isToday) base.border(1.dp, Amber, RoundedCornerShape(8.dp)) else base, contentAlignment = Alignment.Center) {
+        Text(day.dayOfMonth.toString(), color = foreground, fontSize = 11.sp, fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
+    }
+}

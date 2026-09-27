@@ -47,4 +47,25 @@ class UsageStore(context: Context, name: String = "usage-stats") {
         }.sortedByDescending { it.calls }
         return Snapshot(month(), asr, llm)
     }
+
+    data class MonthUsage(val month: String, val calls: Long, val seconds: Long, val tokens: Long)
+
+    /** 最近 months 个月的用量（含当月），用于图形化展示。 */
+    fun monthlyHistory(months: Int = 6): List<MonthUsage> {
+        val base = YearMonth.now()
+        return (months - 1 downTo 0).map { offset ->
+            val ym = base.minusMonths(offset.toLong()).toString()
+            val prefix = "$ym|"
+            var calls = 0L; var seconds = 0L; var tokens = 0L
+            prefs.all.forEach { (key, value) ->
+                if (!key.startsWith(prefix) || value !is Long) return@forEach
+                when (key.removePrefix(prefix).substringBefore('|')) {
+                    "asr-calls", "llm-calls" -> calls += value
+                    "asr-seconds" -> seconds += value
+                    "llm-tokens" -> tokens += value
+                }
+            }
+            MonthUsage(ym, calls, seconds, tokens)
+        }
+    }
 }

@@ -77,8 +77,9 @@ internal fun RealConversationScreen(
     val structuredSummary by remember(conversationId) {
         viewModel.observeConversationSummary(conversationId)
     }.collectAsStateWithLifecycle(initialValue = null)
-    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(initialTranscriptId != null) }
-    var seekLineId by remember(conversationId) { mutableStateOf(initialTranscriptId) }
+    // 进入对话默认停在最上面看「本段小结」；搜索命中的那一行只在展开结构化转写时高亮，不再自动跳转/突跳。
+    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(false) }
+    var seekLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playNonce by rememberSaveable(conversationId) { mutableLongStateOf(0L) }
     var titleDraft by remember(conversationId) { mutableStateOf<String?>(null) }
@@ -203,7 +204,7 @@ internal fun RealConversationScreen(
                     }
                 } else {
                     items(lines, key = { it.id }) { line ->
-                        val located = line.id == seekLineId
+                        val located = line.id == seekLineId || (seekLineId == null && line.id == initialTranscriptId)
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable { seekLineId = line.id },
                             shape = RoundedCornerShape(8.dp),
@@ -255,9 +256,13 @@ internal fun RealConversationScreen(
                 }
             }
             item(key = "playback-hint") {
-                Column {
-                    Spacer(Modifier.height(14.dp))
-                    Text("点击转写行可定位；行首按钮播放这一句，末尾铅笔可修正文字（保留原始版本）", color = InkSoft, fontSize = 11.sp)
+                Row(Modifier.fillMaxWidth().padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("点击转写行可定位；行首按钮播放这一句，末尾铅笔可修正文字（保留原始版本）", color = InkSoft, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    HelpHint(
+                        title = "修正转写会怎样",
+                        body = "**修正会保留原始识别版本**（可随时对照或撤销）。\n\n" +
+                            "修正后的文字会用于**之后生成**的本段小结与 AI 总结；**已经生成的 AI 小结会被标记为「需要重新生成」**，不会自动重做，点「重新生成 AI 总结」即可用修正后的文字重算。",
+                    )
                 }
             }
         }

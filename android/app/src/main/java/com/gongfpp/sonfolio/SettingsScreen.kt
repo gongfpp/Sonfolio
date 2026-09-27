@@ -1,7 +1,10 @@
 package com.gongfpp.sonfolio
 
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
 import android.net.Uri
 import java.io.File
 import java.io.FileInputStream
@@ -85,6 +88,7 @@ internal fun SettingsScreen(
     val settingsScope = rememberCoroutineScope()
     var policyMessage by remember { mutableStateOf<String?>(null) }
     var retentionDays by remember { mutableStateOf(preferences.retentionDays) }
+    var retentionCustom by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val app = context.applicationContext as SonfolioApplication
     val used by remember { app.database.recordingDao().observeStorageBytes() }.collectAsStateWithLifecycle(initialValue = 0L)
@@ -144,7 +148,7 @@ internal fun SettingsScreen(
                     Text("短录音过滤", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                     HelpHint(
                         title = "短录音过滤怎么算",
-                        body = "有效人声和文字同时低于阈值才隐藏；录音不删除，标记片段豁免。文字设为 0 可关闭过滤。\n\n隐藏只影响首页时间线显示，仍可在原始录音中回听。",
+                        body = "**有效人声和文字同时低于阈值才隐藏**；**录音不删除**，标记片段豁免。文字设为 0 可关闭过滤。\n\n**隐藏只影响首页时间线显示**，仍可在原始录音中回听。",
                     )
                 }
                 Text("最短有效人声：${minimumSpeechSeconds.toInt()} 秒", modifier = Modifier.padding(top = 12.dp), fontSize = 12.sp)
@@ -196,7 +200,7 @@ internal fun SettingsScreen(
                     Text("默认本地识别，不上传音频。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.weight(1f))
                     HelpHint(
                         title = "仅充电时自动处理",
-                        body = "包括人声检测、转写和自动 AI 总结。关闭后，已等待的任务也可在未充电时继续；开启不主动打断当前一轮，正在运行的旧任务若遇系统限制，下一轮按新设置执行。手动 AI 总结不要求充电，录音不受影响。\n\n只有单独启用外部转文字并确认后才上传人声片段；外部总结仅发送转写文字。",
+                        body = "包括人声检测、转写和自动 AI 总结。**关闭后，已等待的任务也可在未充电时继续**；开启不主动打断当前一轮，正在运行的旧任务若遇系统限制，下一轮按新设置执行。**手动 AI 总结不要求充电，录音不受影响**。\n\n**只有单独启用外部转文字并确认后才上传人声片段**；外部总结仅发送转写文字。",
                         modifier = Modifier.padding(end = 4.dp),
                     )
                 }
@@ -206,14 +210,23 @@ internal fun SettingsScreen(
         SectionTitle("存储与录音")
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("存储占用", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    HelpHint(
+                        title = "存储估算怎么来的",
+                        body = "「预计还可记录」按 **16 kHz 单声道 WAV** 的固定码率估算：**约 ${formatModelSize(bytesPerDay)}/天**（16000 × 2 字节 × 86400 秒）。\n\n" +
+                            "它**不是写死的**：可用空间取自你当前这台手机，所以每台不同。录音在整理完成后会**自动压缩成更小的 AAC**，实际占用通常低于原始 WAV。\n\n" +
+                            "模型和系统也占用存储，所以实际可录时间可能更短。",
+                    )
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     StorageValue("录音已使用", String.format(Locale.US, "%.2f", used / 1_073_741_824.0), "GB", Modifier.weight(1f))
                     StorageValue("预计还可记录", (available / bytesPerDay).toString(), "天", Modifier.weight(1f))
                 }
                 Box(Modifier.fillMaxWidth().padding(top = 14.dp).height(10.dp).clip(CircleShape).background(Color(0xFFE3E3DF))) {
                     Box(Modifier.fillMaxWidth((used.toFloat() / (used + available).coerceAtLeast(1)).coerceIn(0f, 1f)).fillMaxSize().clip(CircleShape).background(Green))
                 }
-                Text("连续录音约${formatBytes(bytesPerDay)}/天，剩余${formatBytes(available)}；模型和系统也占用存储。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+                Text("连续录音约${formatModelSize(bytesPerDay)}/天，剩余${formatModelSize(available)}；模型和系统也占用存储。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
             }
         }
         Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
@@ -222,14 +235,39 @@ internal fun SettingsScreen(
                     Text("录音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                     HelpHint(
                         title = "录音保留策略",
-                        body = "转写完成后自动压缩录音，超过保留期自动删除未压缩文件；文字和标记附近的录音不受影响。选择「永久保留」则始终保留录音。\n\n超过保留期的段：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。",
+                        body = "转写完成后自动压缩录音，**超过保留期自动删除未压缩文件**；**文字和标记附近的录音不受影响**。选择「永久保留」则始终保留录音。\n\n超过保留期的段：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。",
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(0, 7, 30, 90).forEach { days ->
+                    SonfolioPreferences.RETENTION_OPTIONS.forEach { days ->
                         FilterChip(selected = retentionDays == days, onClick = { retentionDays = days; preferences.setRetentionDays(days) },
                             label = { Text(if (days == 0) "永久保留" else "${days}天", fontSize = 11.sp) })
                     }
+                    FilterChip(
+                        selected = retentionDays !in SonfolioPreferences.RETENTION_OPTIONS,
+                        onClick = { retentionCustom = true },
+                        label = { Text(if (retentionDays in SonfolioPreferences.RETENTION_OPTIONS) "自定义" else "${retentionDays}天", fontSize = 11.sp) },
+                    )
+                }
+                if (retentionCustom) {
+                    var draft by remember { mutableStateOf(if (retentionDays in SonfolioPreferences.RETENTION_OPTIONS) "" else retentionDays.toString()) }
+                    AlertDialog(
+                        onDismissRequest = { retentionCustom = false },
+                        title = { Text("自定义保留时间") },
+                        text = { Column {
+                            OutlinedTextField(draft, { draft = it.filter(Char::isDigit).take(3) },
+                                label = { Text("保留天数（1–${SonfolioPreferences.MAX_RETENTION_DAYS}）") },
+                                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                            Text("「永久保留」表示不自动删除录音。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                        } },
+                        confirmButton = { TextButton(onClick = {
+                            val days = draft.toIntOrNull()
+                            if (days != null && days in 1..SonfolioPreferences.MAX_RETENTION_DAYS) {
+                                retentionDays = days; preferences.setRetentionDays(days); retentionCustom = false
+                            }
+                        }) { Text("保存") } },
+                        dismissButton = { TextButton(onClick = { retentionCustom = false }) { Text("取消") } },
+                    )
                 }
                 val expiryTime = remember(retentionDays) { if (retentionDays > 0) System.currentTimeMillis() - retentionDays * 86_400_000L else Long.MIN_VALUE }
                 val expired by remember(expiryTime) { app.database.recordingDao().observeExpiredCount(expiryTime) }.collectAsStateWithLifecycle(initialValue = 0)

@@ -91,6 +91,16 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
     fun selectedCatalogModelId(config: SummaryConfig = read()): String? =
         config.localFile.removePrefix(CATALOG_PREFIX).takeIf { config.localFile.startsWith(CATALOG_PREFIX) }
 
+    /** 启用用户自己导入的 GGUF（需先把文件复制到应用私有 summary-models/），并切换为本地总结。 */
+    @Synchronized fun useImportedModel(fileName: String, label: String) {
+        require(fileName.matches(Regex("[a-f0-9-]+\\.gguf"))) { "模型文件名不合法" }
+        require(File(context.filesDir, "summary-models/$fileName").isFile) { "模型尚未复制完成" }
+        check(prefs.edit().putString("local-file", fileName).putString("local-label", label)
+            .putString("mode", "LOCAL").putBoolean("automatic", false)
+            .putString("revision", UUID.randomUUID().toString()).commit()) { "模型设置保存失败" }
+        state.value = read()
+    }
+
     /** 启用某个已下载的内置总结模型；modelId 默认当前模型。 */
     @Synchronized fun useDownloadedModel(activateRevision: String? = null, modelId: String = com.gongfpp.sonfolio.models.ModelCatalog.summary.id) {
         val model = com.gongfpp.sonfolio.models.ModelCatalog.summaryById(modelId) ?: error("未知的总结模型")

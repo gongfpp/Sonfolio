@@ -38,7 +38,7 @@ import kotlinx.coroutines.withContext
     var message by remember { mutableStateOf<String?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("${model.label} · ${model.bytes / 1_000_000} MB", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text(if (model.label.contains(" MB")) model.label else "${model.label} · ${model.bytes / 1_000_000} MB", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
             HelpHint(
                 title = "模型下载与校验",
                 body = "模型统一保存在应用私有目录 files/models/，卸载应用会移除。\n\n" +

@@ -108,6 +108,17 @@ internal fun formatBytes(bytes: Long): String = when {
     else -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
 }
 
+/** 1–5 星评分：实心 = 得分，空心 = 未得分。 */
+internal fun starRating(stars: Int): String {
+    val filled = stars.coerceIn(0, 5)
+    return "★".repeat(filled) + "☆".repeat(5 - filled)
+}
+
+/** 模型体积：小于 1 GB 用 MB，否则用 GB。 */
+internal fun formatModelSize(bytes: Long): String =
+    if (bytes < 1_073_741_824L) "${bytes / 1_048_576} MB"
+    else String.format(Locale.US, "%.1f GB", bytes / 1_073_741_824.0)
+
 
 @Composable
 internal fun SectionTitle(title: String) {

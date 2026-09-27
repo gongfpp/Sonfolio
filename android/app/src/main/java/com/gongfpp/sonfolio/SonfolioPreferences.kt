@@ -34,9 +34,9 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
         preferences.edit().putInt("marker-minutes-$index", minutes).apply()
     }
 
-    val retentionDays: Int get() = preferences.getInt("retention-days", 0)
+    val retentionDays: Int get() = preferences.getInt("retention-days", 0).coerceIn(0, MAX_RETENTION_DAYS)
     fun setRetentionDays(value: Int) {
-        require(value in listOf(0, 7, 30, 90))
+        require(value in 0..MAX_RETENTION_DAYS) { "保留天数需在 0–$MAX_RETENTION_DAYS 之间" }
         preferences.edit().putInt("retention-days", value).apply()
     }
 
@@ -80,6 +80,8 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
         const val DEFAULT_LANGUAGE = "zh"
         const val DEFAULT_MIN_SPEECH_SECONDS = 5
         const val DEFAULT_MIN_TEXT_CHARACTERS = 4
+        const val MAX_RETENTION_DAYS = 365
+        val RETENTION_OPTIONS = listOf(0, 7, 30, 90)
         const val DEFAULT_CONVERSATION_GAP_MINUTES = 2
         const val MIN_CONVERSATION_GAP_MINUTES = 1
         const val MAX_CONVERSATION_GAP_MINUTES = 120

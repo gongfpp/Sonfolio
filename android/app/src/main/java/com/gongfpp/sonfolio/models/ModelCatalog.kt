@@ -45,7 +45,7 @@ object ModelCatalog {
 
     val senseVoice = ModelArtifact(
         id = "sensevoice",
-        label = "SenseVoice Small（中英日韩粤 · 239 MB）",
+        label = "SenseVoice Small（中英日韩粤）",
         kind = ModelKind.SPEECH,
         files = listOf(
             ModelFile("speech/sense-voice-model.int8.onnx", 239233841,
@@ -60,7 +60,7 @@ object ModelCatalog {
 
     val qwen3Asr = ModelArtifact(
         id = "qwen3-asr",
-        label = "Qwen3-ASR 0.6B（中英混说与方言 · 987 MB）",
+        label = "Qwen3-ASR 0.6B（中英混说与方言）",
         kind = ModelKind.SPEECH,
         files = listOf(
             ModelFile("speech/qwen3-asr/conv_frontend.onnx", 44148281,
@@ -90,7 +90,7 @@ object ModelCatalog {
 
     val fireRedAsrCtc = ModelArtifact(
         id = "fire-red-asr-ctc",
-        label = "FireRedASR2-CTC（中英与方言 · 776 MB）",
+        label = "FireRedASR2-CTC（中英与方言）",
         kind = ModelKind.SPEECH,
         files = listOf(
             ModelFile("speech/fire-red-asr2-ctc/model.int8.onnx", 775861420,
@@ -104,7 +104,7 @@ object ModelCatalog {
 
     val summary = ModelArtifact(
         id = "qwen-summary",
-        label = "Qwen2.5-0.5B（离线总结 · 491 MB）",
+        label = "Qwen2.5-0.5B（离线总结）",
         kind = ModelKind.SUMMARY,
         files = listOf(
             ModelFile("summary/qwen2.5-0.5b-instruct-q4_k_m.gguf", 491400032,

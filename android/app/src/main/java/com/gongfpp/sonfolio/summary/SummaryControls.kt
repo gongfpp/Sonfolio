@@ -22,7 +22,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gongfpp.sonfolio.HelpHint
 import com.gongfpp.sonfolio.SonfolioApplication
+import com.gongfpp.sonfolio.Green
 import kotlinx.coroutines.*
+import java.io.File
 
 /** 已保存密钥在输入框中的占位显示，避免把空框误认为没有配置。 */
 private const val SAVED_SECRET_MASK = "*****"
@@ -72,8 +74,8 @@ internal fun SummarySettingsCard() {
                 Text("当前：${saved.mode.label}", fontSize = 12.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "总结方式说明",
-                    body = "本卡片只决定文字如何总结，转文字方式在上方单独设置；切换不会自动重做全部历史。\n\n" +
-                        "本地基础整理：直接摘取原句，离线可用，不是生成式 AI。\n手机本地 AI：下载约 491 MB 模型，在手机上生成，离线可用，效果与速度受手机性能影响。\n在线总结：把转写文字发送给所选服务，不上传音频，可能产生费用。",
+                    body = "本卡片只决定**文字如何总结**，转文字方式在上方单独设置；**切换不会自动重做全部历史**。\n\n" +
+                        "**本地基础整理**：直接摘取原句，离线可用，不是生成式 AI。\n**手机本地 AI**：下载约 491 MB 模型，在手机上生成，离线可用，效果与速度受手机性能影响。\n**在线总结**：把转写文字发送给所选服务，**不上传音频**，**可能产生费用**。",
                 )
             }
             SummaryMode.entries.forEach { option ->
@@ -108,19 +110,19 @@ internal fun SummarySettingsCard() {
                             Text("手机端总结设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                             com.gongfpp.sonfolio.HelpHint(
                                 title = "本地总结怎么用",
-                                body = "在手机本地生成对话小结，离线可用，效果与速度受手机性能影响。当前内置 Qwen2.5-0.5B（约 491 MB）；下载后即可启用，未下载时可用基础整理或在线总结。",
+                                body = "在手机本地生成对话小结，**离线可用**，效果与速度受手机性能影响。当前内置 **Qwen2.5-0.5B（约 491 MB）**；下载后即可启用，未下载时可用基础整理或在线总结。",
                             )
                         }
                         Box {
                             OutlinedButton(onClick = { summaryModelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                                Text("总结模型：${selectedSummary.label} ▾")
+                                Text("总结模型：${selectedSummary.label} · ${com.gongfpp.sonfolio.formatModelSize(selectedSummary.bytes)} ▾")
                             }
                             DropdownMenu(summaryModelMenu, { summaryModelMenu = false }) {
                                 summaryModels.forEach { option ->
                                     // 用只比大小的 available（不哈希大文件）；真正启用前仍会完整校验。
                                     val installed = com.gongfpp.sonfolio.models.ModelCatalog.available(context.filesDir, option)
                                     DropdownMenuItem(
-                                        text = { Text(option.label + if (installed) "" else "（未下载）") },
+                                        text = { Text(option.label + " · " + com.gongfpp.sonfolio.formatModelSize(option.bytes) + if (installed) "" else "（未下载）") },
                                         onClick = {
                                             selectedSummaryId = option.id
                                             summaryModelMenu = false
@@ -137,6 +139,32 @@ internal fun SummarySettingsCard() {
                             }
                         }
                         com.gongfpp.sonfolio.models.ModelDownloadControl(selectedSummary)
+                        // 高级：导入自带 GGUF（llama.cpp 格式），复制到应用私有目录后即可离线使用。
+                        val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                            androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+                        ) { uri ->
+                            if (uri == null || busy) return@rememberLauncherForActivityResult
+                            busy = true
+                            scope.launch {
+                                try {
+                                    val name = "${java.util.UUID.randomUUID()}.gguf"
+                                    withContext(Dispatchers.IO) {
+                                        val target = File(context.filesDir, "summary-models/$name")
+                                        target.parentFile?.mkdirs()
+                                        requireNotNull(context.contentResolver.openInputStream(uri)) { "无法读取所选文件" }
+                                            .use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+                                        require(target.length() > 1024) { "所选文件不是有效的 GGUF 模型" }
+                                        app.summarySettings.useImportedModel(name, "导入的模型")
+                                    }
+                                    mode = SummaryMode.LOCAL; message = "已导入并启用本地模型；仅离线使用，不上传。"
+                                } catch (error: CancellationException) { throw error }
+                                catch (error: Exception) { message = error.message ?: "导入失败，请换一个文件" }
+                                finally { busy = false }
+                            }
+                        }
+                        TextButton(enabled = !busy, onClick = { importLauncher.launch(arrayOf("application/octet-stream", "*/*")) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                            Text("▾ 高级：导入自己的 GGUF 模型", fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -153,21 +181,20 @@ internal fun SummarySettingsCard() {
                     }
                 }
                 if (provider == SummaryProvider.CUSTOM) {
-                OutlinedTextField(endpoint, { endpoint = it }, Modifier.fillMaxWidth(), label = { Text("完整 HTTPS 接口地址") },
-                    placeholder = { Text("https://服务地址/v1/chat/completions") }, singleLine = true, enabled = !busy,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-                OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("模型名称") }, singleLine = true, enabled = !busy)
+                    OutlinedTextField(endpoint, { endpoint = it }, Modifier.fillMaxWidth(), label = { Text("完整 HTTPS 接口地址") },
+                        placeholder = { Text("https://服务地址/v1/chat/completions") }, singleLine = true, enabled = !busy,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+                    OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("模型名称") }, singleLine = true, enabled = !busy)
                 } else {
-                    var advancedModel by remember { mutableStateOf(false) }
-                    TextButton(onClick = { advancedModel = !advancedModel }) { Text("高级：选择模型") }
-                    if (advancedModel) {
-                        Box {
-                            OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("模型：$model ▾") }
-                            DropdownMenu(modelMenu, { modelMenu = false }) {
-                                (listOf(model) + listedModels).filter { it.isNotBlank() }.distinct().forEach { id -> DropdownMenuItem(text = { Text(id) }, onClick = { model = id; modelMenu = false }) }
-                            }
+                    // 提供商与模型都是必选项，不折叠进「高级」。
+                    Box {
+                        OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("模型：$model ▾") }
+                        DropdownMenu(modelMenu, { modelMenu = false }) {
+                            (listOf(model) + listedModels).filter { it.isNotBlank() }.distinct().forEach { id -> DropdownMenuItem(text = { Text(id) }, onClick = { model = id; modelMenu = false }) }
                         }
-                        Text(modelListNote, fontSize = 11.sp)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(modelListNote, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                         TextButton(enabled = !busy, onClick = {
                             val selected = provider; val keyDraft = apiKey; val selectedEndpoint = endpoint
                             action {
@@ -177,9 +204,9 @@ internal fun SummarySettingsCard() {
                                 }
                                 "模型列表已刷新；只查询模型名称，未发送转写"
                             }
-                        }) { Text("从官方刷新模型列表") }
-                        Text("支持 Chat Completions 与 JSON 输出协议。修改接口地址必须重新填写密钥。", fontSize = 11.sp)
+                        }) { Text(if (busy) "刷新中…" else "从官方刷新模型列表") }
                     }
+                    Text("支持 Chat Completions 与 JSON 输出协议。修改接口地址必须重新填写密钥。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 val showSavedKey = !keyTouched && saved.hasKey && saved.endpoint == endpoint
                 OutlinedTextField(
@@ -191,6 +218,11 @@ internal fun SummarySettingsCard() {
                     singleLine = true, enabled = !busy,
                     visualTransformation = if (showSavedKey) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                when {
+                    showSavedKey -> Text("✓ 已保存密钥（$SAVED_SECRET_MASK）：留空保存保留原值，输入新值会替换", fontSize = 11.sp, color = Green)
+                    apiKey.isNotBlank() -> Text("将保存为新的密钥", fontSize = 11.sp, color = Green)
+                    else -> Text("尚未填写密钥；点击下方链接到官方控制台创建。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (provider.help.isNotBlank()) TextButton(onClick = {
                     runCatching { uriHandler.openUri(provider.help) }.onFailure { message = "无法打开浏览器，请到提供商官网创建 API Key" }
                 }) { Text("获取 ${provider.label} API Key ↗") }
@@ -220,8 +252,8 @@ internal fun SummarySettingsCard() {
                     Text("转写完成后自动生成 AI 总结", Modifier.padding(start = 8.dp).weight(1f), fontSize = 12.sp)
                     HelpHint(
                         title = "自动 AI 总结的范围",
-                        body = "关闭时仍会自动转写并生成基础小结，AI 总结需在对话或一日回顾中手动点击生成。\n\n" +
-                            "开启后只自动处理新完成转写涉及的对话和日期，不重做全部历史；低电量时等待，失败可重试。",
+                        body = "关闭时仍会自动转写并生成基础小结，**AI 总结需在对话或一日回顾中手动点击生成**。\n\n" +
+                            "开启后**只自动处理新完成转写涉及的对话和日期，不重做全部历史**；低电量时等待，失败可重试。",
                     )
                 }
                 if (mode == SummaryMode.REMOTE) {
@@ -230,8 +262,8 @@ internal fun SummarySettingsCard() {
                         Text("转写后自动用该模型纠错（在线会持续计费）", Modifier.padding(start = 8.dp).weight(1f), fontSize = 12.sp)
                         HelpHint(
                             title = "自动纠错（第 5 步）",
-                            body = "转写整理完成后，用总结模型纠正错别字与标点；原文保留在「原始版本」，可随时撤销。\n\n" +
-                                "本地模型默认自动纠错，离线且无费用；在线模型会把整段转写文字发到外部服务并计费，所以默认关闭，需要在这里单独打开。",
+                            body = "转写整理完成后，用总结模型纠正错别字与标点；**原文保留在「原始版本」，可随时撤销**。\n\n" +
+                                "**本地模型默认自动纠错**，离线且无费用；**在线模型会把整段转写文字发到外部服务并计费**，所以默认关闭，需要在这里单独打开。",
                         )
                     }
                 } else {

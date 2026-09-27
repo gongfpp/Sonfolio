@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gongfpp.sonfolio.HelpHint
 import com.gongfpp.sonfolio.SonfolioApplication
+import com.gongfpp.sonfolio.Green
+import com.gongfpp.sonfolio.formatModelSize
+import com.gongfpp.sonfolio.starRating
 import com.gongfpp.sonfolio.models.ModelCatalog
 import com.gongfpp.sonfolio.models.ModelDownloadControl
 import kotlinx.coroutines.*
@@ -57,9 +60,9 @@ private const val SAVED_SECRET_MASK = "*****"
                 Text("当前：${saved.mode.label}${if (saved.mode == TranscriptionMode.REMOTE) " · ${saved.provider.label}" else " / ${saved.localEngine.displayName}"}", fontSize = 12.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "转文字方式说明",
-                    body = "录音始终先保存在本机，识别失败不影响录音，也不会删除录音。\n\n" +
-                        "本地识别：按需下载模型，离线运行，不上传音频。默认 SenseVoice 体积小、速度快；Qwen3-ASR 中英混说与方言更强，但约 1 GB、速度更慢。\n\n" +
-                        "在线识别：先在手机检测人声，再把短片段上传给所选提供商，可能产生费用；历史录音不会自动上传，需要逐份确认。",
+                    body = "**录音始终先保存在本机**，识别失败不影响录音，也不会删除录音。\n\n" +
+                        "**本地识别**：按需下载模型，**离线运行、不上传音频**。默认 SenseVoice 体积小、速度快；Qwen3-ASR 中英混说与方言更强，但约 1 GB、速度更慢。\n\n" +
+                        "**在线识别**：先在手机检测人声，再把短片段上传给所选提供商，**可能产生费用**；**历史录音不会自动上传**，需要逐份确认。",
                 )
             }
             TranscriptionMode.entries.forEach { option ->
@@ -88,10 +91,10 @@ private const val SAVED_SECRET_MASK = "*****"
                             Text("尚未下载也能录音与回听；下载完成后自动处理等待中的录音。", fontSize = 11.sp, modifier = Modifier.weight(1f))
                             HelpHint(
                                 title = "本地识别引擎怎么选",
-                                body = "SenseVoice：默认，约 239 MB，中英日韩粤，速度快。\n" +
-                                    "Qwen3-ASR 0.6B：约 987 MB，中英混说和方言更强，并支持「个人词汇」热词；速度更慢、占用内存更多。\n" +
-                                    "FireRedASR2-CTC：约 776 MB，中文（含噪声与歌曲）更稳、解码更快，英文较弱。\n\n" +
-                                    "三者是并列备选，可随时切换；只影响之后新转写的录音，已有文字不会重做。主要语言可在下方设置。",
+                                body = "**SenseVoice**（推荐）：体积最小、速度最快，日常够用。\n" +
+                                    "**FireRedASR2-CTC**：中文（含噪声、歌曲）更稳，英文偏弱。\n" +
+                                    "**Qwen3-ASR 0.6B**：中英混说与方言更强，支持「个人词汇」热词，但更慢、更占内存。\n\n" +
+                                    "三者可随时切换，**只影响之后新转写的录音，已有文字不会重做**；主要语言可在下方设置。",
                             )
                         }
                     }
@@ -128,8 +131,14 @@ private const val SAVED_SECRET_MASK = "*****"
                     Text(if (provider.needsAppId) "打开 ${provider.label} 控制台获取 APP ID 与 Access Token ↗" else "获取 ${provider.label} 识别密钥 ↗")
                 }
                 var advancedModel by remember { mutableStateOf(false) }
-                TextButton(onClick = { advancedModel = !advancedModel }) { Text("高级：选择识别模型") }
+                TextButton(onClick = { advancedModel = !advancedModel }) { Text((if (advancedModel) "▴ " else "▾ ") + "高级：选择识别模型", fontSize = 12.sp) }
                 if (advancedModel) {
+                    Surface(
+                        Modifier.fillMaxWidth().padding(start = 12.dp),
+                        RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box {
                         OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("语音模型：${provider.modelLabel(model)} ▾") }
                         DropdownMenu(modelMenu, { modelMenu = false }) {
@@ -146,6 +155,8 @@ private const val SAVED_SECRET_MASK = "*****"
                                 else -> "此提供商自动判断语言，不支持强制指定主要语言。内置模型来自官方文档，不是聊天总结模型。"
                             },
                         )
+                    }
+                    }
                     }
                 }
                 val consentWarningActive = consentWarning && !consent
@@ -166,8 +177,8 @@ private const val SAVED_SECRET_MASK = "*****"
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     HelpHint(
                         title = "在线识别的上传范围",
-                        body = "历史录音不会自动上传，可在原始录音中逐份确认「继续处理」。先在本机检测人声，再上传短片段；时间戳为人声片段级，不是逐字对齐。\n\n" +
-                            "更改设置会停止后续上传，已经发出的请求无法撤回；失败后的手动重试可能再次计费。",
+                        body = "**历史录音不会自动上传**，可在原始录音中逐份确认「继续处理」。**只上传人声短片段**，不上传整段录音；时间戳为人声片段级，不是逐字对齐。\n\n" +
+                            "**更改设置会停止后续上传**，已经发出的请求无法撤回；**失败后的手动重试可能再次计费**。",
                         modifier = Modifier.padding(end = 4.dp),
                     )
                     Text("只上传人声片段，不上传整段录音。", fontSize = 11.sp)
@@ -232,13 +243,19 @@ private const val SAVED_SECRET_MASK = "*****"
                     LocalAsrEngine.entries.forEach { option ->
                         val artifact = ModelCatalog.byId(option.artifactId) ?: return@forEach
                         Row(
-                            Modifier.fillMaxWidth().clickable { localEngine = option; engineMenu = false },
+                            Modifier.fillMaxWidth().clickable { localEngine = option; engineMenu = false }.padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(localEngine == option, onClick = null)
                             Column(Modifier.padding(start = 8.dp).weight(1f)) {
-                                Text("${option.displayName}${if (option.supportsHotwords) " · 支持个人词汇热词" else ""}", fontSize = 14.sp)
-                                Text(artifact.label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(option.displayName + if (option.recommended) "（推荐）" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(option.blurb, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "${formatModelSize(artifact.bytes)} · 速度 ${starRating(option.speedStars)} · 准确率 ${starRating(option.accuracyStars)}",
+                                    modifier = Modifier.padding(top = 2.dp),
+                                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (option.supportsHotwords) Text("支持个人词汇热词", fontSize = 10.sp, color = Green)
                             }
                         }
                     }
