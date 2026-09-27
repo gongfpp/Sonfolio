@@ -19,7 +19,9 @@ class AudioCompressionIntegrationTest {
     @Test fun compressAndRetireWavKeepsPlayableCompressedAudio() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
-        val recordings = File(context.filesDir, "recordings").apply { mkdirs() }
+        // 必须用独立目录：早期版本直接用真实 files/recordings 并在 finally 里 deleteRecursively，
+        // 每次跑真机套件都会删掉用户真实录音。
+        val recordings = File(context.filesDir, "qa-compress-${System.nanoTime()}").apply { mkdirs() }
         try {
             val wav = File(recordings, "compress-test.wav")
             WavChunkWriter(wav, 16_000, 1).use { writer ->
