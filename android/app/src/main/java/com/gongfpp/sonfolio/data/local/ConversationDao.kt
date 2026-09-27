@@ -137,6 +137,10 @@ interface ConversationDao {
     @Query("UPDATE summary_runs SET state = :state, message = :message, updatedAtMillis = :now WHERE sourceKey = :key")
     suspend fun updateSummaryRun(key: String, state: String, message: String?, now: Long)
 
+    /** 记录长对话小结的部分进度，供中途失败后续跑。 */
+    @Query("UPDATE summary_runs SET progressIndex = :index, progressJson = :json, updatedAtMillis = :now WHERE sourceKey = :key")
+    suspend fun updateSummaryRunProgress(key: String, index: Int, json: String, now: Long)
+
     @Query(
         """
         SELECT c.*,

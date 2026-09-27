@@ -170,7 +170,6 @@ class ConversationRepository(
                 titleOverride = survivor?.titleOverride ?: inherited.firstNotNullOfOrNull { it.titleOverride },
                 briefSummary = ai?.brief ?: summary.brief,
                 summaryLevel = if (isDetailed(group)) "DETAILED" else "BRIEF",
-                note = null,
                 localStartDate = Instant.ofEpochMilli(start).atZone(groupZone).toLocalDate().toString(),
             )
         }

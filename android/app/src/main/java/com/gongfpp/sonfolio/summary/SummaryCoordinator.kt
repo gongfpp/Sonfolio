@@ -330,14 +330,22 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             if (!inputData.getBoolean("force", false) && cached?.sourceHash == input.fingerprint && cached.outputJson != null && cached.model == SummaryCoordinator.identity(config)) {
                 dao.updateSummaryRun(key, "READY", null, System.currentTimeMillis()); return Result.success()
             }
-            var summary: AiSummary? = null
             val parts = input.parts(if (config.mode == SummaryMode.LOCAL) 500 else 4000)
+            // 断点续跑：内容指纹与模型都没变、且进度落在有效范围时，从上次完成的位置继续，避免长对话失败后重头再来。
+            val resume = cached != null && cached.sourceHash == input.fingerprint &&
+                cached.model == SummaryCoordinator.identity(config) &&
+                cached.progressIndex in 1 until parts.size && cached.progressJson != null
+            var summary: AiSummary? = if (resume) runCatching { AiSummary.parse(cached!!.progressJson!!) }.getOrNull() else null
+            val startIndex = if (resume && summary != null) cached!!.progressIndex else 0
+            if (startIndex == 0) summary = null
             withTimeout(9 * 60_000L) {
                 coordinator.withGenerator(config) { generate ->
-                for ((index, part) in parts.withIndex()) {
+                for (index in startIndex until parts.size) {
                     ensureActive()
-                    dao.updateSummaryRun(key, "RUNNING", if (parts.size <= 1) "正在生成小结…" else "正在整理 ${index + 1}/${parts.size} 部分", System.currentTimeMillis())
-                    summary = AiSummary.parse(generate(SummaryPrompt.SYSTEM, SummaryPrompt.user(input, part, summary, index, parts.size)))
+                    val label = if (parts.size <= 1) "正在生成小结…" else "正在整理 ${index + 1}/${parts.size} 部分"
+                    dao.updateSummaryRun(key, "RUNNING", if (startIndex > 0) "$label（已从第 ${startIndex + 1} 部分续跑）" else label, System.currentTimeMillis())
+                    summary = AiSummary.parse(generate(SummaryPrompt.SYSTEM, SummaryPrompt.user(input, parts[index], summary, index, parts.size)))
+                    dao.updateSummaryRunProgress(key, index + 1, summary!!.json(), System.currentTimeMillis())
                 }
                 }
             }
@@ -355,7 +363,7 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             }
             Result.success()
         } catch (_: TimeoutCancellationException) {
-            withContext(NonCancellable) { dao.updateSummaryRun(key, "FAILED", "总结耗时过长，已有小结保留，可手动重试", System.currentTimeMillis()) }
+            withContext(NonCancellable) { dao.updateSummaryRun(key, "FAILED", "总结耗时过长，已保存部分进度；可手动重试续跑，已有小结保留", System.currentTimeMillis()) }
             Result.success()
         } catch (error: CancellationException) {
             withContext(NonCancellable) { dao.updateSummaryRun(key, "CANCELLED", "已取消，已有小结保留", System.currentTimeMillis()) }

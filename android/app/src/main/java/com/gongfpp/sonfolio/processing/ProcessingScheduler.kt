@@ -66,6 +66,16 @@ class ProcessingScheduler(context: Context) {
                     manager.updateWork(builder.build()).get()
                 }
             }
+            dao.getChunksWithPendingProcessing().forEach { chunk ->
+                manager.getWorkInfosForUniqueWork("sonfolio-correct-${chunk.id}").get()
+                    .filter { !it.state.isFinished }.forEach { info ->
+                        val builder = OneTimeWorkRequestBuilder<TranscriptCorrectionWorker>()
+                        builder.setId(info.id).setConstraints(constraints())
+                            .setInputData(workDataOf("chunk" to chunk.id))
+                        info.tags.forEach { builder.addTag(it) }
+                        manager.updateWork(builder.build()).get()
+                    }
+            }
         }
     }
 

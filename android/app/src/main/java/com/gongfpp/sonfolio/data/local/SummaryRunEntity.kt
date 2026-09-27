@@ -1,5 +1,6 @@
 package com.gongfpp.sonfolio.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -14,4 +15,7 @@ data class SummaryRunEntity(
     val state: String,
     val message: String?,
     val updatedAtMillis: Long,
+    /** 断点续跑：已完成的片段数与累计小结 JSON；完成后清零。仅长对话中途失败时非零。 */
+    @ColumnInfo(defaultValue = "0") val progressIndex: Int = 0,
+    val progressJson: String? = null,
 )

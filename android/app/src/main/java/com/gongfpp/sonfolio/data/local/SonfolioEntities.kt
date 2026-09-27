@@ -98,8 +98,6 @@ data class ConversationEntity(
     val titleOverride: String? = null,
     val briefSummary: String,
     val summaryLevel: String,
-    /** 用户为这段对话写的简短备注。 */
-    val note: String? = null,
     /** 对话开始时刻按所属录音时区算出的当地日期；为空表示旧数据，按设备时区回退。 */
     @androidx.room.ColumnInfo(defaultValue = "") val localStartDate: String = "",
 )

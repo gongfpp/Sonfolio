@@ -19,7 +19,7 @@ import androidx.room.RoomDatabase
         ConversationAliasEntity::class,
         PersonalVocabularyEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -28,6 +28,28 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun vocabularyDao(): VocabularyDao
 
     companion object {
+        // 总结断点续跑：summary_runs 增加部分进度列；会话备注功能已移除，note 恒为 NULL，顺带重建表删列。
+        val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE summary_runs ADD COLUMN progressIndex INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE summary_runs ADD COLUMN progressJson TEXT")
+
+                db.execSQL("PRAGMA defer_foreign_keys = TRUE")
+                db.execSQL(
+                    "CREATE TABLE conversations_new (id TEXT NOT NULL, kind TEXT NOT NULL, startedAtMillis INTEGER NOT NULL, " +
+                        "endedAtMillis INTEGER NOT NULL, zoneId TEXT NOT NULL, generatedTitle TEXT NOT NULL, titleOverride TEXT, " +
+                        "briefSummary TEXT NOT NULL, summaryLevel TEXT NOT NULL, localStartDate TEXT NOT NULL DEFAULT '', PRIMARY KEY(id))",
+                )
+                db.execSQL(
+                    "INSERT INTO conversations_new (id, kind, startedAtMillis, endedAtMillis, zoneId, generatedTitle, titleOverride, " +
+                        "briefSummary, summaryLevel, localStartDate) " +
+                        "SELECT id, kind, startedAtMillis, endedAtMillis, zoneId, generatedTitle, titleOverride, briefSummary, summaryLevel, localStartDate FROM conversations",
+                )
+                db.execSQL("DROP TABLE conversations")
+                db.execSQL("ALTER TABLE conversations_new RENAME TO conversations")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_conversations_startedAtMillis ON conversations (startedAtMillis)")
+            }
+        }
         // 0.2.3 收敛恒定状态列：conversations/daily_journals 的 processingState 永远只写 "READY"，
         // 没有任何读者，删除以去掉一个「两处存同一事实」的隐患。SQLite 3.28 不支持 DROP COLUMN，
         // 因此按既有 5→6 的做法重建表并保留全部数据与其他索引。
@@ -143,7 +165,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build().also { database -> instance = database }
             }
     }
 }

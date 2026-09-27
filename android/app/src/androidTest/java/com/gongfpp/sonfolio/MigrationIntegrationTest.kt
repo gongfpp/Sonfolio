@@ -60,10 +60,10 @@ class MigrationIntegrationTest {
                 old.version = oldVersion
             }
             val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name)
-                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10)
+                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10, SonfolioDatabase.MIGRATION_10_11)
                 .build()
             try {
-                assertEquals(10, migrated.openHelper.writableDatabase.version)
+                assertEquals(11, migrated.openHelper.writableDatabase.version)
                 val chunk = migrated.recordingDao().getChunk("original")!!
                 assertEquals("/qa/original.wav", chunk.localPath)
                 assertEquals(364L, chunk.byteSize)
@@ -71,16 +71,15 @@ class MigrationIntegrationTest {
                 assertNull(chunk.compressedBytes)
                 assertEquals("", chunk.recordedZoneId)
                 val cursor = migrated.openHelper.writableDatabase
-                    .query("SELECT generatedTitle, titleOverride, note, localStartDate FROM conversations WHERE id = 'conv'")
+                    .query("SELECT generatedTitle, titleOverride, localStartDate FROM conversations WHERE id = 'conv'")
                 cursor.moveToFirst()
                 assertTrue(!cursor.isAfterLast)
-                val conversation = listOf(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3))
+                val conversation = listOf(cursor.getString(0), cursor.getString(1), cursor.getString(2))
                 cursor.close()
                 // 标题迁入生成列；手工标题是 0.2.1 才出现的新能力，版本 6 之前没有可比对的历史值。
                 assertEquals("旧标题", conversation[0])
                 if (oldVersion >= 6) assertEquals("手工标题", conversation[1]) else assertNull(conversation[1])
-                if (oldVersion >= 5) assertEquals("用户备注", conversation[2]) else assertNull(conversation[2])
-                if (oldVersion >= 7) assertEquals("2026-09-15", conversation[3]) else assertEquals("", conversation[3])
+                if (oldVersion >= 7) assertEquals("2026-09-15", conversation[2]) else assertEquals("", conversation[2])
                 // 9 起新增个人词汇表；迁移后必须可写且为空。
                 val vocab = migrated.vocabularyDao().acceptedTerms()
                 assertTrue(vocab.isEmpty())
@@ -91,6 +90,10 @@ class MigrationIntegrationTest {
                     }
                 assertFalse("conversations.processingState 应已删除", "processingState" in columnsOf("conversations"))
                 assertFalse("daily_journals.processingState 应已删除", "processingState" in columnsOf("daily_journals"))
+                // 11 起备注功能移除，note 列一并删除；summary_runs 增加断点续跑进度列。
+                assertFalse("conversations.note 应已删除", "note" in columnsOf("conversations"))
+                assertTrue("summary_runs.progressIndex 应存在", "progressIndex" in columnsOf("summary_runs"))
+                assertTrue("summary_runs.progressJson 应存在", "progressJson" in columnsOf("summary_runs"))
             } finally { migrated.close() }
         } finally { context.deleteDatabase(name) }
         }

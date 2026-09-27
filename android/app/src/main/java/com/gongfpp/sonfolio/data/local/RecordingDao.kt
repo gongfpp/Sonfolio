@@ -21,7 +21,7 @@ interface RecordingDao {
     suspend fun getChunksWaitingForAssembly(): List<String>
     @Query("SELECT id FROM audio_chunks WHERE processingState IN ('CORRECTION_PENDING','CORRECTION_FAILED')")
     suspend fun getChunksWaitingForCorrection(): List<String>
-    @Query("SELECT * FROM audio_chunks WHERE processingState IN ('RECORDED','RECOVERED','VAD_RUNNING','VAD_READY','ASR_RUNNING') ORDER BY startedAtMillis")
+    @Query("SELECT * FROM audio_chunks WHERE processingState IN ('RECORDED','RECOVERED','VAD_RUNNING','VAD_READY','ASR_RUNNING','CORRECTION_PENDING','CORRECTION_RUNNING') ORDER BY startedAtMillis")
     suspend fun getChunksWithPendingProcessing(): List<AudioChunkEntity>
 
     @Query("SELECT * FROM audio_chunks WHERE id IN (:ids)")
