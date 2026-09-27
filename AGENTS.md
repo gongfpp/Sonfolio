@@ -7,6 +7,8 @@
 - 连接失效、手机锁屏或安装被系统拦截时，明确告知用户，请用户解锁或允许安装；不通过更改锁屏、安全设置或清除应用数据绕过。
 - 覆盖安装前核对录音状态并备份必要元数据和原音哈希。不得卸载个人使用的主应用以绕过签名不一致。
 - 主机上的编译、静态检查和 JVM 单元测试与真机运行验收分开记录，不能作为真机通过的替代证据。
+- 仪器测试（`androidTest`）与主应用同进程、同数据目录，**严禁写入或删除应用持久目录**：不得使用真实的 `files/recordings`、`filesDir` 下的固定目录或真实数据库；只允许在 `context.cacheDir` 或带唯一标识（`System.nanoTime` / UUID / `qa-` 前缀）的沙箱目录里造数据，并只清理自己的产物。曾有测试在 `files/recordings` 上 `deleteRecursively` 删光用户录音。
+- 跑真机套件前先执行 `node scripts/check-device-test-safety.mjs`（`run-device-tests.mjs` 已内置），并在运行前后核对 `files/recordings` 清单：任何原有录音消失都要立即停止并视为测试缺陷。
 <!-- aki-agent-kit:bootstrap:start -->
 ## Personal Development Baseline
 

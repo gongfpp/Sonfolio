@@ -52,6 +52,20 @@ function run(classes, label) {
 const connected = spawnSync(adb, ['devices'], { encoding: 'utf8' }).stdout ?? '';
 if (!connected.includes(serial)) throw new Error(`ADB 未连接 ${serial}；请先 adb connect`);
 
+// 静态安全检查：拦截会写入/删除真实 filesDir（尤其 files/recordings）的测试写法。
+const safety = spawnSync(process.execPath, ['scripts/check-device-test-safety.mjs'], { encoding: 'utf8' });
+process.stdout.write(safety.stdout ?? '');
+process.stderr.write(safety.stderr ?? '');
+if (safety.status !== 0) throw new Error('真机测试安全静态检查未通过，已中止：避免再次破坏真实用户数据');
+
+// 运行前后核对真实录音清单：任何原有文件消失都说明测试在删用户数据。
+function recordingsFiles() {
+  const result = spawnSync(adb, ['-s', serial, 'shell',
+    "run-as com.gongfpp.sonfolio sh -c 'find files/recordings -type f 2>/dev/null'"], { encoding: 'utf8' });
+  return new Set((result.stdout ?? '').trim().split('\n').filter(Boolean));
+}
+const recordingsBefore = recordingsFiles();
+
 // UI 用例需要真实窗口：息屏或锁屏时会报 “No compose hierarchies found”，此处直接跳过而不是假失败。
 const power = spawnSync('adb', ['-s', serial, 'shell', 'dumpsys', 'power'], { encoding: 'utf8' }).stdout ?? '';
 const awake = /mWakefulness=Awake/.test(power);
@@ -62,4 +76,12 @@ if (wantUi && !awake) console.log('提示：设备未亮屏，跳过 UI 套件�
 // ClientUiTest 会拉起真实 MainActivity，混在同一进程里会互相干扰（超时或 Snapshot 误报）。
 const classes = [...nonUi, ...(flags.includes('--recording') ? recording : []), ...(wantUi && awake ? ui : []), ...(flags.includes('--quality') ? quality : [])];
 for (const className of classes) run([className], className);
+
+const recordingsAfter = recordingsFiles();
+const removed = [...recordingsBefore].filter(file => !recordingsAfter.has(file));
+if (removed.length) {
+  console.error(`\n⚠️ 真机套件删除了 ${removed.length} 个原有录音文件（例如 ${removed.slice(0, 3).join(', ')}）。` +
+    '这是测试缺陷，禁止在个人手机上继续重跑，请先修复对应测试。');
+  process.exitCode = 1;
+}
 console.log(process.exitCode ? '\n有失败项。' : '\n全部通过。');

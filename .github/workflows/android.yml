@@ -36,6 +36,8 @@ jobs:
             'cmake;3.31.6'
       - name: Source hygiene
         run: node scripts/release-check.mjs --source-only
+      - name: Device-test safety scan
+        run: node scripts/check-device-test-safety.mjs
       - name: Unit tests, lint and unsigned build
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease
