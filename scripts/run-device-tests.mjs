@@ -4,6 +4,9 @@
 //   node scripts/run-device-tests.mjs <ADB序列号>            # 非 UI 套件（息屏也能跑）
 //   node scripts/run-device-tests.mjs <ADB序列号> --ui       # 追加 Compose UI 套件（需亮屏解锁）
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const [serial, ...flags] = process.argv.slice(2);
 if (!serial) throw new Error('用法：node scripts/run-device-tests.mjs <ADB序列号> [--ui]');
@@ -66,6 +69,25 @@ function recordingsFiles() {
 }
 const recordingsBefore = recordingsFiles();
 
+// 同时核对真实数据库行数：测试若删了对话/转写/标记/切片，也立刻报错。取不到 sqlite3 时跳过。
+function dbRowCounts() {
+  const dir = mkdtempSync(join(tmpdir(), 'sonfolio-db-'));
+  try {
+    for (const suffix of ['', '-wal', '-shm']) {
+      const r = spawnSync(adb, ['-s', serial, 'exec-out', 'run-as', pkg, 'cat', `databases/sonfolio.db${suffix}`],
+        { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+      if (r.status === 0 && r.stdout?.length) writeFileSync(join(dir, `sonfolio.db${suffix}`), r.stdout);
+    }
+    const query = "SELECT (SELECT count(*) FROM conversations)||','||(SELECT count(*) FROM transcripts)" +
+      "||','||(SELECT count(*) FROM markers)||','||(SELECT count(*) FROM audio_chunks);";
+    const r = spawnSync('sqlite3', [join(dir, 'sonfolio.db'), query], { encoding: 'utf8' });
+    if (r.status !== 0) return null;
+    return r.stdout.trim().split(',').map(Number);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+const rowsBefore = dbRowCounts();
+if (rowsBefore == null) console.log('提示：未找到 sqlite3，本次跳过数据库行数核对。');
+
 // UI 用例需要真实窗口：息屏或锁屏时会报 “No compose hierarchies found”，此处直接跳过而不是假失败。
 const power = spawnSync('adb', ['-s', serial, 'shell', 'dumpsys', 'power'], { encoding: 'utf8' }).stdout ?? '';
 const awake = /mWakefulness=Awake/.test(power);
@@ -83,5 +105,15 @@ if (removed.length) {
   console.error(`\n⚠️ 真机套件删除了 ${removed.length} 个原有录音文件（例如 ${removed.slice(0, 3).join(', ')}）。` +
     '这是测试缺陷，禁止在个人手机上继续重跑，请先修复对应测试。');
   process.exitCode = 1;
+}
+const rowsAfter = dbRowCounts();
+if (rowsBefore && rowsAfter) {
+  const names = ['对话', '转写', '标记', '切片'];
+  const shrunk = rowsAfter.map((n, i) => [names[i], rowsBefore[i], n]).filter(([, b, a]) => a < b);
+  if (shrunk.length) {
+    console.error(`\n⚠️ 真机套件删除了真实数据库记录：${shrunk.map(([n, b, a]) => `${n} ${b}→${a}`).join('，')}。` +
+      '这是测试缺陷，请先修复对应测试。');
+    process.exitCode = 1;
+  }
 }
 console.log(process.exitCode ? '\n有失败项。' : '\n全部通过。');
