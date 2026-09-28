@@ -378,10 +378,14 @@ class RecordingRepository(
         try {
             val protected = if (protectMarked) getMarkedChunkIds() else emptySet()
             var removed = 0; var skippedMarked = 0; var skippedNotReady = 0; var failed = 0
+            val busy = mutableMapOf<String, Int>()
             ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }.forEach { chunk ->
                 when {
                     chunk.id in protected -> skippedMarked++
-                    com.gongfpp.sonfolio.processing.AudioFileAccess.isProcessing(chunk.id) -> skippedNotReady++
+                    com.gongfpp.sonfolio.processing.AudioFileAccess.isProcessing(chunk.id) -> {
+                        val reason = com.gongfpp.sonfolio.processing.AudioFileAccess.busyReason(chunk.id) ?: "文件正在使用"
+                        busy[reason] = (busy[reason] ?: 0) + 1
+                    }
                     chunk.endedAtMillis == null || !ChunkProcessing.isAssembled(chunk.processingState) -> skippedNotReady++
                     else -> {
                         // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。
@@ -405,6 +409,7 @@ class RecordingRepository(
                 val reasons = buildList {
                     if (skippedMarked > 0) add("$skippedMarked 份被标记保护")
                     if (skippedNotReady > 0) add("$skippedNotReady 份尚未处理完成")
+                    busy.forEach { (reason, count) -> add("$count 份$reason") }
                     if (failed > 0) add("$failed 份删除失败")
                 }
                 if (reasons.isNotEmpty()) append("；跳过 ${reasons.joinToString("、")}")

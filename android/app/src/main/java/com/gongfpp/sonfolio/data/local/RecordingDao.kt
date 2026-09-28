@@ -108,6 +108,10 @@ interface RecordingDao {
 
     @Query("""SELECT a.id FROM audio_chunks a WHERE a.processingState = 'ASR_READY'
         AND a.startedAtMillis < :end AND a.endedAtMillis >= :start AND
+        NOT EXISTS (SELECT 1 FROM markers m WHERE a.startedAtMillis <= m.markedAtMillis + m.windowAfterMillis
+            AND a.endedAtMillis >= m.markedAtMillis - m.windowBeforeMillis) AND
+        NOT EXISTS (SELECT 1 FROM speech_segments s JOIN transcripts t ON t.speechSegmentId = s.id
+            WHERE s.audioChunkId = a.id AND t.conversationId IN $MARKED_CONVERSATIONS_SQL) AND
         ((:silence = 1 AND NOT EXISTS (SELECT 1 FROM speech_segments s WHERE s.audioChunkId = a.id))
         OR (:silence = 0 AND EXISTS (SELECT 1 FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId WHERE s.audioChunkId = a.id)
         AND NOT EXISTS (SELECT 1 FROM transcripts t JOIN speech_segments s ON s.id = t.speechSegmentId WHERE s.audioChunkId = a.id AND t.conversationId IS NOT NULL)))""")

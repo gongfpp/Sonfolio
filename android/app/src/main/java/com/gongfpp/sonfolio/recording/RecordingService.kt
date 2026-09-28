@@ -306,35 +306,33 @@ class RecordingService : Service() {
     }
 
     private fun markCurrentMoment(intent: Intent?) {
+        val requestId = intent?.getStringExtra(EXTRA_MARK_REQUEST_ID)
         if (recordingJob?.isActive != true) {
-            RecordingController.publishFeedback(
-                RecordingFeedback.Failed("当前没有正在进行的录音"),
-            )
+            RecordingController.publishFeedback(RecordingFeedback.Failed("当前没有正在进行的录音", requestId))
             return
         }
         serviceScope.launch {
+            val markedAtMillis = System.currentTimeMillis()
+            val defaultWindow = (application as SonfolioApplication).preferences.markerWindows.first()
+            val windowMinutes = intent?.getIntExtra(EXTRA_MARK_WINDOW_MINUTES, defaultWindow)
+                ?.coerceIn(1, RecordingRepository.MAX_MARK_MINUTES) ?: defaultWindow
             try {
-                val markedAtMillis = System.currentTimeMillis()
-                val defaultWindow = (application as SonfolioApplication).preferences.markerWindows.first()
-                val windowMinutes = intent
-                    ?.getIntExtra(EXTRA_MARK_WINDOW_MINUTES, defaultWindow)
-                    ?.coerceIn(1, RecordingRepository.MAX_MARK_MINUTES)
-                    ?: defaultWindow
                 repository.markNow(markedAtMillis, windowMinutes)
-                RecordingController.publishFeedback(
-                    RecordingFeedback.Marked(markedAtMillis, windowMinutes),
-                )
-                notificationManager.notify(
-                    NOTIFICATION_ID,
-                    buildNotification(notificationStartedAtMillis, "已标记前 ${windowMinutes} 分钟涉及的对话"),
-                )
-                (application as SonfolioApplication).conversationRepository.rebuildFromTranscripts(markedAtMillis - windowMinutes * 60_000L, markedAtMillis)
-            } catch (error: Throwable) {
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) {
                 Log.e(TAG, "Unable to save recording marker", error)
-                RecordingController.publishFeedback(
-                    RecordingFeedback.Failed(error.message ?: "标记保存失败"),
-                )
+                RecordingController.publishFeedback(RecordingFeedback.Failed(error.message ?: "标记保存失败", requestId))
+                return@launch
             }
+            RecordingController.publishFeedback(RecordingFeedback.Marked(markedAtMillis, windowMinutes, requestId))
+            // Notification/rebuild failures cannot change an already persisted mark into a save failure.
+            runCatching {
+                notificationManager.notify(NOTIFICATION_ID, buildNotification(notificationStartedAtMillis, "已标记前 ${windowMinutes} 分钟涉及的对话"))
+            }.onFailure { Log.w(TAG, "标记已保存，通知更新失败", it) }
+            try {
+                (application as SonfolioApplication).conversationRepository.rebuildFromTranscripts(markedAtMillis - windowMinutes * 60_000L, markedAtMillis)
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) { Log.w(TAG, "标记已保存，对话高亮等待重新整理", error) }
         }
     }
 
@@ -475,6 +473,7 @@ class RecordingService : Service() {
         private const val WAKE_LOCK_TIMEOUT_MILLIS = 35 * 60 * 1_000L
 
         const val EXTRA_MARK_WINDOW_MINUTES = "mark_window_minutes"
+        const val EXTRA_MARK_REQUEST_ID = "mark_request_id"
 
         @Volatile
         var isRunningInProcess: Boolean = false

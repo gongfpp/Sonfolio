@@ -78,7 +78,9 @@ object ChunkProcessing {
     /** 带阶段编号的短文案，例如「③ 转写」，用于列表行。 */
     fun stagedLabelOf(state: String): String {
         val progress = progressOf(state)
-        return if (progress.isDone) "已完成" else "①②③④⑤"[progress.active!!.coerceIn(1, TOTAL_STAGES) - 1] + " " + labelOf(state)
+        // Waiting states have no active worker. Display the next step, never dereference null.
+        val stage = progress.active ?: (progress.completed + 1)
+        return if (progress.isDone) "已完成" else "①②③④⑤"[stage.coerceIn(1, TOTAL_STAGES) - 1] + " " + labelOf(state)
     }
 
     val runningStates = setOf(RECORDING, VAD_RUNNING, ASR_RUNNING, CORRECTION_RUNNING)
