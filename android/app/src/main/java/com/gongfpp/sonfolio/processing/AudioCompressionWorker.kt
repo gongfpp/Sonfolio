@@ -18,8 +18,9 @@ class AudioCompressionWorker(context: Context, params: WorkerParameters) : Corou
         val id = inputData.getString("chunk") ?: return Result.failure()
         val chunk = dao.getChunk(id) ?: return Result.success()
         if (chunk.processingState != "ASR_READY" || chunk.compressedPath != null) return Result.success()
-        val source = File(chunk.localPath)
-        if (!source.isFile) return Result.success()
+        val root = File(applicationContext.filesDir, "recordings")
+        val source = runCatching { com.gongfpp.sonfolio.recording.AudioResource.managedFile(root, chunk.localPath) }.getOrNull()
+        if (source?.isFile != true || !id.matches(Regex("[a-zA-Z0-9_-]+"))) return Result.failure()
         val target = File(source.parentFile, "$id.m4a")
         return try {
             val bytes = AudioTranscoder.compress(source, target, chunk.sampleRateHz, chunk.channelCount)

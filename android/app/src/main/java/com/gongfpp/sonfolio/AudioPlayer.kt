@@ -76,7 +76,8 @@ internal fun TimelineAudioPlayer(
     onLocateConsumed: () -> Unit = {},
     onPlayConsumed: () -> Unit = {},
 ) {
-    val controller = remember(timeline.start, timeline.slices.firstOrNull()?.path) { AudioPlaybackController() }
+    val audioRoot = java.io.File(LocalContext.current.filesDir, "recordings")
+    val controller = remember(timeline.start, timeline.slices.firstOrNull()?.path) { AudioPlaybackController(audioRoot) }
     controller.timeline = timeline
     var dragPosition by remember { mutableStateOf<Float?>(null) }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
@@ -149,4 +150,3 @@ internal fun formatPlaybackTime(millis: Long): String {
     val seconds = (millis / 1_000L).coerceAtLeast(0L)
     return "%02d:%02d".format(Locale.US, seconds / 60L, seconds % 60L)
 }
-

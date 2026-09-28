@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,6 +25,7 @@ class RecordingRepository(
     private val preferences: SonfolioPreferences? = null,
     captureDirectory: File? = null,
     private val audioFileMutex: Mutex = com.gongfpp.sonfolio.processing.AudioFileAccess.mutex,
+    private val recordingsDirectory: File? = captureDirectory?.parentFile?.let { File(it, "recordings") },
 ) {
     private val recoveryLock = Mutex()
     private val journal = captureDirectory?.let(::CaptureJournal)
@@ -85,8 +87,10 @@ class RecordingRepository(
                     id = chunk.id,
                     startedAtMillis = chunk.startedAtMillis,
                     endedAtMillis = chunk.endedAtMillis,
-                    // 压缩音生成后即成为可播放文件；原始 WAV 只剩归档用途。
-                    localPath = chunk.compressedPath ?: chunk.localPath,
+                    // Playback, export and backup share the same validated fallback rule.
+                    localPath = recordingsDirectory?.let { root ->
+                        runCatching { AudioResource.resolve(root, chunk.localPath, chunk.compressedPath, chunk.processingState == "AUDIO_DELETED")?.file?.path }.getOrNull().orEmpty()
+                    } ?: chunk.localPath,
                     byteSize = chunk.byteSize,
                     processingState = chunk.processingState,
                     errorMessage = chunk.errorMessage,
@@ -100,7 +104,7 @@ class RecordingRepository(
                     audioCompressed = chunk.byteSize <= 0L && (chunk.compressedBytes ?: 0L) > 0L,
                 )
             }
-        }
+        }.flowOn(Dispatchers.IO)
 
     suspend fun beginChunk(
         id: String,
@@ -320,7 +324,11 @@ class RecordingRepository(
         audioFileMutex.withLock {
             recordingDao.getWavRetirementCandidates(cutoff).forEach { chunk ->
                 if (chunk.id in protectedIds) return@forEach
-                val file = File(chunk.localPath)
+                if (com.gongfpp.sonfolio.processing.AudioFileAccess.isProcessing(chunk.id)) return@forEach
+                val root = requireNotNull(recordingsDirectory) { "录音目录未配置，未清理文件" }
+                val file = AudioResource.managedFile(root, chunk.localPath) ?: return@forEach
+                // Never retire the only surviving resource, even if metadata claims compression finished.
+                if (AudioResource.managedFile(root, chunk.compressedPath)?.isFile != true) return@forEach
                 // 先改元数据再删文件会丢字节引用；沿用先删文件、失败不登记的顺序。
                 withContext(kotlinx.coroutines.NonCancellable) {
                     if (!file.exists() || file.delete()) {
@@ -366,17 +374,21 @@ class RecordingRepository(
     /** Explicit audio-only cleanup. Text, markers and conversation identity are never deleted. */
     suspend fun deleteChunks(ids: Set<String>, protectMarked: Boolean): String = withContext(Dispatchers.IO) {
         val lock = audioFileMutex
-        if (!lock.tryLock()) return@withContext "正在识别录音，请处理结束后再清理；未删除任何文件"
+        if (!lock.tryLock()) return@withContext "录音文件正在使用（识别、备份或导出），请稍后再清理；未删除任何文件"
         try {
             val protected = if (protectMarked) getMarkedChunkIds() else emptySet()
             var removed = 0; var skippedMarked = 0; var skippedNotReady = 0; var failed = 0
             ids.toList().chunked(400).flatMap { recordingDao.getChunksByIds(it) }.forEach { chunk ->
                 when {
                     chunk.id in protected -> skippedMarked++
+                    com.gongfpp.sonfolio.processing.AudioFileAccess.isProcessing(chunk.id) -> skippedNotReady++
                     chunk.endedAtMillis == null || !ChunkProcessing.isAssembled(chunk.processingState) -> skippedNotReady++
                     else -> {
                         // 清理动作删除全部音频文件（原始 WAV 与压缩音），文字与关系永不删除。
-                        val files = listOfNotNull(File(chunk.localPath), chunk.compressedPath?.let(::File))
+                        val files = runCatching {
+                            val root = requireNotNull(recordingsDirectory) { "录音目录未配置" }
+                            listOfNotNull(AudioResource.managedFile(root, chunk.localPath), AudioResource.managedFile(root, chunk.compressedPath))
+                        }.getOrElse { failed++; return@forEach }
                         // Metadata survives a failed unlink or a crash between unlink and this update.
                         // Navigation/coroutine cancellation cannot leave a successful unlink unrecorded.
                         withContext(kotlinx.coroutines.NonCancellable) {
@@ -410,6 +422,8 @@ class RecordingRepository(
                 endedAtMillis = chunk.endedAtMillis,
                 localPath = chunk.localPath,
                 texts = recordingDao.getTranscriptTextsForChunk(chunk.id),
+                compressedPath = chunk.compressedPath,
+                audioDeleted = chunk.processingState == "AUDIO_DELETED",
             )
         }
     }

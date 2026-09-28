@@ -5,6 +5,11 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/** Processing checkpoints, not user content: blank success differs from an unprocessed window. */
+@Entity(tableName = "remote_asr_windows", primaryKeys = ["segmentId", "configKey"],
+    foreignKeys = [ForeignKey(entity = SpeechSegmentEntity::class, parentColumns = ["id"], childColumns = ["segmentId"], onDelete = ForeignKey.CASCADE)])
+data class RemoteAsrWindowEntity(val segmentId: String, val configKey: String, val state: String, val text: String?)
+
 @Entity(tableName = "conversation_aliases", indices = [Index("canonicalId")])
 data class ConversationAliasEntity(@PrimaryKey val oldId: String, val canonicalId: String)
 

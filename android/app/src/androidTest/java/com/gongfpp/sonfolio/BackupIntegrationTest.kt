@@ -13,6 +13,56 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BackupIntegrationTest {
+    @Test fun bothContainersExportCorrectlyAndRestoreDiscardsBothInjectedPaths() = runBlocking {
+      for (extension in listOf("wav", "m4a")) {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = Files.createTempDirectory(base.cacheDir.toPath(), "qa-backup-resource-").toFile()
+        val context = object : ContextWrapper(base) { override fun getFilesDir() = root }
+        val source = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+        val target = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+        try {
+            val recordings = File(root, "recordings").apply { mkdirs() }
+            val audio = File(recordings, "audio.$extension").apply { writeBytes(ByteArray(64) { 7 }) }
+            val wavPath = if (extension == "wav") audio.path else ""
+            val compressedPath = if (extension == "m4a") audio.path else null
+            val outside = File(root, "not-a-recording").apply { writeText("keep") }
+            source.recordingDao().insertChunk(AudioChunkEntity("aac-only", 0, 1000, wavPath, if (extension == "wav") audio.length() else 0, 16000, 1, "ASR_READY", null, compressedPath = compressedPath, compressedBytes = if (extension == "m4a") audio.length() else null))
+            val ordinary = File(root, "export.zip")
+            RecordingExporter.exportToZip(context, Uri.fromFile(ordinary), listOf(ChunkExport("aac-only", 0, 1000, wavPath, listOf("文字"), compressedPath)))
+            java.util.zip.ZipFile(ordinary).use { zip ->
+                assertNotNull(zip.getEntry("audio/aac-only.$extension"))
+                assertNull(zip.getEntry("audio/aac-only.${if (extension == "wav") "m4a" else "wav"}"))
+            }
+            val archive = File(root, "backup.zip")
+            MemoryBackup(context, source, kotlinx.coroutines.sync.Mutex()).export(Uri.fromFile(archive))
+            val injected = File(root, "injected.zip")
+            java.util.zip.ZipInputStream(archive.inputStream()).use { input ->
+                java.util.zip.ZipOutputStream(injected.outputStream()).use { output ->
+                    while (true) {
+                        val entry = input.nextEntry ?: break
+                        val bytes = input.readBytes()
+                        output.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                        if (entry.name == "manifest.json") {
+                            val manifest = org.json.JSONObject(bytes.toString(Charsets.UTF_8))
+                            manifest.getJSONObject("tables").getJSONArray("audio_chunks").getJSONObject(0)
+                                .put("localPath", outside.path).put("compressedPath", outside.path)
+                            output.write(manifest.toString().toByteArray())
+                        } else output.write(bytes)
+                        output.closeEntry()
+                    }
+                }
+            }
+            MemoryBackup(context, target, kotlinx.coroutines.sync.Mutex()).restore(Uri.fromFile(injected))
+            val restored = target.recordingDao().getChunk("aac-only")!!
+            if (extension == "wav") assertNull(restored.compressedPath) else assertEquals("", restored.localPath)
+            val restoredFile = File(if (extension == "wav") restored.localPath else restored.compressedPath!!)
+            assertTrue(restoredFile.canonicalPath.startsWith(recordings.canonicalPath + "/restore-"))
+            assertArrayEquals(audio.readBytes(), restoredFile.readBytes())
+            assertEquals("keep", outside.readText())
+        } finally { source.close(); target.close(); root.deleteRecursively() }
+      }
+    }
+
     @Test fun completeRoundTripKeepsAudioTextMarkersAndRefusesOverwrite() = runBlocking {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val root = Files.createTempDirectory(base.cacheDir.toPath(), "backup-test-").toFile()
@@ -21,7 +71,7 @@ class BackupIntegrationTest {
         val target = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
         val fixtureMutex = kotlinx.coroutines.sync.Mutex()
         try {
-            val file = File(root, "source.wav")
+            val file = File(File(root, "recordings").apply { mkdirs() }, "source.wav")
             WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(32_000), 32_000) }
             val audio = file.readBytes()
             source.recordingDao().insertChunk(AudioChunkEntity("backup-test", 1_000, 2_000, file.path, file.length(), 16_000, 1, "ASR_READY", null))
@@ -50,7 +100,7 @@ class BackupIntegrationTest {
         val target = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
         val fixtureMutex = kotlinx.coroutines.sync.Mutex()
         try {
-            val file = File(root, "legacy.wav")
+            val file = File(File(root, "recordings").apply { mkdirs() }, "legacy.wav")
             WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(32_000), 32_000) }
             source.recordingDao().insertChunk(AudioChunkEntity("legacy-audio", 1_000, 2_000, file.path, file.length(), 16_000, 1, "ASR_READY", null))
             source.recordingDao().insertSpeechSegments(listOf(SpeechSegmentEntity("legacy-speech", "legacy-audio", 0, 1_000, 1f, "ASR_READY")))
@@ -72,6 +122,7 @@ class BackupIntegrationTest {
                             manifest.remove("databaseSchema")
                             manifest.remove("appVersion")
                             manifest.put("version", 1).put("schema", 4)
+                            manifest.getJSONObject("tables").remove("personal_vocabulary")
                             val conversations = manifest.getJSONObject("tables").getJSONArray("conversations")
                             for (index in 0 until conversations.length()) {
                                 val row = conversations.getJSONObject(index)

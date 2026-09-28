@@ -6,7 +6,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-internal class AudioPlaybackController {
+internal class AudioPlaybackController(private val recordingsDirectory: java.io.File) {
     var timeline = PlaybackTimeline(emptyList())
     var playing by mutableStateOf(false)
         private set
@@ -31,7 +31,9 @@ internal class AudioPlaybackController {
         val media = MediaPlayer()
         player = media
         runCatching {
-            media.setDataSource(timeline.slices[index].path)
+            val source = requireNotNull(com.gongfpp.sonfolio.recording.AudioResource.managedFile(recordingsDirectory, timeline.slices[index].path))
+            require(source.isFile)
+            media.setDataSource(source.path)
             media.setOnPreparedListener {
                 if (player !== it) return@setOnPreparedListener
                 it.seekTo(target.fileOffset, MediaPlayer.SEEK_CLOSEST)

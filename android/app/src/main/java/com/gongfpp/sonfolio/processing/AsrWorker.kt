@@ -22,7 +22,10 @@ class AsrWorker(
     appContext: Context,
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
-    override suspend fun doWork(): Result = AudioFileAccess.mutex.withLock { process() }
+    override suspend fun doWork(): Result {
+        val chunkId = inputData.getString(AUDIO_CHUNK_ID) ?: return Result.failure()
+        return AudioFileAccess.processingRead(chunkId) { process() }
+    }
 
     private suspend fun process(): Result {
         val chunkId = inputData.getString(AUDIO_CHUNK_ID)
@@ -51,8 +54,8 @@ class AsrWorker(
             dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "等待语音识别模型：请打开设置 → 转文字方式，下载模型后继续转写；也可选择在线识别")
             return Result.success()
         }
-        val file = File(chunk.localPath)
-        if (!file.exists() || file.length() <= 44L) {
+        val file = runCatching { com.gongfpp.sonfolio.recording.AudioResource.managedFile(File(applicationContext.filesDir, "recordings"), chunk.localPath) }.getOrNull()
+        if (file == null || !file.isFile || file.length() <= 44L) {
             dao.updateProcessingState(chunkId, ChunkProcessing.ASR_FAILED, "录音文件不存在或为空")
             return Result.success()
         }
@@ -182,22 +185,32 @@ class AsrWorker(
     ): List<String> {
         val transport = RemoteSpeechTransport(app.transcriptionSettings, app.usageStore)
         val versionTag = "remote:${config.provider.name}:vad-window-v1"
+        val configKey = "${config.revision}:$language"
+        val checkpoints = dao.getRemoteAsrWindows(chunkId, configKey)
+            .filter { it.state == "TEXT_SUCCESS" || it.state == "EMPTY_SUCCESS" }.associateBy { it.segmentId }
         val reusable = dao.getTranscriptsForChunk(chunkId)
-            .filter { it.modelName == config.model && it.modelVersion == versionTag }
+            .filter { it.modelName == config.model && it.modelVersion == versionTag && it.languageTag == remoteLanguageTag(config, language) }
             .associateBy { it.speechSegmentId }
-        val pending = segments.filter { it.id !in reusable }
+        val pending = segments.filter { it.id !in reusable && it.id !in checkpoints }
         val results = coroutineScope {
             val permits = Semaphore(REMOTE_CONCURRENCY)
             pending.map { segment ->
                 async {
                     permits.withPermit {
-                        segment to runCatching {
+                        val result = runCatching {
                             transport.transcribeWindow(
                                 file,
                                 DetectedSpeechWindow(segment.startOffsetMillis, segment.endOffsetMillis),
                                 config, chunkId, startedAt, language,
                             )
                         }
+                        currentCoroutineContext().ensureActive()
+                        check(app.transcriptionSettings.read().revision == config.revision) { "转文字配置已改变，旧结果未应用" }
+                        val text = result.getOrNull()
+                        dao.saveRemoteAsrWindow(com.gongfpp.sonfolio.data.local.RemoteAsrWindowEntity(
+                            segment.id, configKey, when { result.isFailure -> "FAILED"; text.isNullOrBlank() -> "EMPTY_SUCCESS"; else -> "TEXT_SUCCESS" }, text,
+                        ))
+                        segment to result
                     }
                 }
             }.awaitAll()
@@ -234,6 +247,7 @@ class AsrWorker(
             error("${failures.size}/${pending.size} 个片段转写失败：${failures.first().second.exceptionOrNull()?.message}；已完成的文字已保留，重试只处理剩余片段")
         }
         val textBySegment = reusable.mapValues { it.value.text }.toMutableMap()
+        checkpoints.forEach { (id, checkpoint) -> textBySegment[id] = checkpoint.text.orEmpty() }
         results.forEach { (segment, result) -> textBySegment[segment.id] = result.getOrThrow() }
         return segments.map { textBySegment.getValue(it.id) }
     }

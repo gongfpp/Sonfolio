@@ -15,7 +15,10 @@ class VadWorker(
     appContext: Context,
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
-    override suspend fun doWork(): Result = AudioFileAccess.mutex.withLock { process() }
+    override suspend fun doWork(): Result {
+        val chunkId = inputData.getString(AUDIO_CHUNK_ID) ?: return Result.failure()
+        return AudioFileAccess.processingRead(chunkId) { process() }
+    }
 
     private suspend fun process(): Result {
         val chunkId = inputData.getString(AUDIO_CHUNK_ID)
@@ -26,8 +29,8 @@ class VadWorker(
         if (chunk.endedAtMillis == null) return Result.success()
         if (ChunkProcessing.isAssembled(chunk.processingState)) return Result.success()
         if (chunk.processingState in setOf(ChunkProcessing.ASR_RUNNING, ChunkProcessing.VAD_READY)) return Result.success()
-        val file = File(chunk.localPath)
-        if (!file.exists() || file.length() <= 44L) {
+        val file = runCatching { com.gongfpp.sonfolio.recording.AudioResource.managedFile(File(applicationContext.filesDir, "recordings"), chunk.localPath) }.getOrNull()
+        if (file == null || !file.isFile || file.length() <= 44L) {
             dao.updateProcessingState(chunkId, ChunkProcessing.VAD_FAILED, "录音文件不存在或为空")
             return Result.failure()
         }

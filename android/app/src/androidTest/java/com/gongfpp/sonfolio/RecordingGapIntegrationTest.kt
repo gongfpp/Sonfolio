@@ -49,7 +49,7 @@ class RecordingGapIntegrationTest {
         val directory = java.io.File(context.cacheDir, "qa-cleanup-${System.nanoTime()}").apply { mkdirs() }
         val prefsName = "qa-cleanup-${System.nanoTime()}"
         val repository = ConversationRepository(db, SonfolioPreferences(context, prefsName))
-        val recordings = com.gongfpp.sonfolio.recording.RecordingRepository(db.recordingDao(), audioFileMutex = kotlinx.coroutines.sync.Mutex())
+        val recordings = com.gongfpp.sonfolio.recording.RecordingRepository(db.recordingDao(), audioFileMutex = kotlinx.coroutines.sync.Mutex(), recordingsDirectory = directory)
         val start = 1_800_000_000_000L
         suspend fun add(id: String, at: Long) {
             val file = java.io.File(directory, "$id.wav").apply { writeBytes(ByteArray(32_044)) }

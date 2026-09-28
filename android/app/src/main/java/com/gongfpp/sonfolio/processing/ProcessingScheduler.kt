@@ -28,6 +28,7 @@ class ProcessingScheduler(context: Context) {
                 .setConstraints(if (manual) Constraints.NONE else constraints())
                 .setInputData(workDataOf("chunk" to chunkId))
                 .addTag(TranscriptCorrectionWorker.TAG)
+                .addTag("processing-manual:$manual")
                 .build()
             WorkManager.getInstance(appContext).enqueueUniqueWork(
                 "sonfolio-correct-$chunkId", ExistingWorkPolicy.KEEP, request,
@@ -59,6 +60,7 @@ class ProcessingScheduler(context: Context) {
                 val vad = manager.getWorkInfosForUniqueWork("sonfolio-vad-${chunk.id}").get()
                 val asr = manager.getWorkInfosByTag("sonfolio-asr-chunk-${chunk.id}").get()
                 (vad.map { it to true } + asr.map { it to false }).filter { !it.first.state.isFinished }.forEach { (info, isVad) ->
+                    if ("processing-manual:true" in info.tags || (info.tags.none { it.startsWith("processing-manual:") } && info.constraints == Constraints.NONE)) return@forEach
                     val builder = if (isVad) OneTimeWorkRequestBuilder<VadWorker>() else OneTimeWorkRequestBuilder<AsrWorker>()
                     builder.setId(info.id).setConstraints(constraints())
                         .setInputData(workDataOf(VadWorker.AUDIO_CHUNK_ID to chunk.id))
@@ -69,6 +71,7 @@ class ProcessingScheduler(context: Context) {
             dao.getChunksWithPendingProcessing().forEach { chunk ->
                 manager.getWorkInfosForUniqueWork("sonfolio-correct-${chunk.id}").get()
                     .filter { !it.state.isFinished }.forEach { info ->
+                        if ("processing-manual:true" in info.tags || (info.tags.none { it.startsWith("processing-manual:") } && info.constraints == Constraints.NONE)) return@forEach
                         val builder = OneTimeWorkRequestBuilder<TranscriptCorrectionWorker>()
                         builder.setId(info.id).setConstraints(constraints())
                             .setInputData(workDataOf("chunk" to chunk.id))
@@ -86,6 +89,7 @@ class ProcessingScheduler(context: Context) {
             .setConstraints(if (manual) Constraints.NONE else constraints())
             .setInputData(workDataOf(VadWorker.AUDIO_CHUNK_ID to audioChunkId))
             .addTag(VadWorker.TAG)
+            .addTag("processing-manual:$manual")
             .build()
         WorkManager.getInstance(appContext).enqueueUniqueWork(
             "sonfolio-vad-$audioChunkId",
@@ -110,6 +114,7 @@ class ProcessingScheduler(context: Context) {
                         .setConstraints(if (manual) Constraints.NONE else constraints())
                         .setInputData(workDataOf(AsrWorker.AUDIO_CHUNK_ID to audioChunkId))
                         .addTag(AsrWorker.TAG)
+                        .addTag("processing-manual:$manual")
                         .addTag(chunkTag)
                         .build()
                     manager.enqueueUniqueWork(ASR_QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).result.get()

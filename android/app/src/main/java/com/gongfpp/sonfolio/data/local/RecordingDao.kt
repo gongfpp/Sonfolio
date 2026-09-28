@@ -165,6 +165,12 @@ interface RecordingDao {
     )
     suspend fun getSpeechSegments(audioChunkId: String): List<SpeechSegmentEntity>
 
+    @Query("SELECT w.* FROM remote_asr_windows w JOIN speech_segments s ON s.id = w.segmentId WHERE s.audioChunkId = :chunkId AND w.configKey = :configKey")
+    suspend fun getRemoteAsrWindows(chunkId: String, configKey: String): List<RemoteAsrWindowEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveRemoteAsrWindow(window: RemoteAsrWindowEntity)
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertChunk(chunk: AudioChunkEntity)
 

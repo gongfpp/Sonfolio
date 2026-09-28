@@ -15,6 +15,22 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RawCleanupIntegrationTest {
+    @Test fun cleanupRefusesAnOutOfRootPathWithoutTouchingEitherFile() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = File(context.cacheDir, "qa-path-${System.nanoTime()}").apply { mkdirs() }
+        val managed = File(root, "audio").apply { mkdirs() }
+        val inside = File(managed, "valid.wav").apply { writeText("keep inside") }
+        val outside = File(root, "not-audio").apply { writeText("keep outside") }
+        val db = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+        try {
+            db.recordingDao().insertChunk(AudioChunkEntity("escape", 0, 1000, inside.path, inside.length(), 16000, 1, "ASR_READY", null, compressedPath = outside.path))
+            val repository = RecordingRepository(db.recordingDao(), audioFileMutex = kotlinx.coroutines.sync.Mutex(), recordingsDirectory = managed)
+            assertTrue(repository.deleteChunks(setOf("escape"), false).contains("1 份删除失败"))
+            assertEquals("keep inside", inside.readText()); assertEquals("keep outside", outside.readText())
+            assertEquals("ASR_READY", db.recordingDao().getChunk("escape")!!.processingState)
+        } finally { db.close(); root.deleteRecursively() }
+    }
+
     @Test fun cleanupReducesVisibleFilesAndCountsButPreservesTextAndIsRepeatSafe() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val db = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
@@ -32,7 +48,7 @@ class RawCleanupIntegrationTest {
             dao.insertMarker(MarkerEntity("marker", 900_500, 1_000, 0, null))
             // This fixture has its own files/database; do not contend with personal ASR work.
             val fixtureMutex = kotlinx.coroutines.sync.Mutex()
-            val repository = RecordingRepository(dao, audioFileMutex = fixtureMutex)
+            val repository = RecordingRepository(dao, audioFileMutex = fixtureMutex, recordingsDirectory = directory)
             assertEquals(listOf("filtered"), dao.getCleanupCandidates(0, Long.MAX_VALUE, false))
             assertEquals(3, dao.observeChunkCount(0, Long.MAX_VALUE).first())
             fixtureMutex.lock()

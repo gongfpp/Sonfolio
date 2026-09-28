@@ -18,6 +18,8 @@ data class ChunkExport(
     val endedAtMillis: Long?,
     val localPath: String,
     val texts: List<String>,
+    val compressedPath: String? = null,
+    val audioDeleted: Boolean = false,
 )
 
 /**
@@ -28,20 +30,19 @@ object RecordingExporter {
     suspend fun exportToZip(context: Context, uri: Uri, items: List<ChunkExport>) = withContext(Dispatchers.IO) {
       com.gongfpp.sonfolio.processing.AudioFileAccess.mutex.withLock {
         require(items.isNotEmpty()) { "没有选择可导出的录音" }
-        items.forEach { item ->
+        val resources = items.map { item ->
             require(item.endedAtMillis != null) { "正在录音的文件不能导出，请停止录音或等待切片完成" }
             require(item.id.matches(Regex("[a-zA-Z0-9_-]+"))) { "文件标识不合法" }
-            require(File(item.localPath).isFile) { "选中录音已清理或缺失，请取消选择后重试" }
+            requireNotNull(AudioResource.resolve(File(context.filesDir, "recordings"), item.localPath, item.compressedPath, item.audioDeleted)) {
+                "选中录音已清理或缺失，请取消选择后重试"
+            }
         }
         context.contentResolver.openOutputStream(uri)?.use { out ->
             ZipOutputStream(out).use { zip ->
-                items.forEach { item ->
-                    val file = File(item.localPath)
-                    if (file.exists()) {
-                        zip.putNextEntry(ZipEntry("audio/${item.id}.wav"))
-                        file.inputStream().use { it.copyTo(zip) }
-                        zip.closeEntry()
-                    }
+                items.zip(resources).forEach { (item, resource) ->
+                    zip.putNextEntry(ZipEntry("audio/${item.id}.${resource.extension}"))
+                    resource.file.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
                     val manifest = buildString {
                         append("id: ${item.id}\n")
                         append("startedAt: ${item.startedAtMillis}\n")

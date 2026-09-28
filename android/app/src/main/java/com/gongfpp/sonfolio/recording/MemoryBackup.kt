@@ -64,22 +64,13 @@ internal class MemoryBackup(private val context: Context, private val database: 
             // JSONObject.NULL 经 optString 会变成字面量 "null"；必须先判断 isNull。
             val compressedPath = if (row.isNull("compressedPath")) null else row.optString("compressedPath").takeIf { it.isNotBlank() }
             if (row.getString("processingState") != "AUDIO_DELETED") {
-                when {
-                    wavPath.isNotBlank() && File(wavPath).isFile -> {
-                        val name = "audio/$id.wav"
-                        row.put("localPath", "").put("compressedPath", JSONObject.NULL)
-                        row.put("backupAudio", name).put("backupBytes", File(wavPath).length()).put("backupSha256", hash(File(wavPath)))
-                        files[name] = File(wavPath)
-                    }
-                    compressedPath != null && File(compressedPath).isFile -> {
-                        // 原始 WAV 已按保留策略删除时，备份压缩音；文字始终完整。
-                        val name = "audio/$id.m4a"
-                        row.put("localPath", "").put("compressedPath", "")
-                        row.put("backupAudio", name).put("backupBytes", File(compressedPath).length()).put("backupSha256", hash(File(compressedPath)))
-                        files[name] = File(compressedPath)
-                    }
-                    else -> error("部分录音丢失，无法制作完整备份；已有数据未改动")
+                val audio = requireNotNull(AudioResource.resolve(File(context.filesDir, "recordings"), wavPath, compressedPath)) {
+                    "部分录音丢失，无法制作完整备份；已有数据未改动"
                 }
+                val name = "audio/$id.${audio.extension}"
+                BackupFormat.resetAudioPaths(row)
+                row.put("backupAudio", name).put("backupBytes", audio.file.length()).put("backupSha256", hash(audio.file))
+                files[name] = audio.file
             } else {
                 row.put("localPath", "").put("compressedPath", JSONObject.NULL)
             }
@@ -122,8 +113,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                 // 旧版 manifest 写的是 "version"；新版分开 formatVersion 与 databaseSchema。
                 val formatVersion = manifest.optInt("formatVersion", manifest.optInt("version", 0))
                 require(formatVersion in 1..FORMAT_VERSION) { "不支持此备份版本，请使用相应版本的声迹" }
-                val tables = manifest.getJSONObject("tables")
-                require(tables.keys().asSequence().toSet() == TABLES.toSet()) { "备份表不完整" }
+                val tables = BackupFormat.migrate(manifest)
                 val chunks = tables.getJSONArray("audio_chunks")
                 val expected = linkedMapOf<String, JSONObject>()
                 val ids = mutableSetOf<String>()
@@ -131,18 +121,22 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     val row = chunks.getJSONObject(index)
                     val id = safeId(row.getString("id"))
                     require(ids.add(id) && !row.isNull("endedAtMillis")) { "备份包含重复或未完成的录音" }
+                    BackupFormat.resetAudioPaths(row)
                     // 备份中可播放文件的扩展名以清单条目为准（wav 或 m4a）。
                     val extension = if (row.optString("backupAudio", "").endsWith(".m4a")) "m4a" else "wav"
                     val file = File(directory, "$id.$extension")
                     row.put("localPath", if (extension == "wav") file.path else "")
                     if (extension == "m4a") row.put("compressedPath", file.path)
+                    // Only the one validated archive resource is restored; do not retain stale byte counts.
+                    row.put("byteSize", if (extension == "wav") row.optLong("backupBytes", 0L) else 0L)
+                    row.put("compressedBytes", if (extension == "m4a") row.optLong("backupBytes", 0L) else JSONObject.NULL)
                     if (row.getString("processingState") != "AUDIO_DELETED") {
                         require(row.getString("backupAudio") == "audio/$id.$extension" && row.getLong("backupBytes") >= 44) { "录音清单无效" }
                         expected[row.getString("backupAudio")] = row
                     } else {
                         // 已清理的切片不指向任何存在的文件。
                         row.put("localPath", "")
-                        if (!row.isNull("compressedPath")) row.put("compressedPath", "")
+                        row.put("compressedPath", JSONObject.NULL).put("byteSize", 0L).put("compressedBytes", JSONObject.NULL)
                     }
                 }
                 val required = expected.values.fold(0L) { total, row -> Math.addExact(total, row.getLong("backupBytes")) }
@@ -196,9 +190,6 @@ internal class MemoryBackup(private val context: Context, private val database: 
                             }
                             if (table == "summary_runs" && row.getString("state") in listOf("RUNNING", "QUEUED")) row.put("state", "CANCELLED").put("message", "备份已恢复，请重新配置总结方式后手动生成")
                             // 旧格式备份的列名迁移（如 conversations.title → generatedTitle）。
-                            if (formatVersion == 1) LEGACY_RENAMES[table].orEmpty().forEach { (from, to) ->
-                                if (row.has(from)) { row.put(to, row.get(from)); row.remove(from) }
-                            }
                             val rowKeys = row.keys().asSequence().toSet()
                             require(columns.containsAll(rowKeys)) { "备份字段与当前版本不匹配" }
                             // 缺失列仅允许旧备份尚未包含的可空/有默认值列（如 note、originalText），其余拒绝。
@@ -241,12 +232,10 @@ internal class MemoryBackup(private val context: Context, private val database: 
     }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
     companion object {
-        private val TABLES = listOf("audio_chunks", "speech_segments", "conversations", "transcripts", "markers", "recording_gaps", "conversation_summaries", "daily_journals", "summary_runs", "conversation_aliases")
+        private val TABLES = BackupFormat.tables
         private const val MAX_METADATA = 64 * 1024 * 1024
         private const val RESERVE = 512L * 1024 * 1024
-        private const val FORMAT_VERSION = 2
-        /** formatVersion 1 备份在恢复时改名到当前列名；缺失的可空列按默认值导入。 */
-        private val LEGACY_RENAMES = mapOf("conversations" to mapOf("title" to "generatedTitle"))
+        private const val FORMAT_VERSION = BackupFormat.VERSION
 
         private data class ColumnRule(val notNull: Boolean, val hasDefault: Boolean)
     }

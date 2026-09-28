@@ -18,8 +18,9 @@ import androidx.room.RoomDatabase
         SummaryRunEntity::class,
         ConversationAliasEntity::class,
         PersonalVocabularyEntity::class,
+        RemoteAsrWindowEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 abstract class SonfolioDatabase : RoomDatabase() {
@@ -28,6 +29,11 @@ abstract class SonfolioDatabase : RoomDatabase() {
     abstract fun vocabularyDao(): VocabularyDao
 
     companion object {
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS remote_asr_windows (segmentId TEXT NOT NULL, configKey TEXT NOT NULL, state TEXT NOT NULL, text TEXT, PRIMARY KEY(segmentId, configKey), FOREIGN KEY(segmentId) REFERENCES speech_segments(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+            }
+        }
         // 总结断点续跑：summary_runs 增加部分进度列；会话备注功能已移除，note 恒为 NULL，顺带重建表删列。
         val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -165,7 +171,7 @@ abstract class SonfolioDatabase : RoomDatabase() {
                     context.applicationContext,
                     SonfolioDatabase::class.java,
                     "sonfolio.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build().also { database -> instance = database }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).build().also { database -> instance = database }
             }
     }
 }

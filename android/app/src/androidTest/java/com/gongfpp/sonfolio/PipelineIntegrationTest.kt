@@ -28,7 +28,7 @@ class PipelineIntegrationTest {
     @Test fun realPlayerPausesResumesAndSeeksAcrossFiles() = runBlocking {
         val first = File(context.filesDir, "qa-playback-a-${System.nanoTime()}.wav")
         val second = File(context.filesDir, "qa-playback-b-${System.nanoTime()}.wav")
-        val controller = AudioPlaybackController()
+        val controller = AudioPlaybackController(context.filesDir)
         try {
             listOf(first, second).forEach { file -> WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(64_000), 64_000) } }
             withContext(Dispatchers.Main) {
@@ -133,6 +133,7 @@ class PipelineIntegrationTest {
     }
 
     @Test fun remoteModelsProcessPrivateAudioWithoutChangingIt() = runBlocking {
+        org.junit.Assume.assumeTrue("QA 包未下载 SenseVoice，推理验收未执行", com.gongfpp.sonfolio.models.ModelCatalog.available(context.filesDir, com.gongfpp.sonfolio.models.ModelCatalog.byId(com.gongfpp.sonfolio.processing.LocalAsrEngine.SENSE_VOICE.artifactId)!!))
         val file = File(context.filesDir, "qa-inference-${System.nanoTime()}.wav")
         try {
             WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(64_000), 64_000) }
@@ -146,6 +147,7 @@ class PipelineIntegrationTest {
     }
 
     @Test fun modelTimeoutIsFailureButExternalCancellationIsPreserved() = runBlocking {
+        org.junit.Assume.assumeTrue("QA 包未下载 SenseVoice，超时验收未执行", com.gongfpp.sonfolio.models.ModelCatalog.available(context.filesDir, com.gongfpp.sonfolio.models.ModelCatalog.byId(com.gongfpp.sonfolio.processing.LocalAsrEngine.SENSE_VOICE.artifactId)!!))
         val file = File(context.filesDir, "qa-timeout-${System.nanoTime()}.wav")
         try {
             WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(64_000), 64_000) }

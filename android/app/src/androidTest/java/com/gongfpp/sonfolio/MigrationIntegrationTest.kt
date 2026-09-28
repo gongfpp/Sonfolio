@@ -60,10 +60,10 @@ class MigrationIntegrationTest {
                 old.version = oldVersion
             }
             val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name)
-                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10, SonfolioDatabase.MIGRATION_10_11)
+                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10, SonfolioDatabase.MIGRATION_10_11, SonfolioDatabase.MIGRATION_11_12)
                 .build()
             try {
-                assertEquals(11, migrated.openHelper.writableDatabase.version)
+                assertEquals(12, migrated.openHelper.writableDatabase.version)
                 val chunk = migrated.recordingDao().getChunk("original")!!
                 assertEquals("/qa/original.wav", chunk.localPath)
                 assertEquals(364L, chunk.byteSize)

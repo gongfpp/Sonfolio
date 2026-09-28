@@ -132,6 +132,9 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         work.getWorkInfosByTag(TAG).get().filter { !it.state.isFinished }.forEach { info ->
             val key = info.tags.firstOrNull { it.startsWith("summary-key:") }?.removePrefix("summary-key:") ?: return@forEach
             val revision = info.tags.firstOrNull { it.startsWith("summary-revision:") }?.removePrefix("summary-revision:") ?: config.revision
+            // Manual correction has its own worker/input key and intentionally ignores charging.
+            // Old correction requests lack a revision tag: do not replace their original input.
+            if ("correction" in info.tags) return@forEach
             val force = info.tags.firstOrNull { it.startsWith("summary-force:") }?.removePrefix("summary-force:")?.toBooleanStrictOrNull() ?: false
             val constraints = Constraints.Builder().setRequiresCharging(!force && app.preferences.chargeOnly)
             if (!force) constraints.setRequiresBatteryNotLow(true)
@@ -191,7 +194,8 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             OneTimeWorkRequestBuilder<CorrectionWorker>()
                 .setInputData(workDataOf("key" to key, "revision" to config.revision))
                 .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
-                .addTag(TAG).addTag("correction").addTag("summary-key:$runKey").build(),
+                .addTag(TAG).addTag("correction").addTag("summary-key:$runKey")
+                .addTag("summary-revision:${config.revision}").build(),
         )
         Unit
     }
