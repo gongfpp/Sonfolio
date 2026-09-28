@@ -1,119 +1,58 @@
 #!/usr/bin/env node
-// 真机仪器测试入口。CI 没有真机，只编译 androidTest；本脚本把手工验收命令固化下来，
-// 避免 androidTest 长期只编译不运行。用法：
-//   node scripts/run-device-tests.mjs <ADB序列号>            # 非 UI 套件（息屏也能跑）
-//   node scripts/run-device-tests.mjs <ADB序列号> --ui       # 追加 Compose UI 套件（需亮屏解锁）
+// Instrumentation targets the isolated QA application, never the personal app.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 const [serial, ...flags] = process.argv.slice(2);
-if (!serial) throw new Error('用法：node scripts/run-device-tests.mjs <ADB序列号> [--ui]');
+if (!serial || !/^[\w.-]+:\d+$/.test(serial)) throw new Error('请提供 TCP 真机序列号：node scripts/run-device-tests.mjs IP:端口 [--ui] [--recording] [--quality]');
 const adb = process.env.ADB ?? 'adb';
-const pkg = 'com.gongfpp.sonfolio';
-const runner = `${pkg}.test/androidx.test.runner.AndroidJUnitRunner`;
-
-// 不依赖界面渲染，息屏可用。
-const nonUi = [
-  'MigrationIntegrationTest',
-  'SearchRepositoryIntegrationTest',
-  'PipelineIntegrationTest',
-  'BackupIntegrationTest',
-  'RawCleanupIntegrationTest',
-  'ConversationEditIntegrationTest',
-  'SummaryIntegrationTest',
-  'RecordingZoneIntegrationTest',
-  'RecordingGapIntegrationTest',
-  'AudioCompressionIntegrationTest',
-  'LocalSummaryRuntimeTest',   // 未下载模型时按假设跳过
-  'Qwen3AsrZhEnQualityTest',   // 未下载模型/未推送素材时按假设跳过
-  'FireRedAsrZhEnQualityTest', // 同上
-];
-// 需要真实麦克风与厂商权限，只有显式 --recording 时才跑（会等待录音状态，常超时）。
-const recording = ['RecordingReliabilityTest'];
-// 需要亮屏且解锁；息屏时会报 “No compose hierarchies found”。
-const ui = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest'];
-// 20 段 × 0.5B 的本地总结质量报告，耗时很长且结果受模型波动影响，只有显式 --quality 才跑。
-const quality = ['LocalSummaryQualityTest'];
-
-function run(classes, label) {
-  const started = Date.now();
-  const result = spawnSync('adb', ['-s', serial, 'shell', 'am', 'instrument', '-w', '-e', 'class', classes.map(c => `${pkg}.${c}`).join(','), runner],
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-  const ok = /OK \(\d+ tests?\)/.test(output);
-  const failed = /FAILURES!!!/.test(output);
-  console.log(`\n===== ${label}：${ok ? '通过' : failed ? '失败' : '未确认'}（${((Date.now() - started) / 1000).toFixed(1)}s）=====`);
-  // 只保留结果行，避免把整段堆栈刷屏。
-  for (const line of output.split('\n')) {
-    if (/^(OK \(|FAILURES!!!|Tests run:|Time:|\d+\) )/.test(line) || /Error in |AssertionError/.test(line)) console.log(line);
-  }
-  if (!ok) process.exitCode = 1;
+const pkg = 'com.gongfpp.sonfolio.qa';
+const namespace = 'com.gongfpp.sonfolio';
+const runner = `${pkg}.test/com.gongfpp.sonfolio.QaTestRunner`;
+function command(args) {
+  const r = spawnSync(adb, ['-s', serial, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (r.error || r.status !== 0) throw new Error(`ADB 检查失败，停止测试：${r.error?.message ?? r.stderr}`);
+  return r.stdout;
 }
-
-const connected = spawnSync(adb, ['devices'], { encoding: 'utf8' }).stdout ?? '';
-if (!connected.includes(serial)) throw new Error(`ADB 未连接 ${serial}；请先 adb connect`);
-
-// 静态安全检查：拦截会写入/删除真实 filesDir（尤其 files/recordings）的测试写法。
+if (command(['get-state']).trim() !== 'device') throw new Error('真机未连接，请连接并解锁');
+if (command(['shell', 'getprop', 'ro.kernel.qemu']).trim() === '1') throw new Error('禁止使用 Android 模拟器');
 const safety = spawnSync(process.execPath, ['scripts/check-device-test-safety.mjs'], { encoding: 'utf8' });
-process.stdout.write(safety.stdout ?? '');
-process.stderr.write(safety.stderr ?? '');
-if (safety.status !== 0) throw new Error('真机测试安全静态检查未通过，已中止：避免再次破坏真实用户数据');
-
-// 运行前后核对真实录音清单：任何原有文件消失都说明测试在删用户数据。
-function recordingsFiles() {
-  const result = spawnSync(adb, ['-s', serial, 'shell',
-    "run-as com.gongfpp.sonfolio sh -c 'find files/recordings -type f 2>/dev/null'"], { encoding: 'utf8' });
-  return new Set((result.stdout ?? '').trim().split('\n').filter(Boolean));
+process.stdout.write(safety.stdout ?? ''); process.stderr.write(safety.stderr ?? '');
+if (safety.status !== 0) throw new Error('测试安全检查未通过');
+const instrumentation = command(['shell', 'pm', 'list', 'instrumentation']);
+if (!instrumentation.split('\n').some(line => line.includes(`instrumentation:${runner} (target=${pkg})`))) {
+  throw new Error('未安装隔离 QA 套件。请构建并安装 assembleQa、assembleQaAndroidTest；禁止运行主应用测试包。');
 }
-const recordingsBefore = recordingsFiles();
 
-// 同时核对真实数据库行数：测试若删了对话/转写/标记/切片，也立刻报错。取不到 sqlite3 时跳过。
-function dbRowCounts() {
-  const dir = mkdtempSync(join(tmpdir(), 'sonfolio-db-'));
+// Read-only guard: hash names AND contents before/after EACH class; unreadable is blocked.
+function personalSnapshot() {
+  const root = 'com.gongfpp.sonfolio';
+  const services = command(['shell', 'dumpsys', 'activity', 'services', root]);
+  if (/ServiceRecord[^\n]*com\.gongfpp\.sonfolio\/\.recording\.RecordingService/.test(services)) {
+    throw new Error('个人主应用正在录音，请先停止；未启动任何测试');
+  }
+  const text = command(['shell', `run-as ${root} sh -c 'if [ -d files/recordings ]; then find files/recordings -type f -exec sha256sum {} + || exit 1; else echo NO_RECORDINGS; fi; echo SNAPSHOT_END'`]);
+  if (!text.trim() || /Permission denied|not debuggable|No such package|sha256sum:/.test(text)) throw new Error('无法核对主应用录音，已阻塞测试');
+  return text.trim().split('\n').sort().join('\n');
+}
+const before = personalSnapshot();
+const nonUi = ['MigrationIntegrationTest', 'RemoteAsrCheckpointTest', 'SearchRepositoryIntegrationTest', 'PipelineIntegrationTest', 'BackupIntegrationTest', 'RawCleanupIntegrationTest', 'ConversationEditIntegrationTest', 'SummaryIntegrationTest', 'RecordingZoneIntegrationTest', 'RecordingGapIntegrationTest', 'AudioCompressionIntegrationTest', 'LocalSummaryRuntimeTest', 'Qwen3AsrZhEnQualityTest', 'FireRedAsrZhEnQualityTest'];
+if (flags.includes('--ui') && !/mWakefulness=Awake/.test(command(['shell', 'dumpsys', 'power']))) throw new Error('手机未亮屏，UI 验收阻塞，请解锁');
+const classes = [...nonUi, ...(flags.includes('--recording') ? ['RecordingReliabilityTest'] : []), ...(flags.includes('--ui') ? ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest'] : []), ...(flags.includes('--quality') ? ['LocalSummaryQualityTest'] : [])];
+let skipped = 0;
+for (const name of classes) {
+  let output;
   try {
-    for (const suffix of ['', '-wal', '-shm']) {
-      const r = spawnSync(adb, ['-s', serial, 'exec-out', 'run-as', pkg, 'cat', `databases/sonfolio.db${suffix}`],
-        { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
-      if (r.status === 0 && r.stdout?.length) writeFileSync(join(dir, `sonfolio.db${suffix}`), r.stdout);
-    }
-    const query = "SELECT (SELECT count(*) FROM conversations)||','||(SELECT count(*) FROM transcripts)" +
-      "||','||(SELECT count(*) FROM markers)||','||(SELECT count(*) FROM audio_chunks);";
-    const r = spawnSync('sqlite3', [join(dir, 'sonfolio.db'), query], { encoding: 'utf8' });
-    if (r.status !== 0) return null;
-    return r.stdout.trim().split(',').map(Number);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-}
-const rowsBefore = dbRowCounts();
-if (rowsBefore == null) console.log('提示：未找到 sqlite3，本次跳过数据库行数核对。');
-
-// UI 用例需要真实窗口：息屏或锁屏时会报 “No compose hierarchies found”，此处直接跳过而不是假失败。
-const power = spawnSync('adb', ['-s', serial, 'shell', 'dumpsys', 'power'], { encoding: 'utf8' }).stdout ?? '';
-const awake = /mWakefulness=Awake/.test(power);
-const wantUi = flags.includes('--ui');
-if (wantUi && !awake) console.log('提示：设备未亮屏，跳过 UI 套件（请解锁后加 --ui 重跑）。');
-
-// 每个测试类各起一个 instrument 进程：本地总结相关用例会创建/杀死 :summary 绑定进程，
-// ClientUiTest 会拉起真实 MainActivity，混在同一进程里会互相干扰（超时或 Snapshot 误报）。
-const classes = [...nonUi, ...(flags.includes('--recording') ? recording : []), ...(wantUi && awake ? ui : []), ...(flags.includes('--quality') ? quality : [])];
-for (const className of classes) run([className], className);
-
-const recordingsAfter = recordingsFiles();
-const removed = [...recordingsBefore].filter(file => !recordingsAfter.has(file));
-if (removed.length) {
-  console.error(`\n⚠️ 真机套件删除了 ${removed.length} 个原有录音文件（例如 ${removed.slice(0, 3).join(', ')}）。` +
-    '这是测试缺陷，禁止在个人手机上继续重跑，请先修复对应测试。');
-  process.exitCode = 1;
-}
-const rowsAfter = dbRowCounts();
-if (rowsBefore && rowsAfter) {
-  const names = ['对话', '转写', '标记', '切片'];
-  const shrunk = rowsAfter.map((n, i) => [names[i], rowsBefore[i], n]).filter(([, b, a]) => a < b);
-  if (shrunk.length) {
-    console.error(`\n⚠️ 真机套件删除了真实数据库记录：${shrunk.map(([n, b, a]) => `${n} ${b}→${a}`).join('，')}。` +
-      '这是测试缺陷，请先修复对应测试。');
-    process.exitCode = 1;
+    output = command(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', `${namespace}.${name}`, runner]);
+  } finally {
+    if (personalSnapshot() !== before) throw new Error('个人录音文件或哈希发生变化，立即停止；不得继续运行套件');
+  }
+  const skipCount = (output.match(/INSTRUMENTATION_STATUS_CODE: -[34]/g) ?? []).length;
+  skipped += skipCount;
+  const failed = /FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_STATUS_CODE: -[12]/.test(output);
+  const completed = /OK \(\d+ tests?\)/.test(output);
+  console.log(`${name}: ${failed ? '失败' : !completed ? '阻塞' : skipCount ? `完成，${skipCount} 项跳过` : '通过'}`);
+  if (failed || !completed) {
+    console.error(output.slice(-12000)); process.exitCode = 1; break;
   }
 }
-console.log(process.exitCode ? '\n有失败项。' : '\n全部通过。');
+console.log(process.exitCode ? '已停止，请先修复失败项。' : `套件结束；跳过 ${skipped} 项（跳过不代表通过）。`);

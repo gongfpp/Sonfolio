@@ -39,14 +39,14 @@ android {
         applicationId = "com.gongfpp.sonfolio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.2.3"
+        versionCode = 14
+        versionName = "0.2.4-dev"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake {
             arguments += "-DANDROID_STL=c++_shared"
             providers.gradleProperty("sonfolioLlamaSource").orNull?.let { arguments += "-DFETCHCONTENT_SOURCE_DIR_LLAMA=$it" }
         } }
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.gongfpp.sonfolio.QaTestRunner"
     }
 
     signingConfigs {
@@ -62,6 +62,13 @@ android {
     }
 
     buildTypes {
+        create("qa") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".qa"
+            versionNameSuffix = "-qa"
+            resValue("string", "app_name", "声迹 QA")
+            matchingFallbacks += "debug"
+        }
         release {
             if (releaseSigningProperties != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
@@ -72,6 +79,8 @@ android {
             )
         }
     }
+    // Instrumentation must never target the personal app's UID or data directory.
+    testBuildType = "qa"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -124,4 +133,5 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    add("qaImplementation", "androidx.compose.ui:ui-test-manifest")
 }

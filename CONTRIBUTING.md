@@ -14,4 +14,19 @@
 
 Issue、PR、测试资源和截图中不要上传私人录音、完整个人转写、API Key、发布私钥或密码。优先使用专门构造的测试数据。
 
+### Android 真机测试
+
+禁止使用 Android 模拟器；运行时验收只使用 TCP ADB 真机。仪器测试必须使用独立包 `com.gongfpp.sonfolio.qa`，与个人主应用的 UID、数据库、文件和密钥隔离。不要卸载或清除个人主应用的数据。
+
+```sh
+cd android
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleQa :app:assembleQaAndroidTest
+cd ..
+adb -s IP:端口 install -r android/app/build/outputs/apk/qa/app-qa.apk
+adb -s IP:端口 install -r android/app/build/outputs/apk/androidTest/qa/app-qa-androidTest.apk
+node scripts/run-device-tests.mjs IP:端口 --ui
+```
+
+脚本先检查目标包和静态安全规则，再逐个测试类核对个人录音文件名与 SHA-256。连接、权限或读取失败会阻塞；失败立即停止；缺少模型或样例导致的跳过不算通过。QA 不自动继承个人应用的模型或 API Key。`--recording` 会在 QA 包内新增真实录音，必须由用户同意并授予麦克风权限后使用；不触碰个人主应用录音。
+
 完整许可条款见 [LICENSE](LICENSE)，构建与使用说明见 [README](README.md)。

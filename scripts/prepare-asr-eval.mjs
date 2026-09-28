@@ -7,7 +7,8 @@ import { join } from 'node:path';
 
 const [serial] = process.argv.slice(2);
 const adb = process.env.ADB ?? 'adb';
-const pkg = 'com.gongfpp.sonfolio';
+const pkg = 'com.gongfpp.sonfolio.qa';
+if (!serial || !/^[\w.-]+:\d+$/.test(serial)) throw new Error('仅允许指定 TCP 真机序列号');
 const remoteDirectory = `/sdcard/Android/data/${pkg}/files/asr-eval`;
 const manifest = JSON.parse(readFileSync('docs/evaluation/asr-zh-en-set.json', 'utf8'));
 const staging = join(process.env.TMPDIR ?? '/tmp', 'sonfolio-asr-eval');
@@ -99,4 +100,4 @@ for (const item of manifest.cases) {
   console.log(`已推送：${item.file}（已用 ${tool} 转为 16 kHz 单声道）`);
 }
 console.log(`已推送 ${manifest.cases.length} 份素材到 ${remoteDirectory}`);
-console.log(`在手机上运行：adb shell am instrument -e class com.gongfpp.sonfolio.Qwen3AsrZhEnQualityTest -w ${pkg}.test/androidx.test.runner.AndroidJUnitRunner`);
+console.log(`在手机上运行：node scripts/run-device-tests.mjs ${serial} --quality`);

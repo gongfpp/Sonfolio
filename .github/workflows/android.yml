@@ -40,7 +40,7 @@ jobs:
         run: node scripts/check-device-test-safety.mjs
       - name: Unit tests, lint and unsigned build
         working-directory: android
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleQa :app:assembleQaAndroidTest :app:assembleRelease
       - name: APK content check
         run: node scripts/release-check.mjs android/app/build/outputs/apk/release/app-release.apk
       - name: Preserve reports
