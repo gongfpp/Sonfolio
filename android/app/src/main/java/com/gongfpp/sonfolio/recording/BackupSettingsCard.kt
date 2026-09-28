@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.sp
 import com.gongfpp.sonfolio.SonfolioApplication
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable internal fun BackupSettingsCard() {
     val app = LocalContext.current.applicationContext as SonfolioApplication
@@ -21,6 +22,8 @@ import kotlinx.coroutines.launch
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var restoring by remember { mutableStateOf(false) }
+    val legacyNotes by remember { app.database.legacyNoteDao().observeAll() }.collectAsStateWithLifecycle(initialValue = emptyList())
+    var notesOpen by remember { mutableStateOf(false) }
     fun run(action: suspend () -> String) {
         if (busy) return
         busy = true; message = null
@@ -51,12 +54,27 @@ import kotlinx.coroutines.launch
                 )
             }
             Text("包含录音、转写、对话与总结；不包含模型与 API Key。", fontSize = 12.sp)
+            Text("备份文件未加密，请保存到可信的位置。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row {
                 OutlinedButton(enabled = !busy, onClick = { export.launch("Sonfolio-backup-${java.time.LocalDate.now()}.zip") }) { Text("创建完整备份") }
                 TextButton(enabled = !busy, onClick = { restoring = true }) { Text("恢复备份") }
             }
             if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在处理文件，请勿离开页面；大录音需要较长时间。", fontSize = 11.sp) }
             message?.let { Text(it, fontSize = 12.sp) }
+            if (legacyNotes.isNotEmpty()) {
+                TextButton(onClick = { notesOpen = !notesOpen }) { Text(if (notesOpen) "收起旧版备注" else "旧版备注（${legacyNotes.size}）") }
+                if (notesOpen) {
+                    Text("旧版备注单独保留，不随自动整理改写；也包含在完整备份内。", fontSize = 12.sp)
+                    legacyNotes.forEach { note ->
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Column(Modifier.padding(vertical = 8.dp)) {
+                                Text(note.title, fontWeight = FontWeight.Bold)
+                                Text(note.body, modifier = Modifier.padding(top = 4.dp))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     if (restoring) AlertDialog(onDismissRequest = { restoring = false }, title = { Text("恢复到空数据库") },

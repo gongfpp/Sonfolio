@@ -28,25 +28,28 @@ data class ChunkExport(
  */
 object RecordingExporter {
     suspend fun exportToZip(context: Context, uri: Uri, items: List<ChunkExport>) = withContext(Dispatchers.IO) {
-      com.gongfpp.sonfolio.processing.AudioFileAccess.mutex.withLock {
+      com.gongfpp.sonfolio.processing.AudioFileAccess.read(items.map { it.id }.toSet(), com.gongfpp.sonfolio.processing.AudioFileAccess.Reader.EXPORT) {
         require(items.isNotEmpty()) { "没有选择可导出的录音" }
         val resources = items.map { item ->
             require(item.endedAtMillis != null) { "正在录音的文件不能导出，请停止录音或等待切片完成" }
             require(item.id.matches(Regex("[a-zA-Z0-9_-]+"))) { "文件标识不合法" }
-            requireNotNull(AudioResource.resolve(File(context.filesDir, "recordings"), item.localPath, item.compressedPath, item.audioDeleted)) {
-                "选中录音已清理或缺失，请取消选择后重试"
-            }
+            val resource = AudioResource.resolve(File(context.filesDir, "recordings"), item.localPath, item.compressedPath, item.audioDeleted)
+            require(item.audioDeleted || resource != null) { "选中录音文件意外缺失，未生成完整导出；文字仍可在对话详情中导出" }
+            resource
         }
         context.contentResolver.openOutputStream(uri)?.use { out ->
             ZipOutputStream(out).use { zip ->
                 items.zip(resources).forEach { (item, resource) ->
-                    zip.putNextEntry(ZipEntry("audio/${item.id}.${resource.extension}"))
-                    resource.file.inputStream().use { it.copyTo(zip) }
-                    zip.closeEntry()
+                    if (resource != null) {
+                        zip.putNextEntry(ZipEntry("audio/${item.id}.${resource.extension}"))
+                        resource.file.inputStream().use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
                     val manifest = buildString {
                         append("id: ${item.id}\n")
                         append("startedAt: ${item.startedAtMillis}\n")
                         append("endedAt: ${item.endedAtMillis ?: ""}\n")
+                        append("audio: ${resource?.extension ?: "已清理，仅导出文字"}\n")
                         append("transcript:\n")
                         if (item.texts.isEmpty()) append("  （暂无转写）\n")
                         else item.texts.forEach { append("  - $it\n") }

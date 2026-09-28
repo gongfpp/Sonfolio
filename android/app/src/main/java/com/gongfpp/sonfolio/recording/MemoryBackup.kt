@@ -37,7 +37,8 @@ internal class MemoryBackup(private val context: Context, private val database: 
             val sql = database.openHelper.readableDatabase
             TABLES.forEach { table ->
                 val rows = JSONArray()
-                sql.query("SELECT * FROM $table").use { cursor ->
+                val projection = BackupSchema.columns(table).joinToString(",") { it.name }
+                sql.query("SELECT $projection FROM $table").use { cursor ->
                     while (cursor.moveToNext()) {
                         val row = JSONObject()
                         cursor.columnNames.forEachIndexed { index, name -> row.put(name, when (cursor.getType(index)) {
@@ -47,6 +48,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                             Cursor.FIELD_TYPE_STRING -> cursor.getString(index)
                             else -> error("备份遇到不支持的数据类型，未生成完整备份")
                         }) }
+                        BackupSchema.decode(table, row)
                         rows.put(row)
                     }
                 }
@@ -166,18 +168,6 @@ internal class MemoryBackup(private val context: Context, private val database: 
                     requireEmpty(); requireIdle()
                     val sql = database.openHelper.writableDatabase
                     TABLES.forEach { table ->
-                        val columnInfo = sql.query("PRAGMA table_info($table)").use { c ->
-                            buildMap {
-                                while (c.moveToNext()) {
-                                    val name = c.getString(c.getColumnIndexOrThrow("name"))
-                                    put(name, ColumnRule(
-                                        notNull = c.getInt(c.getColumnIndexOrThrow("notnull")) == 1,
-                                        hasDefault = !c.isNull(c.getColumnIndexOrThrow("dflt_value")),
-                                    ))
-                                }
-                            }
-                        }
-                        val columns = columnInfo.keys
                         val rows = tables.getJSONArray(table)
                         for (index in 0 until rows.length()) {
                             val row = rows.getJSONObject(index)
@@ -189,14 +179,9 @@ internal class MemoryBackup(private val context: Context, private val database: 
                                 }
                             }
                             if (table == "summary_runs" && row.getString("state") in listOf("RUNNING", "QUEUED")) row.put("state", "CANCELLED").put("message", "备份已恢复，请重新配置总结方式后手动生成")
-                            // 旧格式备份的列名迁移（如 conversations.title → generatedTitle）。
-                            val rowKeys = row.keys().asSequence().toSet()
-                            require(columns.containsAll(rowKeys)) { "备份字段与当前版本不匹配" }
-                            // 缺失列仅允许旧备份尚未包含的可空/有默认值列（如 note、originalText），其余拒绝。
-                            val missing = columns - rowKeys
-                            require(missing.all { val rule = columnInfo.getValue(it); !rule.notNull || rule.hasDefault }) { "备份字段与当前版本不匹配" }
+                            val record = BackupSchema.decode(table, row)
                             val values = ContentValues()
-                            rowKeys.forEach { name -> when (val value = row.get(name)) {
+                            record.values.forEach { (name, value) -> when (value) {
                                 JSONObject.NULL -> values.putNull(name)
                                 is String -> values.put(name, value)
                                 is Int -> values.put(name, value)
@@ -237,7 +222,6 @@ internal class MemoryBackup(private val context: Context, private val database: 
         private const val RESERVE = 512L * 1024 * 1024
         private const val FORMAT_VERSION = BackupFormat.VERSION
 
-        private data class ColumnRule(val notNull: Boolean, val hasDefault: Boolean)
     }
 
     private fun buildAppVersion(): String = runCatching {

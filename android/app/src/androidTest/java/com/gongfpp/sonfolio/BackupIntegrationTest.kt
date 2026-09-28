@@ -13,6 +13,57 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BackupIntegrationTest {
+    /** Fixed manifests reconstructed from the checked-in historical schemas, NOT rewritten current exports. */
+    @Test fun historicalSchemaFixturesPreserveNotesTitlesRelationsAndAudio() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        for (version in listOf(5, 9, 10)) {
+            val root = Files.createTempDirectory(instrumentation.targetContext.cacheDir.toPath(), "qa-historical-backup-").toFile()
+            val context = object : ContextWrapper(instrumentation.targetContext) { override fun getFilesDir() = root }
+            val target = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+            val second = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+            try {
+                val wav = File(root, "fixture.wav")
+                WavChunkWriter(wav, 16000, 1).use { it.write(ByteArray(32000), 32000) }
+                val bytes = wav.readBytes()
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+                val manifest = instrumentation.context.assets.open("backup-fixtures/schema-$version.json").bufferedReader().use { org.json.JSONObject(it.readText()) }
+                manifest.getJSONObject("tables").getJSONArray("audio_chunks").getJSONObject(0).put("backupSha256", hash)
+                val archive = File(root, "historical.zip")
+                java.util.zip.ZipOutputStream(archive.outputStream()).use { zip ->
+                    zip.putNextEntry(java.util.zip.ZipEntry("manifest.json")); zip.write(manifest.toString().toByteArray()); zip.closeEntry()
+                    zip.putNextEntry(java.util.zip.ZipEntry("audio/legacy-audio.wav")); zip.write(bytes); zip.closeEntry()
+                }
+                MemoryBackup(context, target, kotlinx.coroutines.sync.Mutex()).restore(Uri.fromFile(archive))
+                val conversation = target.conversationDao().getConversation("legacy-conv")!!
+                assertEquals("旧标题", conversation.generatedTitle)
+                if (version >= 6) assertEquals("手动标题", conversation.titleOverride)
+                assertEquals("历史备份验收文字", target.conversationDao().getReadyRowsInWindow(0, 3000).single().text)
+                assertEquals("legacy-marker", target.conversationDao().getMarkers().single().id)
+                assertArrayEquals(bytes, File(target.recordingDao().getChunk("legacy-audio")!!.localPath).readBytes())
+                val current = File(root, "current.zip")
+                MemoryBackup(context, target, kotlinx.coroutines.sync.Mutex()).export(Uri.fromFile(current))
+                MemoryBackup(context, second, kotlinx.coroutines.sync.Mutex()).restore(Uri.fromFile(current))
+                second.openHelper.readableDatabase.query("SELECT body FROM legacy_notes WHERE conversationId = 'legacy-conv'").use {
+                    assertTrue(it.moveToFirst()); assertEquals("旧版非空备注：请保留这段内容。", it.getString(0))
+                }
+            } finally { target.close(); second.close(); root.deleteRecursively() }
+        }
+    }
+    @Test fun explicitlyDeletedAudioStillExportsTextWithoutPretendingAudioExists() = runBlocking {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = Files.createTempDirectory(base.cacheDir.toPath(), "qa-text-export-").toFile()
+        val context = object : ContextWrapper(base) { override fun getFilesDir() = root }
+        try {
+            val archive = File(root, "text.zip")
+            RecordingExporter.exportToZip(context, Uri.fromFile(archive), listOf(ChunkExport("deleted", 0, 1000, "", listOf("保留的文字"), audioDeleted = true)))
+            java.util.zip.ZipFile(archive).use { zip ->
+                assertEquals(1, zip.size())
+                val text = zip.getInputStream(zip.getEntry("transcript/deleted.txt")).bufferedReader().readText()
+                assertTrue(text.contains("已清理，仅导出文字"))
+                assertTrue(text.contains("保留的文字"))
+            }
+        } finally { root.deleteRecursively() }
+    }
     @Test fun bothContainersExportCorrectlyAndRestoreDiscardsBothInjectedPaths() = runBlocking {
       for (extension in listOf("wav", "m4a")) {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
@@ -123,13 +174,14 @@ class BackupIntegrationTest {
                             manifest.remove("appVersion")
                             manifest.put("version", 1).put("schema", 4)
                             manifest.getJSONObject("tables").remove("personal_vocabulary")
+                            manifest.getJSONObject("tables").remove("legacy_notes")
                             val conversations = manifest.getJSONObject("tables").getJSONArray("conversations")
                             for (index in 0 until conversations.length()) {
                                 val row = conversations.getJSONObject(index)
                                 row.put("title", row.getString("generatedTitle"))
                                 row.remove("generatedTitle")
                                 row.remove("titleOverride")
-                                row.remove("note")
+                                row.put("note", "旧版保留的备注")
                             }
                             val transcripts = manifest.getJSONObject("tables").getJSONArray("transcripts")
                             for (index in 0 until transcripts.length()) transcripts.getJSONObject(index).remove("originalText")
@@ -145,6 +197,9 @@ class BackupIntegrationTest {
             MemoryBackup(context, target, fixtureMutex).restore(Uri.fromFile(legacy))
             val conversation = target.conversationDao().getConversation("legacy-conv")!!
             assertEquals("手改标题", conversation.generatedTitle)
+            target.openHelper.readableDatabase.query("SELECT body FROM legacy_notes WHERE conversationId = 'legacy-conv'").use {
+                assertTrue(it.moveToFirst()); assertEquals("旧版保留的备注", it.getString(0))
+            }
             assertNull(conversation.titleOverride)
             assertNull(target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().originalText)
             assertEquals("旧版本备份资料", target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().text)

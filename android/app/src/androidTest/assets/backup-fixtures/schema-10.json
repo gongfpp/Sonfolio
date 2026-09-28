@@ -1,0 +1,83 @@
+{
+  "format": "sonfolio-memory",
+  "formatVersion": 2,
+  "databaseSchema": 10,
+  "tables": {
+    "audio_chunks": [
+      {
+        "id": "legacy-audio",
+        "startedAtMillis": 1000,
+        "endedAtMillis": 2000,
+        "localPath": "",
+        "byteSize": 32044,
+        "sampleRateHz": 16000,
+        "channelCount": 1,
+        "processingState": "ASR_READY",
+        "errorMessage": null,
+        "recordedZoneId": "Asia/Shanghai",
+        "recordedOffsetSeconds": 28800,
+        "localStartDate": "1970-01-01",
+        "compressedPath": null,
+        "compressedBytes": null,
+        "backupAudio": "audio/legacy-audio.wav",
+        "backupBytes": 32044,
+        "backupSha256": "REPLACED_WITH_GENERATED_FIXTURE_SHA256"
+      }
+    ],
+    "speech_segments": [
+      {
+        "id": "legacy-speech",
+        "audioChunkId": "legacy-audio",
+        "startOffsetMillis": 0,
+        "endOffsetMillis": 1000,
+        "speechProbability": 1,
+        "processingState": "ASR_READY"
+      }
+    ],
+    "conversations": [
+      {
+        "id": "legacy-conv",
+        "kind": "Unknown",
+        "startedAtMillis": 1000,
+        "endedAtMillis": 2000,
+        "zoneId": "Asia/Shanghai",
+        "generatedTitle": "旧标题",
+        "titleOverride": "手动标题",
+        "briefSummary": "原始小结",
+        "summaryLevel": "BRIEF",
+        "note": "旧版非空备注：请保留这段内容。",
+        "localStartDate": "1970-01-01"
+      }
+    ],
+    "transcripts": [
+      {
+        "id": "legacy-text",
+        "speechSegmentId": "legacy-speech",
+        "conversationId": "legacy-conv",
+        "startedAtMillis": 1000,
+        "endedAtMillis": 2000,
+        "text": "历史备份验收文字",
+        "languageTag": "zh",
+        "modelName": "fixture",
+        "modelVersion": "fixture",
+        "processingState": "ASR_READY",
+        "errorMessage": null,
+        "originalText": null
+      }
+    ],
+    "markers": [
+      {
+        "id": "legacy-marker",
+        "markedAtMillis": 1500,
+        "windowBeforeMillis": 1000,
+        "windowAfterMillis": 0,
+        "note": "用户标记"
+      }
+    ],
+    "recording_gaps": [],
+    "conversation_summaries": [],
+    "daily_journals": [],
+    "summary_runs": [],
+    "conversation_aliases": []
+  }
+}

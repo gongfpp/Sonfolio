@@ -9,7 +9,7 @@ import org.junit.Test
 class BackupFormatTest {
     private fun fixture(version: Int): JSONObject {
         val tables = JSONObject()
-        BackupFormat.tables.filter { version >= 3 || it != "personal_vocabulary" }.forEach { tables.put(it, JSONArray()) }
+        BackupFormat.tables.filter { (version >= 3 || it != "personal_vocabulary") && (version >= 4 || it != "legacy_notes") }.forEach { tables.put(it, JSONArray()) }
         return JSONObject().put("formatVersion", version).put("tables", tables)
     }
     @Test fun migratesRealLegacyColumnsAndEmptyNotes() {
@@ -34,8 +34,10 @@ class BackupFormatTest {
         old.getJSONObject("tables").getJSONArray("conversations").put(JSONObject().put("processingState", "BROKEN"))
         assertThrows(IllegalArgumentException::class.java) { BackupFormat.migrate(old) }
         val notes = fixture(2)
-        notes.getJSONObject("tables").getJSONArray("conversations").put(JSONObject().put("note", "不能丢失的用户备注"))
-        assertThrows(IllegalArgumentException::class.java) { BackupFormat.migrate(notes) }
+        notes.getJSONObject("tables").getJSONArray("conversations").put(JSONObject().put("id", "old").put("generatedTitle", "旧标题").put("note", "不能丢失的用户备注"))
+        val archived = BackupFormat.migrate(notes).getJSONArray("legacy_notes").getJSONObject(0)
+        assertEquals("不能丢失的用户备注", archived.getString("body"))
+        assertEquals("old", archived.getString("conversationId"))
     }
     @Test fun stripsBothUntrustedPathsAndPreservesVersionThreeVocabulary() {
         val row = JSONObject().put("localPath", "/private/secret").put("compressedPath", "/private/key")

@@ -60,10 +60,10 @@ class MigrationIntegrationTest {
                 old.version = oldVersion
             }
             val migrated = Room.databaseBuilder(context, SonfolioDatabase::class.java, name)
-                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10, SonfolioDatabase.MIGRATION_10_11, SonfolioDatabase.MIGRATION_11_12)
+                .addMigrations(SonfolioDatabase.MIGRATION_4_5, SonfolioDatabase.MIGRATION_5_6, SonfolioDatabase.MIGRATION_6_7, SonfolioDatabase.MIGRATION_7_8, SonfolioDatabase.MIGRATION_8_9, SonfolioDatabase.MIGRATION_9_10, SonfolioDatabase.MIGRATION_10_11, SonfolioDatabase.MIGRATION_11_12, SonfolioDatabase.MIGRATION_12_13)
                 .build()
             try {
-                assertEquals(12, migrated.openHelper.writableDatabase.version)
+                assertEquals(13, migrated.openHelper.writableDatabase.version)
                 val chunk = migrated.recordingDao().getChunk("original")!!
                 assertEquals("/qa/original.wav", chunk.localPath)
                 assertEquals(364L, chunk.byteSize)
@@ -92,6 +92,11 @@ class MigrationIntegrationTest {
                 assertFalse("daily_journals.processingState 应已删除", "processingState" in columnsOf("daily_journals"))
                 // 11 起备注功能移除，note 列一并删除；summary_runs 增加断点续跑进度列。
                 assertFalse("conversations.note 应已删除", "note" in columnsOf("conversations"))
+                if (oldVersion >= 5) {
+                    migrated.openHelper.readableDatabase.query("SELECT body FROM legacy_notes WHERE conversationId = 'conv'").use {
+                        assertTrue(it.moveToFirst()); assertEquals("用户备注", it.getString(0))
+                    }
+                }
                 assertTrue("summary_runs.progressIndex 应存在", "progressIndex" in columnsOf("summary_runs"))
                 assertTrue("summary_runs.progressJson 应存在", "progressJson" in columnsOf("summary_runs"))
             } finally { migrated.close() }
