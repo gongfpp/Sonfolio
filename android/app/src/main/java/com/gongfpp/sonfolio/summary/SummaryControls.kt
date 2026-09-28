@@ -99,6 +99,10 @@ internal fun SummarySettingsCard() {
                 }
                 var summaryModelMenu by remember { mutableStateOf(false) }
                 val selectedSummary = summaryModels.firstOrNull { it.id == selectedSummaryId } ?: summaryModels.first()
+                // localFile 不是内置 id 时说明当前启用的是导入的 GGUF，面板要显示它而不是内置模型。
+                val importedLabel = if (app.summarySettings.selectedCatalogModelId(saved) == null && saved.localFile.isNotEmpty()) {
+                    saved.localLabel.ifBlank { "导入的 GGUF" }
+                } else null
                 // 与「本地识别引擎」保持同一套层级：二级面板 + 模型行下拉选择。
                 Surface(
                     Modifier.fillMaxWidth().padding(start = 12.dp),
@@ -115,7 +119,10 @@ internal fun SummarySettingsCard() {
                         }
                         Box {
                             OutlinedButton(onClick = { summaryModelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                                Text("总结模型：${selectedSummary.label} · ${com.gongfpp.sonfolio.formatModelSize(selectedSummary.bytes)} ▾")
+                                Text(
+                                    importedLabel?.let { "总结模型：$it（导入）▾" }
+                                        ?: "总结模型：${selectedSummary.label} · ${com.gongfpp.sonfolio.formatModelSize(selectedSummary.bytes)} ▾",
+                                )
                             }
                             DropdownMenu(summaryModelMenu, { summaryModelMenu = false }) {
                                 summaryModels.forEach { option ->
@@ -138,7 +145,16 @@ internal fun SummarySettingsCard() {
                                 }
                             }
                         }
-                        com.gongfpp.sonfolio.models.ModelDownloadControl(selectedSummary)
+                        if (importedLabel != null) {
+                            Text("当前使用导入的 GGUF：$importedLabel；仅离线使用，不上传。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(enabled = !busy, onClick = {
+                                runCatching { app.summarySettings.clearImportedModel() }
+                                    .onSuccess { message = "已删除导入的模型，回退到基础整理" }
+                                    .onFailure { message = "删除失败：${it.message}" }
+                            }) { Text("删除导入的模型") }
+                        } else {
+                            com.gongfpp.sonfolio.models.ModelDownloadControl(selectedSummary)
+                        }
                         // 高级：导入自带 GGUF（llama.cpp 格式），复制到应用私有目录后即可离线使用。
                         val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
                             androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
@@ -153,7 +169,11 @@ internal fun SummarySettingsCard() {
                                         target.parentFile?.mkdirs()
                                         requireNotNull(context.contentResolver.openInputStream(uri)) { "无法读取所选文件" }
                                             .use { input -> target.outputStream().use { output -> input.copyTo(output) } }
-                                        require(target.length() > 1024) { "所选文件不是有效的 GGUF 模型" }
+                                        // llama.cpp 的 GGUF 文件必须以「GGUF」开头；先校验再登记，避免导入坏文件。
+                                        val magic = java.io.RandomAccessFile(target, "r").use { raf ->
+                                            ByteArray(4).also { raf.readFully(it) }.toString(Charsets.US_ASCII)
+                                        }
+                                        require(magic == "GGUF") { "所选文件不是 GGUF 模型，请用 .gguf 文件（llama.cpp 格式）" }
                                         app.summarySettings.useImportedModel(name, "导入的模型")
                                     }
                                     mode = SummaryMode.LOCAL; message = "已导入并启用本地模型；仅离线使用，不上传。"

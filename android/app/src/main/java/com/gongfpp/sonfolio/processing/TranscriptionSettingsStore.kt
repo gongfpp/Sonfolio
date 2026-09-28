@@ -46,6 +46,8 @@ data class TranscriptionConfig(
     val provider: SpeechProvider = SpeechProvider.QWEN,
     val model: String = SpeechProvider.QWEN.models.first(),
     val localEngine: LocalAsrEngine = LocalAsrEngine.DEFAULT,
+    /** 选中的自定义识别模型 id；非空时覆盖内置引擎的模型来源（布局仍按 localEngine）。 */
+    val customAsrId: String? = null,
     val hasKey: Boolean = false,
     val appId: String = "",
     val revision: String = "initial",
@@ -66,6 +68,7 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
             mode = runCatching { TranscriptionMode.valueOf(prefs.getString("mode", "LOCAL")!!) }.getOrDefault(TranscriptionMode.LOCAL),
             provider = provider, model = prefs.getString("model", provider.models.first()).orEmpty(),
             localEngine = LocalAsrEngine.fromName(prefs.getString("local-engine", null)),
+            customAsrId = prefs.getString("custom-asr", null)?.takeIf { it.isNotBlank() },
             // 双凭证提供商只有 Access Token 或只有 APP ID 都不算配置完整。
             hasKey = !prefs.getString("secret", null).isNullOrBlank() && (!provider.needsAppId || appId.isNotBlank()),
             appId = appId, revision = prefs.getString("revision", "initial").orEmpty(),
@@ -81,6 +84,7 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
         consent: Boolean,
         appId: String = "",
         localEngine: LocalAsrEngine = read().localEngine,
+        customAsrId: String? = read().customAsrId,
     ) {
         val old = read()
         require(model in provider.models) { "请选择提供商支持的语音模型" }
@@ -99,12 +103,20 @@ class TranscriptionSettingsStore(context: Context, name: String = "transcription
             .putString("revision", UUID.randomUUID().toString())
             .putLong("allowed-after", if (mode == TranscriptionMode.REMOTE) System.currentTimeMillis() else Long.MAX_VALUE)
             .remove("granted-chunks")
+        if (customAsrId.isNullOrBlank()) edit.remove("custom-asr") else edit.putString("custom-asr", customAsrId)
         if (old.provider != provider) edit.remove("secret").remove("app-id")
         if (key.isNotBlank()) edit.putString("secret", encrypt(key.trim()))
         if (provider.needsAppId) {
             edit.putString("app-id", appId.trim().ifBlank { if (old.provider == provider) old.appId else "" })
         }
         check(edit.commit()) { "转文字设置保存失败，原配置保留" }
+        state.value = read()
+    }
+
+    /** 自定义模型被删除后清空选中项，避免留一个指向不存在目录的 id。 */
+    @Synchronized fun clearCustomAsr(id: String) {
+        if (read().customAsrId != id) return
+        check(prefs.edit().remove("custom-asr").putString("revision", UUID.randomUUID().toString()).commit())
         state.value = read()
     }
 

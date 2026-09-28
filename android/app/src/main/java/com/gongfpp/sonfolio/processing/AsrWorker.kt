@@ -39,12 +39,15 @@ class AsrWorker(
         val segments = dao.getSpeechSegments(chunkId)
         val config = app.transcriptionSettings.read()
         val engine = config.localEngine
+        val custom = config.customAsrId?.let { app.customAsrStore.byId(it) }
         val model = requireNotNull(com.gongfpp.sonfolio.models.ModelCatalog.byId(engine.artifactId)) { "未知的本地识别引擎" }
         if (segments.isNotEmpty() && config.mode == TranscriptionMode.REMOTE && !app.transcriptionSettings.isAuthorized(config, chunk.id, chunk.startedAtMillis)) {
             dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "尚未授权上传历史音频：在原始录音中点继续处理并确认，或在设置 → 转文字方式选择本地识别")
             return Result.success()
         }
-        if (segments.isNotEmpty() && config.mode == TranscriptionMode.LOCAL && !com.gongfpp.sonfolio.models.ModelCatalog.installed(applicationContext.filesDir, model)) {
+        val localReady = if (custom != null) app.customAsrStore.isReady(custom)
+            else com.gongfpp.sonfolio.models.ModelCatalog.installed(applicationContext.filesDir, model)
+        if (segments.isNotEmpty() && config.mode == TranscriptionMode.LOCAL && !localReady) {
             dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, "等待语音识别模型：请打开设置 → 转文字方式，下载模型后继续转写；也可选择在线识别")
             return Result.success()
         }
@@ -100,7 +103,7 @@ class AsrWorker(
                     else -> {
                         // 只有支持热词的引擎才读取个人词汇，避免每次本地转写都查库。
                         val hotwords = if (engine.supportsHotwords) app.vocabularyRepository.hotwords() else ""
-                        val localTexts = InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords)
+                        val localTexts = InferenceClient(applicationContext).transcribe(file, windows, language, engine, hotwords, custom?.id)
                         // 不能静默丢文字：整段为空时明确报错并保留录音，让用户改用 SenseVoice 重试。
                         if (engine == LocalAsrEngine.QWEN3_ASR && windows.isNotEmpty() && localTexts.all { it.isBlank() }) {
                             error("Qwen3-ASR 本次没有返回文字（可能是纯音乐/噪声或模型异常）；录音已保留，可在设置改用 SenseVoice 后重试")
@@ -123,11 +126,15 @@ class AsrWorker(
                                     endedAtMillis = chunk.startedAtMillis + segment.endOffsetMillis,
                                     text = text,
                                     languageTag = remoteLanguageTag(config, language),
-                                    modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else engine.displayName,
-                                    modelVersion = if (config.mode == TranscriptionMode.REMOTE) "remote:${config.provider.name}:vad-window-v1" else when (engine) {
-                                        LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
-                                        LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor.MODEL_VERSION
-                                        LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor.MODEL_VERSION
+                                    modelName = if (config.mode == TranscriptionMode.REMOTE) config.model else (custom?.label ?: engine.displayName),
+                                    modelVersion = when {
+                                        config.mode == TranscriptionMode.REMOTE -> "remote:${config.provider.name}:vad-window-v1"
+                                        custom != null -> "custom:${custom.kind.name}:${custom.id}"
+                                        else -> when (engine) {
+                                            LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor.MODEL_VERSION
+                                            LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor.MODEL_VERSION
+                                            LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor.MODEL_VERSION
+                                        }
                                     },
                                     processingState = ChunkProcessing.ASR_READY,
                                     errorMessage = null,

@@ -101,6 +101,16 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
         state.value = read()
     }
 
+    /** 删除用户导入的 GGUF 并回退到基础整理；内置模型不受影响。 */
+    @Synchronized fun clearImportedModel() {
+        val current = read()
+        if (current.localFile.isNotEmpty() && selectedCatalogModelId(current) == null) modelFile(current)?.delete()
+        check(prefs.edit().remove("local-file").remove("local-label")
+            .putString("mode", "BASIC").putBoolean("automatic", false)
+            .putString("revision", UUID.randomUUID().toString()).commit()) { "删除导入模型失败" }
+        state.value = read()
+    }
+
     /** 启用某个已下载的内置总结模型；modelId 默认当前模型。 */
     @Synchronized fun useDownloadedModel(activateRevision: String? = null, modelId: String = com.gongfpp.sonfolio.models.ModelCatalog.summary.id) {
         val model = com.gongfpp.sonfolio.models.ModelCatalog.summaryById(modelId) ?: error("未知的总结模型")

@@ -1,5 +1,6 @@
 package com.gongfpp.sonfolio.processing
 
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,6 +34,13 @@ import kotlinx.coroutines.*
 /** 已保存密钥在输入框中的占位显示，避免把空框误认为没有配置。 */
 private const val SAVED_SECRET_MASK = "*****"
 
+/** 导入对话框里提示每种类型需要的文件，避免用户选错类型后一直报错。 */
+private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
+    LocalAsrEngine.SENSE_VOICE -> "需要 model.int8.onnx"
+    LocalAsrEngine.FIRE_RED_ASR_CTC -> "需要 model.int8.onnx 与 tokens.txt"
+    LocalAsrEngine.QWEN3_ASR -> "需要 conv_frontend.onnx、encoder/decoder onnx 与 tokenizer/ 目录"
+}
+
 @Composable internal fun TranscriptionSettingsCard() {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.transcriptionSettings.config.collectAsStateWithLifecycle()
@@ -51,8 +59,39 @@ private const val SAVED_SECRET_MASK = "*****"
     var engineMenu by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var customAsrId by rememberSaveable { mutableStateOf(saved.customAsrId) }
+    var customModels by remember { mutableStateOf(app.customAsrStore.list()) }
+    var importKind by remember { mutableStateOf<LocalAsrEngine?>(null) }
+    var importLabel by remember { mutableStateOf("") }
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
+
+    fun startImport(kind: LocalAsrEngine, uri: Uri, zip: Boolean) {
+        if (busy) return
+        val label = importLabel.trim().ifBlank { "导入的 ${kind.displayName}" }
+        busy = true
+        scope.launch {
+            try {
+                val model = withContext(Dispatchers.IO) {
+                    if (zip) CustomAsrImporter.importZip(app, uri, kind, label, app.customAsrStore)
+                    else CustomAsrImporter.importTree(app, uri, kind, label, app.customAsrStore)
+                }
+                customModels = app.customAsrStore.list()
+                localEngine = model.kind
+                customAsrId = model.id
+                importKind = null; importLabel = ""
+                message = "已导入「${model.label}」；保存后对之后的录音生效"
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) { message = error.message ?: "导入失败，请确认文件与所选类型一致" }
+            finally { busy = false }
+        }
+    }
+    val zipLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri -> val kind = importKind; if (uri != null && kind != null) startImport(kind, uri, zip = true) }
+    val treeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> val kind = importKind; if (uri != null && kind != null) startImport(kind, uri, zip = false) }
     Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("转文字方式", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -83,10 +122,26 @@ private const val SAVED_SECRET_MASK = "*****"
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("手机端识别设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val selectedCustom = customModels.firstOrNull { it.id == customAsrId }
                         OutlinedButton(onClick = { engineMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                            Text("识别引擎：${localEngine.displayName} ▾")
+                            Text("识别引擎：${selectedCustom?.label ?: localEngine.displayName} ▾")
                         }
-                        ModelDownloadControl(ModelCatalog.byId(localEngine.artifactId)!!)
+                        if (selectedCustom != null) {
+                            Text(
+                                "自定义模型 · 按 ${selectedCustom.kind.displayName} 布局 · " +
+                                    if (app.customAsrStore.isReady(selectedCustom)) "文件已就绪" else "文件缺失，请重新导入",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TextButton(enabled = !busy, onClick = {
+                                app.customAsrStore.remove(selectedCustom.id)
+                                runCatching { app.transcriptionSettings.clearCustomAsr(selectedCustom.id) }
+                                customModels = app.customAsrStore.list()
+                                customAsrId = null
+                                message = "已删除自定义模型「${selectedCustom.label}」"
+                            }) { Text("删除这个自定义模型") }
+                        } else {
+                            ModelDownloadControl(ModelCatalog.byId(localEngine.artifactId)!!)
+                        }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("尚未下载也能录音与回听；下载完成后自动处理等待中的录音。", fontSize = 11.sp, modifier = Modifier.weight(1f))
                             HelpHint(
@@ -198,11 +253,11 @@ private const val SAVED_SECRET_MASK = "*****"
                 val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val allowed = consent
                 // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。
                 val chosenKey = if (keyTouched) key else ""
-                val chosenEngine = localEngine; val chosenAppId = appId
+                val chosenEngine = localEngine; val chosenAppId = appId; val chosenCustom = customAsrId
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenAppId, chosenEngine)
+                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenAppId, chosenEngine, chosenCustom)
                             app.recordingRepository.enqueuePendingAsr()
                         }
                         key = ""; keyTouched = false; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"
@@ -243,10 +298,10 @@ private const val SAVED_SECRET_MASK = "*****"
                     LocalAsrEngine.entries.forEach { option ->
                         val artifact = ModelCatalog.byId(option.artifactId) ?: return@forEach
                         Row(
-                            Modifier.fillMaxWidth().clickable { localEngine = option; engineMenu = false }.padding(vertical = 4.dp),
+                            Modifier.fillMaxWidth().clickable { localEngine = option; customAsrId = null; engineMenu = false }.padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RadioButton(localEngine == option, onClick = null)
+                            RadioButton(customAsrId == null && localEngine == option, onClick = null)
                             Column(Modifier.padding(start = 8.dp).weight(1f)) {
                                 Text(option.displayName + if (option.recommended) "（推荐）" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 Text(option.blurb, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -259,10 +314,57 @@ private const val SAVED_SECRET_MASK = "*****"
                             }
                         }
                     }
+                    if (customModels.isNotEmpty()) {
+                        Text("自定义模型", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        customModels.forEach { model ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { localEngine = model.kind; customAsrId = model.id; engineMenu = false }.padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(customAsrId == model.id, onClick = null)
+                                Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                                    Text(model.label, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(
+                                        "按 ${model.kind.displayName} 布局 · " + if (app.customAsrStore.isReady(model)) "文件已就绪" else "文件缺失",
+                                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Text("切换只影响之后新转写的录音，已有文字不会重做。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { engineMenu = false; importKind = LocalAsrEngine.SENSE_VOICE; importLabel = "" }) {
+                        Text("＋ 导入自定义 ONNX 模型")
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { engineMenu = false }) { Text("完成") } },
+        )
+    }
+    if (importKind != null) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) importKind = null },
+            title = { Text("导入自定义识别模型") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("选择模型类型，再选包含模型文件的 zip 或文件夹。只读取 .onnx、tokens、tokenizer 等文件，不上传。", fontSize = 12.sp)
+                    LocalAsrEngine.entries.forEach { option ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = !busy) { importKind = option }.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(importKind == option, onClick = null)
+                            Column(Modifier.padding(start = 8.dp)) {
+                                Text(option.displayName, fontSize = 13.sp)
+                                Text(importFileHint(option), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    OutlinedTextField(importLabel, { importLabel = it }, Modifier.fillMaxWidth(), label = { Text("显示名称（可留空）") }, singleLine = true, enabled = !busy)
+                }
+            },
+            confirmButton = { TextButton(enabled = !busy, onClick = { zipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }) { Text("选择 zip") } },
+            dismissButton = { TextButton(enabled = !busy, onClick = { treeLauncher.launch(null) }) { Text("选择文件夹") } },
         )
     }
     if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("如何获取识别密钥") },
@@ -273,11 +375,17 @@ private const val SAVED_SECRET_MASK = "*****"
 /** 已保存配置的连通性自检：本地看模型是否就绪，在线发 1 秒静音验证鉴权与端点。 */
 private suspend fun runTranscriptionTest(app: SonfolioApplication, config: TranscriptionConfig): String = when (config.mode) {
     TranscriptionMode.LOCAL -> {
-        val model = ModelCatalog.byId(config.localEngine.artifactId)
-        if (model != null && ModelCatalog.available(app.filesDir, model)) {
-            "连通成功：本地识别模型已就绪（${config.localEngine.displayName}）"
+        val custom = config.customAsrId?.let { app.customAsrStore.byId(it) }
+        if (custom != null) {
+            if (app.customAsrStore.isReady(custom)) "连通成功：自定义识别模型已就绪（${custom.label}）"
+            else "连通失败：自定义模型文件缺失，请在下方重新导入"
         } else {
-            "连通失败：本地识别模型尚未下载，请先下载模型"
+            val model = ModelCatalog.byId(config.localEngine.artifactId)
+            if (model != null && ModelCatalog.available(app.filesDir, model)) {
+                "连通成功：本地识别模型已就绪（${config.localEngine.displayName}）"
+            } else {
+                "连通失败：本地识别模型尚未下载，请先下载模型"
+            }
         }
     }
     TranscriptionMode.REMOTE ->

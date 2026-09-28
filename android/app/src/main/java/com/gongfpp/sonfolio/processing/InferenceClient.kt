@@ -39,6 +39,7 @@ internal class InferenceClient(
         language: String,
         engine: LocalAsrEngine = LocalAsrEngine.DEFAULT,
         hotwords: String = "",
+        customId: String? = null,
     ): List<String> {
         if (windows.isEmpty()) return emptyList()
         val response = call(InferenceService.TRANSCRIBE, Bundle().apply {
@@ -46,6 +47,7 @@ internal class InferenceClient(
             putString("language", language)
             putString("engine", engine.name)
             putString("hotwords", hotwords)
+            putString("custom-id", customId)
             putLongArray("starts", windows.map { it.startOffsetMillis }.toLongArray())
             putLongArray("ends", windows.map { it.endOffsetMillis }.toLongArray())
         })

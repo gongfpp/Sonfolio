@@ -17,12 +17,23 @@ import java.io.File
 class Qwen3AsrProcessor(
     context: Context,
     hotwords: String = "",
+    paths: AsrModelPaths? = null,
 ) : AsrProcessor {
-    private val root = requireNotNull(ModelCatalog.byId(LocalAsrEngine.QWEN3_ASR.artifactId)) { "未登记 Qwen3-ASR 模型" }
-        .let { artifact ->
-            require(ModelCatalog.installed(context.filesDir, artifact)) { "请在设置的模型下载中下载 Qwen3-ASR 模型" }
-            ModelCatalog.file(context.filesDir, artifact).parentFile!!
-        }
+    private val catalogRoot by lazy {
+        requireNotNull(ModelCatalog.byId(LocalAsrEngine.QWEN3_ASR.artifactId)) { "未登记 Qwen3-ASR 模型" }
+            .let { artifact ->
+                require(ModelCatalog.installed(context.filesDir, artifact)) { "请在设置的模型下载中下载 Qwen3-ASR 模型" }
+                ModelCatalog.file(context.filesDir, artifact).parentFile!!
+            }
+    }
+    private val convFrontend = paths?.convFrontend?.also { require(it.isFile) { "自定义 Qwen3-ASR conv_frontend.onnx 缺失" } }
+        ?: File(catalogRoot, CONV_FRONTEND)
+    private val encoder = paths?.encoder?.also { require(it.isFile) { "自定义 Qwen3-ASR encoder 缺失" } }
+        ?: File(catalogRoot, ENCODER)
+    private val decoder = paths?.decoder?.also { require(it.isFile) { "自定义 Qwen3-ASR decoder 缺失" } }
+        ?: File(catalogRoot, DECODER)
+    private val tokenizer = paths?.tokenizer?.also { require(it.isDirectory) { "自定义 Qwen3-ASR tokenizer 目录缺失" } }
+        ?: File(catalogRoot, TOKENIZER_DIR)
 
     private val recognizer = OfflineRecognizer(
         null,
@@ -33,10 +44,10 @@ class Qwen3AsrProcessor(
             ),
             modelConfig = OfflineModelConfig(
                 qwen3Asr = OfflineQwen3AsrModelConfig(
-                    convFrontend = File(root, CONV_FRONTEND).absolutePath,
-                    encoder = File(root, ENCODER).absolutePath,
-                    decoder = File(root, DECODER).absolutePath,
-                    tokenizer = File(root, TOKENIZER_DIR).absolutePath,
+                    convFrontend = convFrontend.absolutePath,
+                    encoder = encoder.absolutePath,
+                    decoder = decoder.absolutePath,
+                    tokenizer = tokenizer.absolutePath,
                     // 官方示例用 512；默认 128 对较长窗口可能截断。
                     maxTotalLen = 512,
                     maxNewTokens = 512,

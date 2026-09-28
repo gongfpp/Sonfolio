@@ -17,10 +17,12 @@ import com.gongfpp.sonfolio.models.ModelCatalog
 class SenseVoiceAsrProcessor(
     context: Context,
     preferredLanguage: String = "zh",
+    modelOverride: File? = null,
 ) : AsrProcessor {
-    private val model = ModelCatalog.file(context.filesDir, ModelCatalog.senseVoice).also {
-        require(ModelCatalog.installed(context.filesDir, ModelCatalog.senseVoice)) { "请在设置的模型下载中下载 SenseVoice 模型" }
-    }
+    private val model = modelOverride?.also { require(it.isFile) { "自定义 SenseVoice 模型文件缺失" } }
+        ?: ModelCatalog.file(context.filesDir, ModelCatalog.senseVoice).also {
+            require(ModelCatalog.installed(context.filesDir, ModelCatalog.senseVoice)) { "请在设置的模型下载中下载 SenseVoice 模型" }
+        }
     private val tokens = File(model.parentFile, TOKENS_ASSET).also { file ->
         // Small bundled vocabulary is replaced atomically; a killed copy cannot poison later runs.
         val temporary = File(file.parentFile, "$TOKENS_ASSET.tmp")

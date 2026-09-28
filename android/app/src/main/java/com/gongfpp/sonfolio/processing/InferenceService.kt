@@ -38,7 +38,9 @@ class InferenceService : Service() {
                         require(starts.size == ends.size)
                         val engine = LocalAsrEngine.fromName(input.getString("engine"))
                         val hotwords = input.getString("hotwords").orEmpty()
-                        val texts = createAsrProcessor(this, engine, input.getString("language") ?: "zh", hotwords).use { processor ->
+                        val customStore = CustomAsrStore(this)
+                        val paths = customStore.byId(input.getString("custom-id"))?.let { customStore.resolve(it) }
+                        val texts = createAsrProcessor(this, engine, input.getString("language") ?: "zh", hotwords, paths).use { processor ->
                             starts.indices.map { index -> processor.transcribe(file, starts[index], ends[index]) }
                         }
                         Bundle().apply { putStringArrayList("texts", ArrayList(texts)) }

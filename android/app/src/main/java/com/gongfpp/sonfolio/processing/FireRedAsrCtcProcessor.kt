@@ -16,12 +16,20 @@ import java.io.File
  */
 class FireRedAsrCtcProcessor(
     context: Context,
+    modelOverride: File? = null,
+    tokensOverride: File? = null,
 ) : AsrProcessor {
-    private val root = requireNotNull(ModelCatalog.byId(LocalAsrEngine.FIRE_RED_ASR_CTC.artifactId)) { "未登记 FireRedASR2-CTC 模型" }
-        .let { artifact ->
-            require(ModelCatalog.installed(context.filesDir, artifact)) { "请在设置的模型下载中下载 FireRedASR2-CTC 模型" }
-            ModelCatalog.file(context.filesDir, artifact).parentFile!!
-        }
+    private val catalogRoot by lazy {
+        requireNotNull(ModelCatalog.byId(LocalAsrEngine.FIRE_RED_ASR_CTC.artifactId)) { "未登记 FireRedASR2-CTC 模型" }
+            .let { artifact ->
+                require(ModelCatalog.installed(context.filesDir, artifact)) { "请在设置的模型下载中下载 FireRedASR2-CTC 模型" }
+                ModelCatalog.file(context.filesDir, artifact).parentFile!!
+            }
+    }
+    private val model = modelOverride?.also { require(it.isFile) { "自定义 FireRedASR 模型文件缺失" } }
+        ?: File(catalogRoot, MODEL)
+    private val tokens = tokensOverride?.also { require(it.isFile) { "自定义 FireRedASR tokens.txt 缺失" } }
+        ?: File(catalogRoot, TOKENS)
 
     private val recognizer = OfflineRecognizer(
         null,
@@ -32,9 +40,9 @@ class FireRedAsrCtcProcessor(
             ),
             modelConfig = OfflineModelConfig(
                 fireRedAsrCtc = OfflineFireRedAsrCtcModelConfig(
-                    model = File(root, MODEL).absolutePath,
+                    model = model.absolutePath,
                 ),
-                tokens = File(root, TOKENS).absolutePath,
+                tokens = tokens.absolutePath,
                 numThreads = minOf(4, Runtime.getRuntime().availableProcessors()).coerceAtLeast(1),
                 debug = false,
                 provider = "cpu",

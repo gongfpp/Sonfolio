@@ -7,6 +7,7 @@ import com.gongfpp.sonfolio.recording.RecordingRepository
 
 class SonfolioApplication : Application() {
     val transcriptionSettings by lazy { com.gongfpp.sonfolio.processing.TranscriptionSettingsStore(this) }
+    val customAsrStore by lazy { com.gongfpp.sonfolio.processing.CustomAsrStore(this) }
     val summarySettings by lazy { com.gongfpp.sonfolio.summary.SummarySettingsStore(this) }
     val summaryCoordinator by lazy { com.gongfpp.sonfolio.summary.SummaryCoordinator(this) }
     val database by lazy { SonfolioDatabase.getInstance(this) }

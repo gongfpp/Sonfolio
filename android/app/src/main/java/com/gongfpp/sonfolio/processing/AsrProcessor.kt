@@ -34,13 +34,24 @@ interface AsrProcessor : AutoCloseable {
     fun transcribe(file: File, startOffsetMillis: Long, endOffsetMillis: Long): String
 }
 
+/** 自定义模型的显式文件路径；为 null 时按内置 ModelCatalog 解析。 */
+data class AsrModelPaths(
+    val model: File? = null,
+    val tokens: File? = null,
+    val convFrontend: File? = null,
+    val encoder: File? = null,
+    val decoder: File? = null,
+    val tokenizer: File? = null,
+)
+
 internal fun createAsrProcessor(
     context: Context,
     engine: LocalAsrEngine,
     language: String,
     hotwords: String,
+    paths: AsrModelPaths? = null,
 ): AsrProcessor = when (engine) {
-    LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor(context, language)
-    LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor(context, hotwords)
-    LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor(context)
+    LocalAsrEngine.SENSE_VOICE -> SenseVoiceAsrProcessor(context, language, paths?.model)
+    LocalAsrEngine.QWEN3_ASR -> Qwen3AsrProcessor(context, hotwords, paths)
+    LocalAsrEngine.FIRE_RED_ASR_CTC -> FireRedAsrCtcProcessor(context, paths?.model, paths?.tokens)
 }
