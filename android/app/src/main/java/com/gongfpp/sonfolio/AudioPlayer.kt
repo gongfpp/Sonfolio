@@ -115,7 +115,7 @@ internal fun TimelineAudioPlayer(
                 IconButton(
                     onClick = controller::toggle,
                     enabled = timeline.slices.isNotEmpty(),
-                    modifier = Modifier.size(42.dp).clip(CircleShape).background(Green),
+                    modifier = Modifier.size(48.dp).clip(CircleShape).background(ActionFill),
                 ) {
                     Icon(
                         if (controller.playing || controller.preparing) Icons.Default.Pause else Icons.Default.PlayArrow,

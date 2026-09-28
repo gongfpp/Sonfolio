@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ChevronLeft
@@ -123,10 +124,6 @@ internal fun TodayScreen(
     ) {
         item(key = "header") {
             Text("声迹", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text(
-                if (recordingStatus.isRecording) "正在记录 · 录音保存在本机" else "你的记录保存在本机 · 按日期回看",
-                color = InkSoft, fontSize = 14.sp,
-            )
         }
         item(key = "date") {
             DateNavigator(date, today, recordedDates, organizedDates, onOpenCalendar = { calendarOpen = true }, onSelect = selectDate)
@@ -146,13 +143,6 @@ internal fun TodayScreen(
                 onOpen(AppScreen.Daily(date.toString()))
             }
         }
-        item(key = "recording-details") {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { onOpen(AppScreen.RawRecordings(date.toString())) }) { Text("原始录音（${day.totalChunks}）", fontSize = 12.sp) }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { detailsOpen = !detailsOpen }) { Text(if (detailsOpen) "收起统计与缺口" else "统计与缺口", fontSize = 12.sp) }
-            }
-        }
         if (detailsOpen) item(key = "heat") {
             RecentHeatPanel(
                 recorded = recordedDates,
@@ -169,6 +159,10 @@ internal fun TodayScreen(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 SectionTitle("对话时间线")
                 Spacer(Modifier.weight(1f))
+                TextButton(onClick = { onOpen(AppScreen.RawRecordings(date.toString())) }) { Text("原始录音（${day.totalChunks}）", fontSize = 12.sp) }
+                IconButton(onClick = { detailsOpen = !detailsOpen }) {
+                    Icon(Icons.Default.ExpandMore, contentDescription = if (detailsOpen) "收起统计与缺口" else "统计与缺口")
+                }
                 if (activeSummaryRuns > 0) {
                     Surface(shape = RoundedCornerShape(999.dp), color = AmberPale) {
                         Text(
@@ -262,7 +256,7 @@ internal fun StatCard(value: String, unit: String?, label: String, modifier: Mod
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
-        color = Color(0xFFFFFEFA),
+        color = CardSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
         Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -294,7 +288,7 @@ internal fun RecentHeatPanel(
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         shape = RoundedCornerShape(14.dp),
-        color = Color(0xFFFFFEFA),
+        color = CardSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
@@ -375,8 +369,8 @@ internal fun PendingUnitCard(unit: PendingUnit, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(13.dp),
-        color = Color(0xFFFFFCF0),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8DFC2)),
+        color = CardSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(12.dp).clip(CircleShape).background(Amber))
@@ -387,16 +381,16 @@ internal fun PendingUnitCard(unit: PendingUnit, onClick: () -> Unit) {
                         fontWeight = FontWeight.Bold,
                         fontStyle = FontStyle.Italic,
                         fontSize = 14.sp,
-                        color = Color(0xFF725B18),
+                        color = Ink,
                         modifier = Modifier.weight(1f),
                     )
                     StageIndicator(unit.progress)
                 }
                 Text(
                     "${formatDateTime(unit.startedAtMillis)} · ${unit.chunkIds.size} 段录音",
-                    color = InkSoft, fontSize = 11.5.sp,
+                    color = InkSoft, fontSize = 12.sp,
                 )
-                Text(unit.label, color = Color(0xFF725B18), fontSize = 12.sp)
+                Text(unit.label, color = Ink, fontSize = 12.sp)
                 unit.errorMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp) }
             }
             Icon(Icons.Default.ChevronRight, contentDescription = "查看原始录音", tint = Amber)
@@ -419,29 +413,10 @@ internal fun RecordingCard(
     val transcription by app.transcriptionSettings.config.collectAsStateWithLifecycle()
     val summary by app.summarySettings.config.collectAsStateWithLifecycle()
     var sliceHelp by remember { mutableStateOf(false) }
-    var lastMarked by remember(status.startedAtMillis) { mutableStateOf<Pair<Long, Int>?>(null) }
-    var markPending by remember { mutableStateOf(false) }
-    var markError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
-        com.gongfpp.sonfolio.recording.RecordingController.feedback.collect { feedback ->
-            when (feedback) {
-                is com.gongfpp.sonfolio.recording.RecordingFeedback.Marked -> {
-                    lastMarked = feedback.markedAtMillis to feedback.windowMinutes
-                    markPending = false; markError = null
-                }
-                is com.gongfpp.sonfolio.recording.RecordingFeedback.Failed -> if (markPending) {
-                    markPending = false; markError = feedback.message
-                }
-            }
-        }
-    }
-    LaunchedEffect(markPending) {
-        if (markPending) {
-            delay(15_000)
-            markPending = false
-            markError = "暂未收到保存回执，请到对话详情确认标记"
-        }
-    }
+    val markerState by com.gongfpp.sonfolio.recording.RecordingController.markerState.collectAsStateWithLifecycle()
+    val markPending = markerState is com.gongfpp.sonfolio.recording.MarkerSaveState.Saving
+    val markError = (markerState as? com.gongfpp.sonfolio.recording.MarkerSaveState.Failed)?.message
+    val lastMarked = (markerState as? com.gongfpp.sonfolio.recording.MarkerSaveState.Saved)?.let { it.markedAtMillis to it.minutes }
     var nowMillis by remember(status.startedAtMillis) {
         mutableLongStateOf(System.currentTimeMillis())
     }
@@ -459,8 +434,8 @@ internal fun RecordingCard(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = Green,
+        shape = RoundedCornerShape(24.dp),
+        color = ActionFill,
     ) {
         Column {
             Row(
@@ -477,10 +452,7 @@ internal fun RecordingCard(
                         },
                         color = onWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp,
                     )
-                    Text(
-                        if (status.isRecording) "每 5 分钟保存一段录音 · 原音存本机" else "点击后持续在后台录音",
-                        color = onWhite.copy(alpha = .85f), fontSize = 12.sp,
-                    )
+                    if (!status.isRecording) Text("点击后持续在后台录音", color = onWhite.copy(alpha = .85f), fontSize = 12.sp)
                 }
                 if (status.isRecording) {
                     InputWaveform(
@@ -492,7 +464,7 @@ internal fun RecordingCard(
                 }
                 Box(
                     Modifier
-                        .size(62.dp)
+                        .size(52.dp)
                         .clip(CircleShape)
                         .background(onWhite)
                         .border(6.dp, PaleGreen, CircleShape)
@@ -502,7 +474,7 @@ internal fun RecordingCard(
                     Icon(
                         if (status.isRecording) Icons.Default.Stop else Icons.Default.PlayArrow,
                         contentDescription = if (status.isRecording) "停止记录" else "开始记录",
-                        tint = Green,
+                        tint = ActionFill,
                         modifier = Modifier.size(24.dp),
                     )
                 }
@@ -515,20 +487,19 @@ internal fun RecordingCard(
                 Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("标记刚才\n重要的事", color = onWhite.copy(alpha = .85f), fontSize = 12.sp, lineHeight = 16.sp)
-                Spacer(Modifier.weight(1f))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier
+                            .weight(1f).height(48.dp)
                             .alpha(if (enabled) 1f else .4f)
                             .clip(RoundedCornerShape(11.dp))
                             .background(AmberPale)
                             .clickable(enabled = enabled) {
-                                markPending = true; markError = null
                                 onMark(markWindows.first())
                             }
                             .padding(horizontal = 10.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
                     ) {
                         Text("★", color = Amber, fontSize = 15.sp)
                         Text("标记（${markWindows.first()}分）", color = Color(0xFF694E00), fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -536,12 +507,11 @@ internal fun RecordingCard(
                     markWindows.drop(1).forEach { minutes ->
                         Box(
                             Modifier
-                                .size(46.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .background(if (enabled) AmberPale else Color(0xFFE8E8E3))
                                 .clickable(enabled = enabled) {
-                                    markPending = true; markError = null
-                                    onMark(minutes)
+                                        onMark(minutes)
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -561,24 +531,23 @@ internal fun RecordingCard(
                     color = Color(0xFFFFE9B8), fontSize = 11.sp,
                 )
             }
-            Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${if (transcription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) "在线转文字 · 音频上传" else "本地转文字"} · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.REMOTE) "在线总结" else "本地总结"}",
+                    Modifier.weight(1f), color = onWhite.copy(alpha = .85f), fontSize = 11.sp,
+                )
                 TextButton(onClick = { sliceHelp = true }, contentPadding = PaddingValues(horizontal = 4.dp)) {
                     Text("切片说明 ⓘ", color = onWhite.copy(alpha = .9f), fontSize = 11.sp)
                 }
-                Spacer(Modifier.weight(1f))
                 HelpHint(
                     title = "标记和没标记的区别",
                     body = "标记会把这次标记覆盖的**整段连续对话高亮**，并在搜索与一日回顾里作为「值得记住」的重点；**标记附近的录音不会被自动压缩或清理**。\n\n没有标记的对话只按时间和内容正常展示，不进入重点区。标记只影响展示与保留，**不修改转写文字**。",
                     tint = onWhite.copy(alpha = .9f),
                 )
             }
-            Text(
-                "转文字：${if (transcription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) "上传音频至 ${transcription.provider.label}" else "本机处理"} · 总结：${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.REMOTE) "发送文字至 ${com.gongfpp.sonfolio.summary.SummaryProvider.fromEndpoint(summary.endpoint).label}" else "本机处理"}",
-                Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp), color = onWhite.copy(alpha = .85f), fontSize = 11.sp,
-            )
             if (sliceHelp) AlertDialog(onDismissRequest = { sliceHelp = false },
                 title = { Text("文件切片不等于对话切割") },
-                text = { Text("5 分钟切片是为了边录边处理，并减少异常退出时未收尾的范围。相邻语音间隔不超过 2 分钟、且没有已知录音缺口时，会合并为同一场对话，能够跨越多个文件。\n\n总结使用整场对话的已识别文字；长内容分段时会携带上一部分的总结。后续转写到达后会更新基础小结，旧 AI 结果会标为需要重新生成。\n\n当前按时间连续性合并，不是语义主题识别：同一主题停顿过久仍可能被分开，总结也需结合原文核对。") },
+                text = { Text("5 分钟切片是为了边录边处理，并减少异常退出时未收尾的范围。相邻语音间隔不超过 ${app.preferences.conversationGapMinutes} 分钟、且没有已知录音缺口时，会合并为同一场对话，能够跨越多个文件。\n\n总结使用整场对话的已识别文字；长内容分段时会携带上一部分的总结。后续转写到达后会更新基础小结，旧 AI 结果会标为需要重新生成。\n\n当前按时间连续性合并，不是语义主题识别：同一主题停顿过久仍可能被分开，总结也需结合原文核对。") },
                 confirmButton = { TextButton(onClick = { sliceHelp = false }) { Text("知道了") } })
             if (status.isRecording || status.interruptionPending || status.health.failure != null) {
                 val failure = status.health.failure
@@ -641,7 +610,7 @@ internal fun TimelineCard(item: ConversationPreview, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
-        color = Color(0xFFFFFEFA),
+        color = CardSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
@@ -690,9 +659,9 @@ private fun CalendarDay(
     onClick: () -> Unit,
 ) {
     val background = when {
-        organized -> Green
+        organized -> ActionFill
         recorded -> PaleGreenStrong
-        else -> Color(0xFFEDEDE7)
+        else -> CardSurface
     }
     val foreground = when {
         organized -> Color.White

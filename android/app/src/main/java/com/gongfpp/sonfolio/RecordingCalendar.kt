@@ -51,7 +51,7 @@ internal fun datesInRange(start: Long, end: Long): List<LocalDate> {
                                         contentDescription = "$date，${if (date in organized) "已整理对话" else if (date in recorded) "有录音" else "无记录"}"
                                     }, contentPadding = PaddingValues(0.dp)) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(day.toString(), Modifier.background(if (date == selected) Color(0xFFE1EEDC) else Color.Transparent, CircleShape).padding(3.dp), fontSize = 13.sp)
+                                        Text(day.toString(), Modifier.background(if (date == selected) PaleGreen else Color.Transparent, CircleShape).padding(3.dp), fontSize = 13.sp)
                                         Box(Modifier.size(5.dp).background(marker ?: Color.Transparent, CircleShape))
                                     }
                                 }

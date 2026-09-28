@@ -44,7 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBack: () -> Unit) {
+internal fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBack: () -> Unit, onOpenConversation: (String) -> Unit) {
     BackHandler(onBack = onBack)
     var localDate by rememberSaveable { mutableStateOf(initialDate) }
     val journal by key(localDate) {
@@ -57,9 +57,16 @@ internal fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBa
     val organizedDates = remember(calendar) { calendar.filter { it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val window = remember(localDate) { DayWindow.of(LocalDate.parse(localDate)) }
+    val conversations by remember(window) { viewModel.observeTimeline(window.start, window.end) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    var calendarOpen by remember { mutableStateOf(false) }
+    val today = rememberCurrentDay()
+    if (calendarOpen) RecordingCalendarDialog(LocalDate.parse(localDate), today, recordedDates, organizedDates, { calendarOpen = false }) {
+        localDate = it.toString(); calendarOpen = false
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp)) {
         DetailTopBar("一日回顾", localDate, onBack)
-        DateNavigator(LocalDate.parse(localDate), recorded = recordedDates, organized = organizedDates) { localDate = it.toString() }
+        DateNavigator(LocalDate.parse(localDate), recorded = recordedDates, organized = organizedDates, onOpenCalendar = { calendarOpen = true }) { localDate = it.toString() }
         Surface(Modifier.fillMaxWidth().padding(top = 15.dp), RoundedCornerShape(15.dp), color = PaleGreen) {
             Column(Modifier.padding(15.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -69,14 +76,21 @@ internal fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBa
                 Text(
                     narrative ?: "这一天暂时还没有足够的已整理内容。完成录音和本地转写后，这里会生成一日回顾。",
                     modifier = Modifier.padding(top = 13.dp),
-                    color = Color(0xFF39483E),
-                    fontSize = 13.sp,
-                    lineHeight = 23.sp,
+                    color = Ink,
+                    fontSize = 16.sp,
+                    lineHeight = 28.sp,
                 )
             }
         }
         AuxiliaryCard("值得记住", parseJsonLines(journal?.memorableJson).ifBlank { "这一天还没有标记重点对话" }, Icons.Default.Star, Amber)
         Text("基于 $sourceCount 场对话整理 · 原始录音仍按你的保留策略保存", modifier = Modifier.padding(top = 20.dp), color = InkSoft, fontSize = 11.sp)
+        if (conversations.isNotEmpty()) {
+            SectionTitle("当日对话")
+            Text("打开对话可核对原文。以下是当日时间线，不代表每场对话都已用于这份回顾。", color = InkSoft, fontSize = 12.sp)
+            conversations.forEach { conversation ->
+                SettingsModeEntry(conversation.title, "${formatClock(conversation.startedAtMillis)} · ${conversation.duration}") { onOpenConversation(conversation.id) }
+            }
+        }
         com.gongfpp.sonfolio.summary.SummaryAction("day:$localDate")
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = viewModel::rebuildConversations) { Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("重新整理") }
@@ -117,14 +131,13 @@ internal fun DailyScreen(viewModel: SonfolioViewModel, initialDate: String, onBa
 
 @Composable
 internal fun AuxiliaryCard(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
-    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(14.dp), color = Color(0xFFEAF3E7)) {
+    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(14.dp), color = PaleGreen) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
                 Text(title, modifier = Modifier.padding(start = 9.dp), fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
-            Text(body, modifier = Modifier.padding(start = 28.dp, top = 8.dp), color = Color(0xFF4A574E), fontSize = 12.5.sp)
+            Text(body, modifier = Modifier.padding(start = 28.dp, top = 8.dp), color = InkSoft, fontSize = 12.5.sp)
         }
     }
 }
-

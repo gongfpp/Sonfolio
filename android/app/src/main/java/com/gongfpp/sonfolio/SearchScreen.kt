@@ -74,19 +74,19 @@ internal fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> U
             viewModel.observeSearch(settledQuery, dateRange, markedOnly, visibleLimit)
         }.collectAsStateWithLifecycle(initialValue = null)
     }
-    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
-        Text("搜索记忆", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    val compact = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 500
+    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = if (compact) 6.dp else 14.dp)) {
+        Text("搜索记忆", style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         OutlinedTextField(
             value = query,
             onValueChange = { query = it; resetScroll() },
-            modifier = Modifier.fillMaxWidth().padding(top = 17.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = if (compact) 6.dp else 14.dp),
             placeholder = { Text("搜索转写内容或对话主题") },
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = ""; resetScroll() }) { Icon(Icons.Default.Close, contentDescription = "清空搜索") } },
             shape = RoundedCornerShape(11.dp),
         )
-        Text("时间范围", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 12.dp))
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SearchDateRange.entries.forEach { range ->
                 FilterChip(
@@ -95,9 +95,6 @@ internal fun SearchScreen(viewModel: SonfolioViewModel, onOpen: (AppScreen) -> U
                     label = { Text(range.label, fontSize = 12.sp) },
                 )
             }
-        }
-        Text("筛选", color = InkSoft, fontSize = 11.sp)
-        Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = markedOnly,
                 onClick = { markedOnly = !markedOnly; resetScroll() },
@@ -180,7 +177,7 @@ internal fun SearchResultsPanel(
 
 @Composable
 internal fun SearchResult(date: String, title: String, excerpt: String, trailing: String, meta: String? = null, query: String? = null, onClick: () -> Unit) {
-    Surface(Modifier.fillMaxWidth().padding(top = 10.dp).clickable(onClick = onClick), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+    Surface(Modifier.fillMaxWidth().padding(top = 10.dp).clickable(onClick = onClick), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
         Column(Modifier.padding(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(date, color = InkSoft, fontSize = 13.sp)
@@ -194,8 +191,7 @@ internal fun SearchResult(date: String, title: String, excerpt: String, trailing
                     color = Green, fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
                 )
             }
-            Text(highlightText(excerpt, query), modifier = Modifier.padding(top = 9.dp), color = Color(0xFF3E4A42), fontSize = 12.5.sp, lineHeight = 19.sp)
+            Text(highlightText(excerpt, query), modifier = Modifier.padding(top = 9.dp), color = Ink, fontSize = 12.5.sp, lineHeight = 19.sp)
         }
     }
 }
-

@@ -10,7 +10,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -143,7 +142,7 @@ internal fun DetailTopBar(title: String, meta: String, onBack: () -> Unit, actio
             }
         }
     }
-    Text(meta, modifier = Modifier.padding(start = 46.dp), color = InkSoft, fontSize = 14.sp)
+    if (meta.isNotBlank()) Text(meta, modifier = Modifier.padding(start = 46.dp), color = InkSoft, fontSize = 14.sp)
 }
 
 
@@ -154,4 +153,3 @@ internal fun formatDateTime(millis: Long): String =
 internal fun formatClock(millis: Long): String =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault())
         .format(DateTimeFormatter.ofPattern("HH:mm"))
-

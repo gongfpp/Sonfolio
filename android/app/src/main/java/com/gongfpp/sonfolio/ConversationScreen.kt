@@ -77,8 +77,8 @@ internal fun RealConversationScreen(
     val structuredSummary by remember(conversationId) {
         viewModel.observeConversationSummary(conversationId)
     }.collectAsStateWithLifecycle(initialValue = null)
-    // 进入对话默认停在最上面看「本段小结」；搜索命中的那一行只在展开结构化转写时高亮，不再自动跳转/突跳。
-    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(false) }
+    // 普通进入先看小结；从搜索命中进入时直接展示并定位对应转写。
+    var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(initialTranscriptId != null) }
     var seekLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playNonce by rememberSaveable(conversationId) { mutableLongStateOf(0L) }
@@ -88,6 +88,13 @@ internal fun RealConversationScreen(
     var editLineText by remember(conversationId) { mutableStateOf("") }
     var vocabularyPrompt by remember(conversationId) { mutableStateOf<List<String>>(emptyList()) }
     val listState = rememberLazyListState()
+    var initialLocated by rememberSaveable(conversationId, initialTranscriptId) { mutableStateOf(false) }
+    LaunchedEffect(initialTranscriptId, lines) {
+        if (!initialLocated && initialTranscriptId != null) {
+            val index = lines.indexOfFirst { it.id == initialTranscriptId }
+            if (index >= 0) { listState.scrollToItem(index + 1); initialLocated = true }
+        }
+    }
     LaunchedEffect(seekLineId, lines) {
         val idx = lines.indexOfFirst { it.id == seekLineId }
         if (idx >= 0) listState.scrollToItem(idx + 1)
@@ -183,17 +190,15 @@ internal fun RealConversationScreen(
                             )
                         }
                     }
-                    SummaryCard("conversation:$conversationId", title, summary, origin, structuredSummary?.generatedAtMillis?.takeIf { origin != "本地提取式小结" })
+                    androidx.compose.material3.TabRow(selectedTabIndex = if (transcriptOpen) 1 else 0, containerColor = Paper) {
+                        androidx.compose.material3.Tab(selected = !transcriptOpen, onClick = { transcriptOpen = false }, text = { Text("对话小结") })
+                        androidx.compose.material3.Tab(selected = transcriptOpen, onClick = { transcriptOpen = true }, text = { Text("结构化转写") })
+                    }
                     Spacer(Modifier.height(16.dp))
-                    Surface(Modifier.fillMaxWidth().height(1.dp), color = Line) {}
-                    Row(
-                        Modifier.fillMaxWidth().clickable { transcriptOpen = !transcriptOpen }.padding(vertical = 13.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(19.dp))
-                        Text("结构化转写", modifier = Modifier.padding(start = 9.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                        Text(if (lines.isEmpty()) "处理中" else "${lines.size}段", color = InkSoft, fontSize = 12.sp)
-                        Icon(Icons.Default.ExpandMore, contentDescription = null, tint = Ink)
+                    if (!transcriptOpen) {
+                        SummaryCard("conversation:$conversationId", title, summary, origin, structuredSummary?.generatedAtMillis?.takeIf { origin != "本地提取式小结" })
+                    } else {
+                        Text("${lines.size} 段转写 · 点击文字定位录音", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
                     }
                 }
             }
@@ -205,11 +210,15 @@ internal fun RealConversationScreen(
                 } else {
                     items(lines, key = { it.id }) { line ->
                         val located = line.id == seekLineId || (seekLineId == null && line.id == initialTranscriptId)
+                        // Amber is a fixed light highlight; its foreground must not inherit dark-theme ink.
+                        val amberBackground = line.isMarked && !located
+                        val lineInk = if (amberBackground) Color(0xFF443716) else Ink
+                        val lineSecondary = if (amberBackground) Color(0xFF69562C) else InkSoft
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable { seekLineId = line.id },
                             shape = RoundedCornerShape(8.dp),
                             color = when {
-                                located -> Color(0xFFDCEFE8)
+                                located -> PaleGreenStrong
                                 line.isMarked -> AmberPale
                                 else -> Color.Transparent
                             },
@@ -218,35 +227,35 @@ internal fun RealConversationScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { seekLineId = line.id; playLineId = line.id; playNonce++ },
-                                        modifier = Modifier.size(30.dp),
+                                        modifier = Modifier.size(48.dp),
                                     ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = "播放这一句", tint = Green, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.PlayArrow, contentDescription = "播放这一句", tint = if (amberBackground) Color(0xFF226548) else Green, modifier = Modifier.size(18.dp))
                                     }
                                     Text(
                                         if (line.isMarked) "★ ${formatClock(line.startedAtMillis)}" else formatClock(line.startedAtMillis),
                                         modifier = Modifier.width(58.dp),
-                                        color = if (line.isMarked) Amber else InkSoft,
+                                        color = if (amberBackground) Color(0xFF695000) else InkSoft,
                                         fontSize = 12.sp,
                                     )
                                     Text(
                                         remember(line.text, searchQuery) { highlightText(line.text, searchQuery) },
                                         modifier = Modifier.weight(1f),
-                                        color = Color(0xFF3E4A42),
-                                        fontSize = 12.5.sp,
+                                        color = lineInk,
+                                        fontSize = 15.sp,
                                         lineHeight = 18.sp,
                                     )
                                     IconButton(
                                         onClick = { editingLine = line; editLineText = line.text },
                                         modifier = Modifier.size(30.dp),
                                     ) {
-                                        Icon(Icons.Default.Edit, contentDescription = "修正这一句", tint = InkSoft, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Default.Edit, contentDescription = "修正这一句", tint = lineSecondary, modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 if (line.originalText != null) {
                                     Text(
                                         "已修正 · 原始版本：${line.originalText}",
                                         modifier = Modifier.padding(start = 58.dp, top = 2.dp),
-                                        color = InkSoft,
+                                        color = lineSecondary,
                                         fontSize = 10.5.sp,
                                     )
                                 }
@@ -372,7 +381,7 @@ internal fun SummaryCard(
                 Icon(Icons.Default.Description, contentDescription = null, tint = Green, modifier = Modifier.size(19.dp))
                 Text("本段小结", modifier = Modifier.padding(start = 9.dp).weight(1f), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 if (config.mode == com.gongfpp.sonfolio.summary.SummaryMode.BASIC) {
-                    Surface(shape = CircleShape, color = Color.White.copy(alpha = .55f)) {
+                    Surface(shape = CircleShape, color = CardSurface) {
                         Text("⌁  $origin", modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = Green, fontSize = 11.sp)
                     }
                 } else {
@@ -408,7 +417,7 @@ internal fun SummaryCard(
                 val extracted = origin == "本地提取式小结"
                 val time = updatedAtMillis?.let { " · ${formatDateTime(it)}" }.orEmpty()
                 Text(
-                    if (extracted) "来源：$origin（还没生成 AI 总结，可点上方生成）" else "来源：$origin$time · 请结合原文核对",
+                    if (extracted) "来源：$origin" else "来源：$origin$time · 请结合原文核对",
                     modifier = Modifier.padding(top = 8.dp),
                     color = if (extracted) InkSoft else Green,
                     fontSize = 11.sp,
@@ -417,7 +426,7 @@ internal fun SummaryCard(
             run?.message?.takeIf { it.isNotBlank() && !pending && run?.state != "READY" }?.let {
                 Text(it, modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 11.sp)
             }
-            Text(summary, modifier = Modifier.padding(top = 12.dp), color = Color(0xFF344039), fontSize = 14.sp, lineHeight = 23.sp)
+            Text(summary, modifier = Modifier.padding(top = 12.dp), color = Ink, fontSize = 16.sp, lineHeight = 27.sp)
             error?.let { Text(it, modifier = Modifier.padding(top = 6.dp), color = Color(0xFFB23B2E), fontSize = 11.sp) }
         }
     }
@@ -469,4 +478,3 @@ internal fun buildConversationText(
         line.originalText?.let { appendLine("　（原始版本：$it）") }
     }
 }
-

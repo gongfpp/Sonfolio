@@ -37,7 +37,7 @@ internal fun HelpHint(
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     var open by remember { mutableStateOf(false) }
-    IconButton(onClick = { open = true }, modifier = modifier.size(26.dp)) {
+    IconButton(onClick = { open = true }, modifier = modifier.size(48.dp)) {
         Icon(
             Icons.Outlined.HelpOutline,
             contentDescription = title,
@@ -49,15 +49,15 @@ internal fun HelpHint(
         AlertDialog(
             onDismissRequest = { open = false },
             title = { Text(title, fontWeight = FontWeight.Bold) },
-            text = { Text(emphasizeHelp(body), lineHeight = 21.sp) },
+            text = { Text(emphasizeHelp(body, Green), lineHeight = 21.sp) },
             confirmButton = { TextButton(onClick = { open = false }) { Text("知道了") } },
         )
     }
 }
 
 /** 把 `**...**` 渲染为加粗强调色，标题外的小字号正文用固定行高，便于扫读。 */
-internal fun emphasizeHelp(text: String): AnnotatedString = buildAnnotatedString {
-    val accent = SpanStyle(fontWeight = FontWeight.Bold, color = Green)
+internal fun emphasizeHelp(text: String, accentColor: Color = Color(0xFF226548)): AnnotatedString = buildAnnotatedString {
+    val accent = SpanStyle(fontWeight = FontWeight.Bold, color = accentColor)
     var index = 0
     while (index < text.length) {
         val start = text.indexOf("**", index)

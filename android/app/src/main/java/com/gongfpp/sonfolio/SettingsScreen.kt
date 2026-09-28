@@ -97,6 +97,8 @@ internal fun SettingsScreen(
     var editorDirty by remember { mutableStateOf(false) }
     var editorBusy by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    var section by rememberSaveable { mutableStateOf<String?>(null) }
+    BackHandler(enabled = section != null && editor == null) { section = null }
     fun closeEditor() {
         if (!editorBusy) { if (editorDirty) confirmDiscard = true else editor = null }
     }
@@ -131,7 +133,10 @@ internal fun SettingsScreen(
     var language by remember { mutableStateOf(preferences.preferredLanguage) }
     var minimumSpeechSeconds by remember { mutableStateOf(preferences.minimumSpeechSeconds.toFloat()) }
     var minimumTextCharacters by remember { mutableStateOf(preferences.minimumTextCharacters.toFloat()) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp)) {
+    key(section) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 14.dp)) {
+        if (section != null) DetailTopBar(section.orEmpty(), "", { section = null })
+        if (section == null) {
         Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
         SectionTitle("识别与总结")
@@ -141,18 +146,28 @@ internal fun SettingsScreen(
         SettingsModeEntry("总结方式", "已生效：${activeSummary.mode.label}${if (activeSummary.mode == com.gongfpp.sonfolio.summary.SummaryMode.REMOTE) " · ${com.gongfpp.sonfolio.summary.SummaryProvider.fromEndpoint(activeSummary.endpoint).label}" else ""}") {
             editorDirty = false; editorBusy = false; editor = "summary"
         }
-        UsageCard()
-        SectionTitle("整理")
+        SettingsModeEntry("处理与整理", if (chargeOnly) "自动处理等待充电 · 可手动重试" else "自动处理不限制充电状态") { section = "处理与整理" }
+        SectionTitle("录音与数据")
+        SettingsModeEntry("原始录音", "点击回听，长按管理") { onOpenRawRecordings() }
+        SettingsModeEntry("录音设置", "标记时长、识别语言、短录音过滤") { section = "录音设置" }
+        SettingsModeEntry("存储与备份", "空间占用、保留策略、完整备份") { section = "存储与备份" }
+        SettingsModeEntry("用量记录", "查看在线调用与用量") { section = "用量记录" }
+        Text("外观跟随系统 · 原音保存在本机", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp))
+        }
+        if (section == "用量记录") UsageCard()
+        if (section == "处理与整理") {
         OrganizeSettingsCard(preferences, onRebuildConversations)
-        SectionTitle("录音")
-        Surface(Modifier.fillMaxWidth().padding(top = 17.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+        SettingsModeEntry("查看处理进度", "查看每段录音的处理阶段，或重试未完成的任务") { onOpenRawRecordings() }
+        }
+        if (section == "录音设置") {
+        Surface(Modifier.fillMaxWidth().padding(top = 17.dp), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("录音服务", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                 Text(if (recordingStatus.isRecording) "正在记录" else "已停止", color = Green, fontSize = 13.sp)
             }
         }
         MarkerWindowSettings(preferences)
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
                 Text("识别语言", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text("新录音将按所选语言识别，已有转写保持原样", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
@@ -176,7 +191,7 @@ internal fun SettingsScreen(
                 Text("只影响 SenseVoice 的语言提示；Qwen3-ASR 与 FireRedASR2 会自动判断语言。", color = InkSoft, fontSize = 10.5.sp, modifier = Modifier.padding(top = 6.dp))
             }
         }
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("短录音过滤", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -213,7 +228,9 @@ internal fun SettingsScreen(
                 )
             }
         }
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+        }
+        if (section == "处理与整理") {
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column {
                 ToggleRow("仅充电时自动处理录音", chargeOnly) { value ->
                     chargeOnly = value; preferences.setChargeOnly(value)
@@ -231,7 +248,7 @@ internal fun SettingsScreen(
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("默认本地识别，不上传音频。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text("仅影响后台处理，不影响录音。", color = InkSoft, fontSize = 12.sp, modifier = Modifier.weight(1f))
                     HelpHint(
                         title = "仅充电时自动处理",
                         body = "包括人声检测、转写和自动 AI 总结。**关闭后，已等待的任务也可在未充电时继续**；开启不主动打断当前一轮，正在运行的旧任务若遇系统限制，下一轮按新设置执行。**手动 AI 总结不要求充电，录音不受影响**。\n\n**只有单独启用外部转文字并确认后才上传人声片段**；外部总结仅发送转写文字。",
@@ -241,8 +258,9 @@ internal fun SettingsScreen(
                 policyMessage?.let { Text(it, color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 13.dp)) }
             }
         }
-        SectionTitle("存储与录音")
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+        }
+        if (section == "存储与备份") {
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("存储占用", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -258,12 +276,12 @@ internal fun SettingsScreen(
                     StorageValue("预计还可记录", (available / bytesPerDay).toString(), "天", Modifier.weight(1f))
                 }
                 Box(Modifier.fillMaxWidth().padding(top = 14.dp).height(10.dp).clip(CircleShape).background(Color(0xFFE3E3DF))) {
-                    Box(Modifier.fillMaxWidth((used.toFloat() / (used + available).coerceAtLeast(1)).coerceIn(0f, 1f)).fillMaxSize().clip(CircleShape).background(Green))
+                    Box(Modifier.fillMaxWidth((used.toFloat() / (used + available).coerceAtLeast(1)).coerceIn(0f, 1f)).fillMaxSize().clip(CircleShape).background(ActionFill))
                 }
                 Text("连续录音约${formatModelSize(bytesPerDay)}/天，剩余${formatModelSize(available)}；模型和系统也占用存储。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = Color(0xFFFFFEFA), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
+        Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), color = CardSurface, border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
             Column(Modifier.padding(13.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("录音保留", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -272,7 +290,7 @@ internal fun SettingsScreen(
                         body = "转写完成后自动压缩录音，**超过保留期自动删除未压缩文件**；**文字和标记附近的录音不受影响**。选择「永久保留」则始终保留录音。\n\n超过保留期的段：整理完成的会自动压缩并清理，未完成的等转写完成后自动处理。",
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SonfolioPreferences.RETENTION_OPTIONS.forEach { days ->
                         FilterChip(selected = retentionDays == days, onClick = { retentionDays = days; preferences.setRetentionDays(days) },
                             label = { Text(if (days == 0) "永久保留" else "${days}天", fontSize = 11.sp) })
@@ -313,7 +331,7 @@ internal fun SettingsScreen(
         Surface(
             Modifier.fillMaxWidth().padding(top = 13.dp).clickable(onClick = onOpenRawRecordings),
             RoundedCornerShape(14.dp),
-            color = Color(0xFFFFFEFA),
+            color = CardSurface,
             border = androidx.compose.foundation.BorderStroke(1.dp, Line),
         ) {
             Row(Modifier.padding(horizontal = 13.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -325,10 +343,8 @@ internal fun SettingsScreen(
             }
         }
         com.gongfpp.sonfolio.recording.BackupSettingsCard()
-        Row(Modifier.padding(top = 17.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Security, contentDescription = null, tint = InkSoft, modifier = Modifier.size(19.dp))
-            Text("所有核心处理默认在本机完成", modifier = Modifier.padding(start = 8.dp), color = InkSoft, fontSize = 11.sp)
         }
+    }
     }
 }
 
@@ -372,7 +388,7 @@ internal fun RawRecordingsScreen(
     // 提前算出可清理数量：按钮上直接显示，避免「点了没反应」的困惑。
     var speechCandidates by remember(window) { mutableIntStateOf(-1) }
     var filteredCandidates by remember(window) { mutableIntStateOf(-1) }
-    LaunchedEffect(window.start, window.end, chunks.size) {
+    LaunchedEffect(window.start, window.end, chunks) {
         speechCandidates = withContext(Dispatchers.IO) { dao.getCleanupCandidates(window.start, window.end, true).size }
         filteredCandidates = withContext(Dispatchers.IO) { dao.getCleanupCandidates(window.start, window.end, false).size }
     }
@@ -526,10 +542,15 @@ internal fun RawRecordingsScreen(
                     }
                 }
             }
+            if (!selectionMode && displayedChunks.isNotEmpty()) {
+                item(key = "select-entry") {
+                    TextButton(enabled = !operationBusy, onClick = { selectionMode = true }) { Text("选择录音") }
+                }
+            }
             if (selectionMode) {
                 item(key = "selection-bar") {
                     val totalBytes = selection.sumOf { id -> displayedChunks.firstOrNull { it.id == id }?.displayBytes ?: 0L }
-                    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(13.dp), color = Green) {
+                    Surface(Modifier.fillMaxWidth().padding(top = 10.dp), RoundedCornerShape(13.dp), color = ActionFill) {
                         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("已选 ${selection.size} 段 · ${formatBytes(totalBytes)}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                             TextButton(enabled = !operationBusy && selection.isNotEmpty(), onClick = { cleanupIds = selection }) { Text("清理录音", color = Color.White) }
@@ -606,7 +627,7 @@ internal fun RawRecordingRow(
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("raw-audio-row").combinedClickable(enabled = enabled, onClick = onPlay, onLongClick = onLongClick, onLongClickLabel = "选择录音"),
         shape = RoundedCornerShape(13.dp),
-        color = if (checked) PaleGreen else Color(0xFFFFFEFA),
+        color = if (checked) PaleGreen else CardSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {

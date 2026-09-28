@@ -14,6 +14,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
@@ -44,13 +51,15 @@ import com.gongfpp.sonfolio.recording.RecordingFeedback
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-internal val Paper = Color(0xFFFBFAF6)
-internal val Ink = Color(0xFF17201C)
-internal val InkSoft = Color(0xFF626B65)
-internal val Line = Color(0xFFE6E5DE)
-internal val Green = Color(0xFF1E7046)
-internal val PaleGreen = Color(0xFFE3F0DE)
-internal val PaleGreenStrong = Color(0xFFDCEFD9)
+internal val Paper: Color @Composable get() = MaterialTheme.colorScheme.background
+internal val Ink: Color @Composable get() = MaterialTheme.colorScheme.onSurface
+internal val InkSoft: Color @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+internal val Line: Color @Composable get() = MaterialTheme.colorScheme.outlineVariant
+internal val Green: Color @Composable get() = MaterialTheme.colorScheme.primary
+internal val PaleGreen: Color @Composable get() = MaterialTheme.colorScheme.secondaryContainer
+internal val PaleGreenStrong: Color @Composable get() = MaterialTheme.colorScheme.primaryContainer
+internal val CardSurface: Color @Composable get() = MaterialTheme.colorScheme.surface
+internal val ActionFill: Color @Composable get() = MaterialTheme.colorScheme.inversePrimary
 internal val Amber = Color(0xFFDDA50B)
 internal val AmberPale = Color(0xFFFFF3CB)
 
@@ -70,18 +79,27 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SonfolioTheme(content: @Composable () -> Unit) {
+internal fun SonfolioTheme(darkTheme: Boolean = androidx.compose.foundation.isSystemInDarkTheme(), content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Green,
+        colorScheme = if (darkTheme) androidx.compose.material3.darkColorScheme(
+            primary = Color(0xFF9ED7B2), onPrimary = Color(0xFF123922),
+            primaryContainer = Color(0xFF284F36), onPrimaryContainer = Color(0xFFDAEEDC),
+            secondaryContainer = Color(0xFF293D2D), onSecondaryContainer = Color(0xFFE8EEE3),
+            background = Color(0xFF162019), surface = Color(0xFF1D2A21),
+            onBackground = Color(0xFFE8EEE3), onSurface = Color(0xFFE8EEE3),
+            onSurfaceVariant = Color(0xFFABB8A9), outline = Color(0xFF6F8273),
+            outlineVariant = Color(0xFF344136), inversePrimary = Color(0xFF346C4E),
+        ) else lightColorScheme(
+            primary = Color(0xFF226548),
             onPrimary = Color.White,
-            secondaryContainer = PaleGreen,
-            onSecondaryContainer = Ink,
-            background = Paper,
+            primaryContainer = Color(0xFFDCEFD9), onPrimaryContainer = Color(0xFF17261F),
+            secondaryContainer = Color(0xFFEAF1E5),
+            onSecondaryContainer = Color(0xFF17261F),
+            background = Color(0xFFF8F8F2),
             surface = Color(0xFFFFFEFA),
-            onBackground = Ink,
-            onSurface = Ink,
-            outline = Line,
+            onBackground = Color(0xFF17261F), onSurface = Color(0xFF17261F),
+            onSurfaceVariant = Color(0xFF657268), outline = Color(0xFF78857A),
+            outlineVariant = Color(0xFFE2E7DE), inversePrimary = Color(0xFF226548),
         ),
         content = content,
     )
@@ -105,6 +123,7 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
     val recordingGaps by viewModel.recordingGaps.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val application = context.applicationContext as SonfolioApplication
+    val markerState by com.gongfpp.sonfolio.recording.RecordingController.markerState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         viewModel.recordingFeedback.collectLatest { feedback ->
             val message = when (feedback) {
@@ -160,6 +179,22 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         containerColor = Paper,
         bottomBar = {
             if (isMainScreen) {
+                Column {
+                if (recordingStatus.isRecording && screen !is AppScreen.Today) {
+                    androidx.compose.material3.Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), color = ActionFill, shape = RoundedCornerShape(16.dp)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.TextButton(onClick = { navigation = navigation.selectTab(AppScreen.Today) }, modifier = Modifier.weight(1f)) {
+                                Text("正在记录 · 返回声迹", color = Color.White, fontSize = 13.sp)
+                            }
+                            val minutes = application.preferences.markerWindows.first()
+                            androidx.compose.material3.FilledTonalButton(
+                                enabled = markerState !is com.gongfpp.sonfolio.recording.MarkerSaveState.Saving,
+                                onClick = { viewModel.markCurrentMoment(minutes) },
+                                colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(containerColor = AmberPale, contentColor = Color(0xFF694E00)),
+                            ) { Text(if (markerState is com.gongfpp.sonfolio.recording.MarkerSaveState.Saving) "保存中…" else "★ 标记（${minutes}分）", fontSize = 12.sp) }
+                        }
+                    }
+                }
                 NavigationBar(containerColor = Paper) {
                     NavigationBarItem(
                         selected = screen is AppScreen.Today,
@@ -179,6 +214,7 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                         icon = { Icon(Icons.Default.Settings, contentDescription = "设置") },
                         label = { Text("设置") },
                     )
+                }
                 }
             }
         },
@@ -204,7 +240,7 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                         onOpenRawRecordings = { openScreen(AppScreen.RawRecordings()) },
                         onRebuildConversations = viewModel::rebuildConversations,
                     )
-                    is AppScreen.Daily -> DailyScreen(viewModel = viewModel, initialDate = current.date, onBack = goBack)
+                    is AppScreen.Daily -> DailyScreen(viewModel = viewModel, initialDate = current.date, onBack = goBack, onOpenConversation = { openScreen(AppScreen.Conversation(id = it)) })
                     is AppScreen.RawRecordings -> RawRecordingsScreen(
                         viewModel = viewModel,
                         date = current.date,
@@ -230,4 +266,3 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         }
     }
 }
-
