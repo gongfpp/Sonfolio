@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,6 +54,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -162,7 +162,9 @@ internal fun TodayScreen(
                 recorded = recordedDates,
                 organized = organizedDates,
                 date = date,
+                today = today,
                 day = day,
+                onSelect = selectDate,
                 onOpenCalendar = { calendarOpen = true },
                 onOpenRaw = { onOpen(AppScreen.RawRecordings(date.toString())) },
             )
@@ -285,7 +287,9 @@ internal fun RecentHeatPanel(
     recorded: Set<LocalDate>,
     organized: Set<LocalDate>,
     date: LocalDate,
+    today: LocalDate,
     day: DayTimeline,
+    onSelect: (LocalDate) -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenRaw: () -> Unit,
 ) {
@@ -302,29 +306,34 @@ internal fun RecentHeatPanel(
                 Text("最近两周", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 TextButton(onClick = onOpenCalendar) { Text("日历 ›", color = Green, fontSize = 12.sp) }
             }
-            // 参照打卡类日历：周一到周日对齐，格子里显示日期数字，用颜色表示记录状态，今天加高亮环。
-            val cells = remember(days) {
-                val padded = ArrayList<LocalDate?>()
-                repeat(days.first().dayOfWeek.value - 1) { padded.add(null) }
-                padded.addAll(days)
-                padded
-            }
+            // 周一到周日对齐的两周热力网格。首尾都补齐到整行：否则最后一行格子少时会被 weight
+            // 拉伸，只有一格时会占满整行宽，看起来就是一个“巨大的格子”。
+            val weeks = remember(days) { weekAlignedWeeks(days) }
             Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 listOf("一", "二", "三", "四", "五", "六", "日").forEach { label ->
-                    Text(label, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = InkSoft, fontSize = 10.sp)
+                    Text(label, modifier = Modifier.weight(1f), textAlign = TextAlign.Center, color = InkSoft, fontSize = 10.sp)
                 }
             }
-            cells.chunked(7).forEach { week ->
+            weeks.forEach { week ->
                 Row(Modifier.fillMaxWidth().padding(top = 3.dp)) {
                     week.forEach { cell ->
-                        Box(Modifier.weight(1f).aspectRatio(1.05f), contentAlignment = Alignment.Center) {
-                            if (cell != null) CalendarDay(cell, cell in recorded, cell in organized, cell == date)
+                        Box(Modifier.weight(1f).height(30.dp).padding(horizontal = 1.dp), contentAlignment = Alignment.Center) {
+                            if (cell != null) {
+                                CalendarDay(
+                                    day = cell,
+                                    recorded = cell in recorded,
+                                    organized = cell in organized,
+                                    selected = cell == date,
+                                    isToday = cell == today,
+                                    onClick = { onSelect(cell) },
+                                )
+                            }
                         }
                     }
                 }
             }
             Text(
-                "浅绿 = 有录音 · 深绿 = 已整理 · 近两周 ${days.count { it in recorded || it in organized }} 天有记录",
+                "深绿 = 已整理 · 浅绿 = 有录音 · 琥珀框 = 选中 · 绿框 = 今天 · 近两周 ${days.count { it in recorded || it in organized }} 天有记录",
                 modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 10.5.sp,
             )
             if (day.totalChunks > 0) {
@@ -641,21 +650,50 @@ internal fun TimelineCard(item: ConversationPreview, onClick: () -> Unit) {
 }
 
 
-/** 迷你日历里的单日格子：有录音浅绿、已整理深绿、今天加高亮环。 */
+/** 迷你日历单日格子：状态用底色区分，选中加琥珀框、今天加绿框；点击可直接切换日期。 */
 @Composable
-private fun CalendarDay(day: LocalDate, recorded: Boolean, organized: Boolean, isToday: Boolean) {
+private fun CalendarDay(
+    day: LocalDate,
+    recorded: Boolean,
+    organized: Boolean,
+    selected: Boolean,
+    isToday: Boolean,
+    onClick: () -> Unit,
+) {
     val background = when {
         organized -> Green
         recorded -> PaleGreenStrong
-        else -> Color.Transparent
+        else -> Color(0xFFEDEDE7)
     }
     val foreground = when {
         organized -> Color.White
-        recorded -> Color(0xFF1E7046)
+        recorded -> Green
         else -> InkSoft
     }
-    val base = Modifier.fillMaxSize().padding(2.dp).clip(RoundedCornerShape(8.dp)).background(background)
-    Box(if (isToday) base.border(1.dp, Amber, RoundedCornerShape(8.dp)) else base, contentAlignment = Alignment.Center) {
-        Text(day.dayOfMonth.toString(), color = foreground, fontSize = 11.sp, fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
+    val shape = RoundedCornerShape(8.dp)
+    val base = Modifier.fillMaxSize().clip(shape).background(background).clickable(onClick = onClick)
+    val styled = when {
+        selected -> base.border(2.dp, Amber, shape)
+        isToday -> base.border(1.5.dp, Green, shape)
+        else -> base
     }
+    Box(styled, contentAlignment = Alignment.Center) {
+        Text(
+            day.dayOfMonth.toString(),
+            color = foreground,
+            fontSize = 11.sp,
+            fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
+}
+
+/** 把连续的若干天按「周一到周日」对齐并补齐成整行，返回 7 列网格（空位为 null）。
+ * 补齐是为了配合 Row + weight 的等宽布局：最后一行不足 7 格时，格子会被拉伸变宽。 */
+internal fun weekAlignedWeeks(days: List<LocalDate>): List<List<LocalDate?>> {
+    if (days.isEmpty()) return emptyList()
+    val padded = ArrayList<LocalDate?>()
+    repeat(days.first().dayOfWeek.value - 1) { padded.add(null) }
+    padded.addAll(days)
+    while (padded.size % 7 != 0) padded.add(null)
+    return padded.chunked(7)
 }
