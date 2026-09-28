@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Read-only verification of the installed APK and pre-upgrade original WAV manifest.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -20,11 +20,12 @@ const parse = text => new Map(text.trim().split('\n').filter(Boolean).map(line =
   if (!match) throw new Error('原音哈希清单格式错误');
   return [match[2].trim(), match[1]];
 }));
-const before = parse(readFileSync(join(backupDirectory, 'wav-sha256.txt'), 'utf8'));
-const after = parse(run(['shell', 'run-as', pkg, 'sh', '-c', "'find files/recordings -type f -name \"*.wav\" -exec sha256sum {} \\;'" ]));
+const manifest = existsSync(join(backupDirectory, 'audio-sha256.txt')) ? 'audio-sha256.txt' : 'wav-sha256.txt';
+const before = parse(readFileSync(join(backupDirectory, manifest), 'utf8'));
+const after = parse(run(['shell', `run-as ${pkg} sh -c 'if [ -d files/recordings ]; then find files/recordings -type f -exec sha256sum {} + || exit 1; fi'`]));
 const missing = [...before.keys()].filter(path => !after.has(path));
 const changed = [...before].filter(([path, hash]) => after.has(path) && after.get(path) !== hash);
-console.log(`原有 WAV：${before.size} 份；缺失 ${missing.length} 份；内容变化 ${changed.length} 份；新增 ${[...after.keys()].filter(path => !before.has(path)).length} 份`);
+console.log(`原有音频（${manifest === 'audio-sha256.txt' ? '全部格式' : '旧快照仅 WAV'}）：${before.size} 份；缺失 ${missing.length} 份；内容变化 ${changed.length} 份；新增 ${[...after.keys()].filter(path => !before.has(path)).length} 份`);
 if (missing.length || changed.length) throw new Error('原音完整性检查未通过，不输出私人文件名');
 const remotePath = run(['shell', 'pm', 'path', pkg]).trim().split('\n')[0]?.replace(/^package:/, '');
 if (!remotePath?.match(/^\/data\/app\/[A-Za-z0-9_./+=-]+\.apk$/)) throw new Error('无法核对主 APK 路径');

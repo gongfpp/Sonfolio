@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 const adb = process.env.ADB ?? 'adb';
 const serial = process.argv[2];
-if (!serial) throw new Error('请指定 adb 设备序列号。');
+if (!serial || !/^[\w.-]+:\d+$/.test(serial)) throw new Error('请指定 TCP ADB 真机序列号。');
 const pkg = 'com.gongfpp.sonfolio';
 const run = args => {
   const result = spawnSync(adb, ['-s', serial, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
@@ -15,6 +15,7 @@ const run = args => {
   return result.stdout;
 };
 const services = run(['shell', 'dumpsys', 'activity', 'services', pkg]);
+if (run(['get-state']).trim() !== 'device' || run(['shell', 'getprop', 'ro.kernel.qemu']).trim() === '1') throw new Error('仅允许已连接的 TCP 真机');
 if (/recording\.RecordingService/.test(services)) throw new Error('存在录音服务，拒绝停止应用或迁移；请先由用户结束录音。');
 run(['shell', 'am', 'force-stop', pkg]);
 const directory = mkdtempSync(join(tmpdir(), 'sonfolio-pre-migration-'));
@@ -25,8 +26,9 @@ try {
     { stdio: ['ignore', fd, 'pipe'] });
   if (result.status !== 0) throw new Error('元数据备份失败。');
 } finally { closeSync(fd); }
-const hashes = run(['shell', 'run-as', pkg, 'sh', '-c', "'find files/recordings -type f -name \"*.wav\" -exec sha256sum {} \\;'" ]);
-writeFileSync(join(directory, 'wav-sha256.txt'), hashes, { mode: 0o600, flag: 'wx' });
+const hashes = run(['shell', `run-as ${pkg} sh -c 'if [ -d files/recordings ]; then find files/recordings -type f -exec sha256sum {} + || exit 1; fi'`]);
+if (hashes.trim().split('\n').filter(Boolean).some(line => !/^[0-9a-f]{64}\s+files\/recordings\//.test(line))) throw new Error('原音哈希读取失败，停止升级');
+writeFileSync(join(directory, 'audio-sha256.txt'), hashes, { mode: 0o600, flag: 'wx' });
 const unpack = spawnSync('tar', ['-xf', join(directory, 'metadata.tar'), '-C', join(directory, 'metadata')]);
 if (unpack.status !== 0) throw new Error('无法读取备份包。');
 const check = spawnSync('sqlite3', [join(directory, 'metadata/databases/sonfolio.db'),

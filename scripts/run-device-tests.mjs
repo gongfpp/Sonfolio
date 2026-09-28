@@ -31,18 +31,31 @@ function personalSnapshot() {
     throw new Error('个人主应用正在录音，请先停止；未启动任何测试');
   }
   const text = command(['shell', `run-as ${root} sh -c 'if [ -d files/recordings ]; then find files/recordings -type f -exec sha256sum {} + || exit 1; else echo NO_RECORDINGS; fi; echo SNAPSHOT_END'`]);
-  if (!text.trim() || /Permission denied|not debuggable|No such package|sha256sum:/.test(text)) throw new Error('无法核对主应用录音，已阻塞测试');
+  if (!text.trim().endsWith('SNAPSHOT_END') || /Permission denied|not debuggable|No such package|sha256sum:/.test(text)) throw new Error('无法核对主应用录音，已阻塞测试');
+  if (text.trim().split('\n').some(line => line !== 'SNAPSHOT_END' && line !== 'NO_RECORDINGS' && !/^[0-9a-f]{64}\s+files\/recordings\//.test(line))) throw new Error('原音哈希清单不完整，已阻塞测试');
   return text.trim().split('\n').sort().join('\n');
 }
 const before = personalSnapshot();
 const nonUi = ['MigrationIntegrationTest', 'RemoteAsrCheckpointTest', 'SearchRepositoryIntegrationTest', 'PipelineIntegrationTest', 'BackupIntegrationTest', 'RawCleanupIntegrationTest', 'ConversationEditIntegrationTest', 'SummaryIntegrationTest', 'RecordingZoneIntegrationTest', 'RecordingGapIntegrationTest', 'AudioCompressionIntegrationTest', 'LocalSummaryRuntimeTest', 'Qwen3AsrZhEnQualityTest', 'FireRedAsrZhEnQualityTest'];
 if (flags.includes('--ui') && !/mWakefulness=Awake/.test(command(['shell', 'dumpsys', 'power']))) throw new Error('手机未亮屏，UI 验收阻塞，请解锁');
-const classes = [...nonUi, ...(flags.includes('--recording') ? ['RecordingReliabilityTest'] : []), ...(flags.includes('--ui') ? ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest'] : []), ...(flags.includes('--quality') ? ['LocalSummaryQualityTest'] : [])];
+if (flags.includes('--ui')) {
+  const policy = command(['shell', 'dumpsys', 'window', 'policy']);
+  const showing = policy.match(/KeyguardServiceDelegate[\s\S]*?\bshowing=(true|false)/)?.[1];
+  if (showing === 'true') throw new Error('手机仍在锁屏，UI 验收阻塞，请解锁');
+  if (showing !== 'false') throw new Error('无法确认手机是否已解锁，未启动 UI 测试');
+}
+const uiClasses = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest'];
+const requested = flags.filter(flag => flag.startsWith('--class=')).map(flag => flag.slice(8));
+if (requested.some(name => ![...nonUi, ...uiClasses, 'RecordingReliabilityTest', 'LocalSummaryQualityTest'].includes(name))) throw new Error('未知测试类');
+if (requested.some(name => uiClasses.includes(name)) && !flags.includes('--ui')) throw new Error('界面测试需要 --ui，不能绕过亮屏检查');
+if (requested.includes('RecordingReliabilityTest') && !flags.includes('--recording')) throw new Error('录音测试需要显式 --recording');
+if (requested.includes('LocalSummaryQualityTest') && !flags.includes('--quality')) throw new Error('长模型测试需要显式 --quality');
+const classes = requested.length ? requested : [...nonUi, ...(flags.includes('--recording') ? ['RecordingReliabilityTest'] : []), ...(flags.includes('--ui') ? uiClasses : []), ...(flags.includes('--quality') ? ['LocalSummaryQualityTest'] : [])];
 let skipped = 0;
 for (const name of classes) {
   let output;
   try {
-    output = command(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', `${namespace}.${name}`, runner]);
+    output = command(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', `${namespace}.${name}`, ...(name === 'PublicScreenshotsTest' && flags.includes('--screenshots') ? ['-e', 'publicScreenshots', 'true'] : []), runner]);
   } finally {
     if (personalSnapshot() !== before) throw new Error('个人录音文件或哈希发生变化，立即停止；不得继续运行套件');
   }

@@ -38,6 +38,8 @@ jobs:
         run: node scripts/release-check.mjs --source-only
       - name: Device-test safety scan
         run: node scripts/check-device-test-safety.mjs
+      - name: Device-test guard fixtures (no device)
+        run: node --test scripts/tests/device-test-guard.test.mjs
       - name: Unit tests, lint and unsigned build
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleQa :app:assembleQaAndroidTest :app:assembleRelease
