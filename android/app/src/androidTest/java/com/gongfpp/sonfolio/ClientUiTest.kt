@@ -28,12 +28,12 @@ class ClientUiTest {
         // 空关键词现在按最新对话列出（不再提示“输入文字后搜索”）。
         ui.onNode(hasText("场对话", substring = true)).assertExists()
         ui.onNodeWithText("设置").performClick()
-        ui.onNodeWithText("录音与存储").assertIsDisplayed()
+        ui.onNodeWithText("转文字方式").assertIsDisplayed()
         ui.onNodeWithText("原始录音").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.onNodeWithText("原始录音").assertIsDisplayed()
         ui.onNodeWithContentDescription("返回").performSemanticsAction(SemanticsActions.OnClick) { it() }
         // Returning preserves the settings scroll position, so the top heading may be offscreen.
-        ui.onNodeWithText("录音与存储").assertExists()
+        ui.onNodeWithText("转文字方式").assertExists()
     }
 
     @Test fun searchQueryAndFilterSurviveTabSwitchAndActivityRecreation() {
@@ -55,8 +55,8 @@ class ClientUiTest {
         val label = date.format(DateTimeFormatter.ofPattern("yyyy年M月d日"))
         ui.onNodeWithTag("timeline-list").performScrollToNode(hasContentDescription("前一天"))
         ui.onNodeWithContentDescription("前一天").performClick()
-        ui.onNodeWithTag("timeline-list").performScrollToNode(hasText("查看当日原始录音", substring = true))
-        ui.onNode(hasText("查看当日原始录音", substring = true)).performClick()
+        ui.onNodeWithTag("timeline-list").performScrollToNode(hasText("原始录音（", substring = true))
+        ui.onNode(hasText("原始录音（", substring = true)).performClick()
         ui.onNodeWithText("查看全部录音").assertIsDisplayed()
         ui.onNodeWithText("查看全部录音").performClick()
         ui.onNodeWithText("仅看 $date").assertIsDisplayed()

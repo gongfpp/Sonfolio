@@ -15,7 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** The download lives beside the mode that needs it, not in a separate settings section. */
-@Composable internal fun ModelDownloadControl(model: ModelArtifact) {
+@Composable internal fun ModelDownloadControl(model: ModelArtifact, allowActivation: Boolean = true) {
     val context = LocalContext.current
     val app = context.applicationContext as com.gongfpp.sonfolio.SonfolioApplication
     val summary by app.summarySettings.config.collectAsStateWithLifecycle()
@@ -43,13 +43,13 @@ import kotlinx.coroutines.withContext
                 title = "模型下载与校验",
                 body = "模型统一保存在应用私有目录 files/models/，卸载应用会移除。\n\n" +
                     "下载优先使用大陆可访问的镜像，镜像失败才回退上游；失败会报错并保留已下载部分，重新下载可续传。\n\n" +
-                    "每个文件都使用 SHA-256 校验，校验通过后才会启用；下载过程不上传录音。",
+                    "每个文件都使用 SHA-256 校验；校验通过表示文件就绪，不会自动切换处理方式。下载过程不上传录音。",
             )
         }
         Text(
             when {
                 installed == null -> "正在检查本地模型…"
-                installed == true -> if (model.kind == ModelKind.SUMMARY) "总结模型已下载 · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.LOCAL) "已启用在手机上总结" else "点击下方按钮启用"}" else "已下载，可离线转写"
+                installed == true -> if (model.kind == ModelKind.SUMMARY) "文件已就绪 · ${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.LOCAL && app.summarySettings.selectedCatalogModelId(summary) == model.id) "此模型已生效" else "尚未启用此模型"}" else "文件已就绪 · 保存转文字设置后生效"
                 info?.state == WorkInfo.State.RUNNING -> info.progress.getString("message") ?: "正在准备下载"
                 running -> if (info?.constraints?.requiredNetworkType == NetworkType.UNMETERED) "等待非计费网络；手机热点可能仍被系统视为计费网络" else "等待网络与系统调度"
                 info?.state == WorkInfo.State.CANCELLED -> "已取消，重新下载会尝试续传"
@@ -62,12 +62,12 @@ import kotlinx.coroutines.withContext
             TextButton(onClick = { manager.cancelUniqueWork("download-model:${model.id}") }) { Text("取消下载") }
         } else if (installed == false) {
             OutlinedButton(onClick = { acceptedLicense = false; confirm = model }) { Text(if (model.kind == ModelKind.SUMMARY) "下载总结模型" else "下载语音识别模型") }
-        } else if (installed == true && model.kind == ModelKind.SUMMARY && app.summarySettings.selectedCatalogModelId(summary) != model.id) {
+        } else if (allowActivation && installed == true && model.kind == ModelKind.SUMMARY && (summary.mode != com.gongfpp.sonfolio.summary.SummaryMode.LOCAL || app.summarySettings.selectedCatalogModelId(summary) != model.id)) {
             OutlinedButton(onClick = {
                 runCatching { app.summarySettings.useDownloadedModel(summary.revision, model.id) }
                     .onSuccess { message = "已启用在手机上总结；自动总结默认关闭，可在下方设置" }
                     .onFailure { message = "启用失败，请重试" }
-            }) { Text("使用这个总结模型") }
+            }) { Text("保存并启用此模型") }
         }
         message?.let { Text(it, fontSize = 11.sp) }
     }
@@ -75,7 +75,7 @@ import kotlinx.coroutines.withContext
         title = { Text("下载 ${model.bytes / 1_000_000} MB 模型？") },
         text = { Column {
             Text("请预留模型空间及至少 512 MB 录音空间。总结模型用于文字总结，语音识别模型用于转写，互不替代。")
-            Text("下载完成后即可离线生成总结；若期间切换了总结配置，不会覆盖你的新选择。", fontSize = 12.sp)
+            Text("下载与校验完成后文件就绪，仍需保存并启用；下载不会覆盖当前处理方式。", fontSize = 12.sp)
             model.license?.let { license ->
                 Text(license.notice, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                 TextButton(onClick = { runCatching { uriHandler.openUri(license.url) } }) { Text("查看独立模型许可 ↗") }

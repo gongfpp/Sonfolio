@@ -91,6 +91,36 @@ internal fun SettingsScreen(
     var retentionCustom by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val app = context.applicationContext as SonfolioApplication
+    val activeTranscription by app.transcriptionSettings.config.collectAsStateWithLifecycle()
+    val activeSummary by app.summarySettings.config.collectAsStateWithLifecycle()
+    var editor by rememberSaveable { mutableStateOf<String?>(null) }
+    var editorDirty by remember { mutableStateOf(false) }
+    var editorBusy by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    fun closeEditor() {
+        if (!editorBusy) { if (editorDirty) confirmDiscard = true else editor = null }
+    }
+    editor?.let { page ->
+        androidx.compose.ui.window.Dialog(onDismissRequest = ::closeEditor,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(enabled = !editorBusy, onClick = ::closeEditor) { Text("返回设置") }
+                        Text(if (editorDirty) "未保存更改" else "当前配置已保存", color = InkSoft, fontSize = 12.sp)
+                    }
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(18.dp)) {
+                        if (page == "transcription") com.gongfpp.sonfolio.processing.TranscriptionSettingsCard({ editorDirty = it }, { editorBusy = it })
+                        else com.gongfpp.sonfolio.summary.SummarySettingsCard({ editorDirty = it }, { editorBusy = it })
+                    }
+                }
+            }
+        }
+    }
+    if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("放弃尚未保存的更改？") },
+        text = { Text("已经生效的配置不会改变。下载完成的模型文件也会保留。") },
+        confirmButton = { TextButton(onClick = { confirmDiscard = false; editorDirty = false; editor = null }) { Text("放弃更改") } },
+        dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } })
     val used by remember { app.database.recordingDao().observeStorageBytes() }.collectAsStateWithLifecycle(initialValue = 0L)
     val availableState = remember { mutableStateOf(0L) }
     LaunchedEffect(used) {
@@ -102,11 +132,15 @@ internal fun SettingsScreen(
     var minimumSpeechSeconds by remember { mutableStateOf(preferences.minimumSpeechSeconds.toFloat()) }
     var minimumTextCharacters by remember { mutableStateOf(preferences.minimumTextCharacters.toFloat()) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp)) {
-        Text("录音与存储", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
         SectionTitle("识别与总结")
-        com.gongfpp.sonfolio.processing.TranscriptionSettingsCard()
-        com.gongfpp.sonfolio.summary.SummarySettingsCard()
+        SettingsModeEntry("转文字方式", "已生效：${activeTranscription.mode.label} · ${if (activeTranscription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) activeTranscription.provider.label else activeTranscription.localEngine.displayName}") {
+            editorDirty = false; editorBusy = false; editor = "transcription"
+        }
+        SettingsModeEntry("总结方式", "已生效：${activeSummary.mode.label}${if (activeSummary.mode == com.gongfpp.sonfolio.summary.SummaryMode.REMOTE) " · ${com.gongfpp.sonfolio.summary.SummaryProvider.fromEndpoint(activeSummary.endpoint).label}" else ""}") {
+            editorDirty = false; editorBusy = false; editor = "summary"
+        }
         UsageCard()
         SectionTitle("整理")
         OrganizeSettingsCard(preferences, onRebuildConversations)
@@ -373,8 +407,8 @@ internal fun RawRecordingsScreen(
         operationBusy = true
         scope.launch {
             try { withContext(Dispatchers.IO) { com.gongfpp.sonfolio.processing.AudioFileAccess.mutex.withLock {
-                val source = File(sourcePath)
-                require(source.exists()) { "原始录音文件不存在" }
+                val source = requireNotNull(com.gongfpp.sonfolio.recording.AudioResource.managedFile(File(context.filesDir, "recordings"), sourcePath)) { "录音文件不存在" }
+                require(source.isFile) { "原始录音文件不存在" }
                 FileInputStream(source).use { input ->
                     context.contentResolver.openOutputStream(uri)?.use { output ->
                         input.copyTo(output)

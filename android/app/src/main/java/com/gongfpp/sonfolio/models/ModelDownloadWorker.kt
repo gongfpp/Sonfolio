@@ -45,7 +45,7 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
                 setProgress(workDataOf("bytes" to completed, "message" to "已下载 ${target.name}"))
             }
             val app = applicationContext as SonfolioApplication
-            if (model.kind == ModelKind.SUMMARY) app.summarySettings.useDownloadedModel(inputData.getString("activate-revision"), model.id)
+            // Download/verification never changes the active mode or chosen model.
             if (model.kind == ModelKind.SPEECH) app.recordingRepository.enqueuePendingAsr()
             Result.success(workDataOf("message" to "下载与 SHA-256 校验完成"))
         } catch (error: CancellationException) { throw error }

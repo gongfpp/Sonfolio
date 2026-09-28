@@ -28,7 +28,7 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
         automatic = prefs.getBoolean("automatic", false), revision = prefs.getString("revision", "initial").orEmpty(),
     )
 
-    @Synchronized fun save(mode: SummaryMode, endpoint: String, model: String, newKey: String, automatic: Boolean, consent: Boolean) {
+    @Synchronized fun save(mode: SummaryMode, endpoint: String, model: String, newKey: String, automatic: Boolean, consent: Boolean, localModelId: String? = null) {
         val old = read()
         val url = if (mode == SummaryMode.REMOTE) validateSummaryEndpoint(endpoint) else endpoint.trim()
         if (mode == SummaryMode.REMOTE) {
@@ -36,10 +36,15 @@ class SummarySettingsStore(private val context: Context, name: String = "summary
             require(model.trim().isNotEmpty() && model.length <= 160 && model.none { it.isISOControl() }) { "请填写服务支持的模型名称" }
             require(newKey.isNotBlank() || (old.hasKey && old.endpoint == url)) { "新接口需要重新填写 API Key" }
         }
-        if (mode == SummaryMode.LOCAL) require(modelFile(old)?.isFile == true) { "请先在模型下载中下载 GGUF 本地模型" }
+        val selectedModel = if (mode == SummaryMode.LOCAL && localModelId != null) {
+            requireNotNull(com.gongfpp.sonfolio.models.ModelCatalog.summaryById(localModelId)) { "未知总结模型" }
+        } else null
+        if (selectedModel != null) require(com.gongfpp.sonfolio.models.ModelCatalog.installed(context.filesDir, selectedModel)) { "请先下载并校验所选总结模型" }
+        else if (mode == SummaryMode.LOCAL) require(modelFile(old)?.isFile == true) { "请先在模型下载中下载 GGUF 本地模型" }
         require(newKey.length <= 4096 && newKey.trim().all { it.code in 33..126 }) { "API Key 只能包含可见英文字母、数字及符号，不能包含空白或控制字符" }
         val edit = prefs.edit().putString("mode", mode.name).putString("endpoint", url).putString("model", model.trim())
             .putBoolean("automatic", automatic && mode != SummaryMode.BASIC).putString("revision", UUID.randomUUID().toString())
+        if (selectedModel != null) edit.putString("local-file", CATALOG_PREFIX + selectedModel.id).putString("local-label", selectedModel.label)
         // 改服务地址不继承旧服务密钥，避免发送到错误服务。
         if (old.endpoint != url) edit.remove("secret")
         if (newKey.isNotBlank()) edit.putString("secret", encrypt(newKey.trim()))

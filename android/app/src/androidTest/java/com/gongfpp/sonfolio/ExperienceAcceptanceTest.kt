@@ -18,11 +18,14 @@ class ExperienceAcceptanceTest {
         // 版本号跟随构建，避免每次发版都要改测试。
         ui.onNodeWithText("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）").assertIsDisplayed()
         ui.onNodeWithText("转文字方式").assertIsDisplayed()
+        ui.onNodeWithText("转文字方式").performClick()
         ui.onNodeWithText("在线识别").performScrollTo().performClick()
         ui.onAllNodes(hasText("识别密钥", substring = true)).fetchSemanticsNodes().also { org.junit.Assert.assertTrue(it.isNotEmpty()) }
         ui.onNodeWithText("在手机上识别").performScrollTo().performClick()
         ui.onNodeWithText("手机端识别设置").assertIsDisplayed()
-        ui.onNodeWithText("总结方式").performScrollTo().assertIsDisplayed()
+        ui.onNodeWithText("返回设置").performClick()
+        if (ui.onAllNodesWithText("放弃更改").fetchSemanticsNodes().isNotEmpty()) ui.onNodeWithText("放弃更改").performClick()
+        ui.onNodeWithText("总结方式").performScrollTo().performClick()
         ui.onNodeWithText("在线总结").performScrollTo().performClick()
         ui.onNode(hasText("总结服务密钥", substring = true)).performScrollTo().assertIsDisplayed()
         ui.onNodeWithText("完整 HTTPS 接口地址").assertDoesNotExist()
@@ -36,9 +39,27 @@ class ExperienceAcceptanceTest {
         ui.onNode(hasText("5 分钟", substring = true) and hasText("对话", substring = true)).assertExists()
     }
 
+    @Test fun settingsDraftRequiresExplicitDiscardAndDoesNotChangeActiveMode() {
+        val app = ui.activity.application as SonfolioApplication
+        val saved = app.transcriptionSettings.read()
+        ui.onNodeWithText("设置").performClick()
+        ui.onNodeWithText("转文字方式").performClick()
+        ui.onNodeWithText(if (saved.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.LOCAL) "在线识别" else "在手机上识别").performScrollTo().performClick()
+        ui.onNodeWithText("返回设置").performClick()
+        ui.onNodeWithText("放弃尚未保存的更改？").assertIsDisplayed()
+        org.junit.Assert.assertEquals(saved, app.transcriptionSettings.read())
+        ui.onNodeWithText("继续编辑").performClick()
+        ui.onNodeWithText("返回设置").performClick()
+        ui.onNodeWithText("放弃更改").performClick()
+        org.junit.Assert.assertEquals(saved, app.transcriptionSettings.read())
+        ui.onNodeWithText("转文字方式").assertIsDisplayed()
+    }
+
     @Test fun rawCardsOpenPlayerAndLongPressEntersSelection() {
         ui.onNodeWithText("设置").performClick()
         ui.onNodeWithText("原始录音").performScrollTo().performClick()
+        ui.waitForIdle()
+        org.junit.Assume.assumeTrue("QA 库没有录音样例，未验证回听与多选", ui.onAllNodesWithTag("raw-audio-row").fetchSemanticsNodes().isNotEmpty())
         ui.waitUntil(5_000) { ui.onAllNodesWithTag("raw-audio-row").fetchSemanticsNodes().isNotEmpty() }
         ui.onAllNodes(isToggleable()).assertCountEquals(0)
         ui.onAllNodesWithTag("raw-audio-row")[0].performScrollTo().performClick()

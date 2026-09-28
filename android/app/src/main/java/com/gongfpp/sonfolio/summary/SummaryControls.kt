@@ -30,11 +30,10 @@ import java.io.File
 private const val SAVED_SECRET_MASK = "*****"
 
 @Composable
-internal fun SummarySettingsCard() {
+internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyChange: (Boolean) -> Unit = {}) {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.summarySettings.config.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableStateOf(saved.mode) }
-    LaunchedEffect(saved.mode) { mode = saved.mode }
     var endpoint by rememberSaveable { mutableStateOf(saved.endpoint) }
     var model by rememberSaveable { mutableStateOf(saved.model) }
     var provider by rememberSaveable { mutableStateOf(SummaryProvider.fromEndpoint(saved.endpoint)) }
@@ -56,6 +55,13 @@ internal fun SummarySettingsCard() {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    var selectedSummaryId by rememberSaveable { mutableStateOf(app.summarySettings.selectedCatalogModelId(saved)) }
+    val dirty = mode != saved.mode || automatic != saved.automatic || (keyTouched && apiKey.isNotBlank()) ||
+        (mode == SummaryMode.REMOTE && (endpoint != saved.endpoint || model != saved.model)) ||
+        (mode == SummaryMode.LOCAL && selectedSummaryId != app.summarySettings.selectedCatalogModelId(saved)) ||
+        correctionOnline != app.preferences.correctionOnlineEnabled
+    LaunchedEffect(dirty) { onDirtyChange(dirty) }
+    LaunchedEffect(busy) { onBusyChange(busy) }
     fun action(onSuccess: () -> Unit = {}, block: suspend () -> String) {
         if (busy) return
         busy = true; message = null
@@ -71,7 +77,7 @@ internal fun SummarySettingsCard() {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("总结方式", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("当前：${saved.mode.label}", fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Text("已生效：${saved.mode.label}${if (saved.mode == SummaryMode.REMOTE) " · ${SummaryProvider.fromEndpoint(saved.endpoint).label} · ${saved.model}" else if (saved.mode == SummaryMode.LOCAL) " · ${saved.localLabel}" else ""}", fontSize = 12.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "总结方式说明",
                     body = "本卡片只决定**文字如何总结**，转文字方式在上方单独设置；**切换不会自动重做全部历史**。\n\n" +
@@ -94,13 +100,10 @@ internal fun SummarySettingsCard() {
             if (mode == SummaryMode.LOCAL) {
                 val summaryModels = com.gongfpp.sonfolio.models.ModelCatalog.summaryModels
                 val context = LocalContext.current
-                var selectedSummaryId by rememberSaveable {
-                    mutableStateOf(app.summarySettings.selectedCatalogModelId(saved) ?: com.gongfpp.sonfolio.models.ModelCatalog.summary.id)
-                }
                 var summaryModelMenu by remember { mutableStateOf(false) }
                 val selectedSummary = summaryModels.firstOrNull { it.id == selectedSummaryId } ?: summaryModels.first()
                 // localFile 不是内置 id 时说明当前启用的是导入的 GGUF，面板要显示它而不是内置模型。
-                val importedLabel = if (app.summarySettings.selectedCatalogModelId(saved) == null && saved.localFile.isNotEmpty()) {
+                val importedLabel = if (selectedSummaryId == null && app.summarySettings.selectedCatalogModelId(saved) == null && saved.localFile.isNotEmpty()) {
                     saved.localLabel.ifBlank { "导入的 GGUF" }
                 } else null
                 // 与「本地识别引擎」保持同一套层级：二级面板 + 模型行下拉选择。
@@ -133,13 +136,7 @@ internal fun SummarySettingsCard() {
                                         onClick = {
                                             selectedSummaryId = option.id
                                             summaryModelMenu = false
-                                            if (installed) {
-                                                runCatching { app.summarySettings.useDownloadedModel(saved.revision, option.id) }
-                                                    .onSuccess { message = "已切换总结模型：${option.label}" }
-                                                    .onFailure { message = "切换失败：${it.message}" }
-                                            } else {
-                                                message = "请先下载该模型"
-                                            }
+                                            message = if (installed) "已选择 ${option.label}，保存设置后生效" else "请先下载该模型，再保存设置"
                                         },
                                     )
                                 }
@@ -153,7 +150,7 @@ internal fun SummarySettingsCard() {
                                     .onFailure { message = "删除失败：${it.message}" }
                             }) { Text("删除导入的模型") }
                         } else {
-                            com.gongfpp.sonfolio.models.ModelDownloadControl(selectedSummary)
+                            com.gongfpp.sonfolio.models.ModelDownloadControl(selectedSummary, allowActivation = false)
                         }
                         // 高级：导入自带 GGUF（llama.cpp 格式），复制到应用私有目录后即可离线使用。
                         val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -176,14 +173,15 @@ internal fun SummarySettingsCard() {
                                         require(magic == "GGUF") { "所选文件不是 GGUF 模型，请用 .gguf 文件（llama.cpp 格式）" }
                                         app.summarySettings.useImportedModel(name, "导入的模型")
                                     }
-                                    mode = SummaryMode.LOCAL; message = "已导入并启用本地模型；仅离线使用，不上传。"
+                                    mode = SummaryMode.LOCAL; selectedSummaryId = null; automatic = app.summarySettings.read().automatic
+                                    message = "已导入并启用本地模型；仅离线使用，不上传。"
                                 } catch (error: CancellationException) { throw error }
                                 catch (error: Exception) { message = error.message ?: "导入失败，请换一个文件" }
                                 finally { busy = false }
                             }
                         }
                         TextButton(enabled = !busy, onClick = { importLauncher.launch(arrayOf("application/octet-stream", "*/*")) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                            Text("▾ 高级：导入自己的 GGUF 模型", fontSize = 12.sp)
+                            Text("▾ 高级：导入并启用自己的 GGUF 模型", fontSize = 12.sp)
                         }
                     }
                 }
@@ -278,7 +276,7 @@ internal fun SummarySettingsCard() {
                 }
                 if (mode == SummaryMode.REMOTE) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(correctionOnline, { value -> correctionOnline = value; app.preferences.setCorrectionOnlineEnabled(value) }, enabled = !busy)
+                        Switch(correctionOnline, { value -> correctionOnline = value }, enabled = !busy)
                         Text("转写后自动用该模型纠错（在线会持续计费）", Modifier.padding(start = 8.dp).weight(1f), fontSize = 12.sp)
                         HelpHint(
                             title = "自动纠错（第 5 步）",
@@ -291,6 +289,7 @@ internal fun SummarySettingsCard() {
                 }
             }
             val canSave = mode != SummaryMode.REMOTE || consent
+            if (dirty) Text("有尚未保存的更改 · 下面的选择尚未生效", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             Button(
                 enabled = !busy,
                 colors = if (canSave) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(
@@ -303,8 +302,11 @@ internal fun SummarySettingsCard() {
                 val key = if (keyTouched) apiKey else ""
                 val chosenMode = mode; val chosenEndpoint = endpoint; val chosenModel = model
                 val chosenAutomatic = automatic; val chosenConsent = consent
-                action(onSuccess = { apiKey = ""; keyTouched = false }) {
-                    app.summarySettings.save(chosenMode, chosenEndpoint, chosenModel, key, chosenAutomatic, chosenConsent)
+                val chosenLocal = if (chosenMode == SummaryMode.LOCAL && (selectedSummaryId != null || saved.localFile.isEmpty())) selectedSummaryId ?: com.gongfpp.sonfolio.models.ModelCatalog.summary.id else null
+                val chosenCorrection = correctionOnline
+                action(onSuccess = { apiKey = ""; keyTouched = false; selectedSummaryId = app.summarySettings.selectedCatalogModelId() }) {
+                    app.summarySettings.save(chosenMode, chosenEndpoint, chosenModel, key, chosenAutomatic, chosenConsent, chosenLocal)
+                    app.preferences.setCorrectionOnlineEnabled(chosenCorrection)
                     app.summaryCoordinator.cancelAll()
                     "总结设置已保存，旧队列已取消，已有小结保留"
                 }
@@ -355,5 +357,3 @@ internal fun SummaryAction(sourceKey: String) {
         error?.let { Text(it, fontSize = 11.sp) }
     }
 }
-
-

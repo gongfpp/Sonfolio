@@ -41,7 +41,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
     LocalAsrEngine.QWEN3_ASR -> "需要 conv_frontend.onnx、encoder/decoder onnx 与 tokenizer/ 目录"
 }
 
-@Composable internal fun TranscriptionSettingsCard() {
+@Composable internal fun TranscriptionSettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyChange: (Boolean) -> Unit = {}) {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.transcriptionSettings.config.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableStateOf(saved.mode) }
@@ -65,6 +65,10 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
     var importLabel by remember { mutableStateOf("") }
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
+    val dirty = mode != saved.mode || provider != saved.provider || model != saved.model ||
+        localEngine != saved.localEngine || customAsrId != saved.customAsrId || appId != saved.appId || (keyTouched && key.isNotBlank())
+    LaunchedEffect(dirty) { onDirtyChange(dirty) }
+    LaunchedEffect(busy) { onBusyChange(busy) }
 
     fun startImport(kind: LocalAsrEngine, uri: Uri, zip: Boolean) {
         if (busy) return
@@ -96,7 +100,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("转文字方式", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("当前：${saved.mode.label}${if (saved.mode == TranscriptionMode.REMOTE) " · ${saved.provider.label}" else " / ${saved.localEngine.displayName}"}", fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Text("已生效：${saved.mode.label}${if (saved.mode == TranscriptionMode.REMOTE) " · ${saved.provider.label}" else " / ${saved.localEngine.displayName}"}", fontSize = 12.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "转文字方式说明",
                     body = "**录音始终先保存在本机**，识别失败不影响录音，也不会删除录音。\n\n" +
@@ -240,6 +244,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                 }
             }
             val canSave = mode != TranscriptionMode.REMOTE || consent
+            if (dirty) Text("有尚未保存的更改 · 下面的选择尚未生效", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             Button(
                 enabled = !busy,
                 colors = if (canSave) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(

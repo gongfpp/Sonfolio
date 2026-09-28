@@ -105,6 +105,7 @@ internal fun TodayScreen(
     val recordedDates = remember(calendar) { calendar.filter { !it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
     val organizedDates = remember(calendar) { calendar.filter { it.organized }.flatMap { datesInRange(it.start, it.end) }.toSet() }
     var calendarOpen by remember { mutableStateOf(false) }
+    var detailsOpen by rememberSaveable { mutableStateOf(false) }
     val selectDate: (LocalDate) -> Unit = { next ->
         selectedDate = next.takeUnless { it == today }?.toString()
         scope.launch { listState.scrollToItem(0) }
@@ -127,26 +128,9 @@ internal fun TodayScreen(
                 color = InkSoft, fontSize = 14.sp,
             )
         }
-        item(key = "journal") {
-            Surface(
-                modifier = Modifier.fillMaxWidth().clickable { onOpen(AppScreen.Daily(date.toString())) },
-                shape = RoundedCornerShape(15.dp),
-                color = PaleGreen,
-            ) {
-                Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Green, modifier = Modifier.size(28.dp))
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text("一日回顾", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("${date.format(DateTimeFormatter.ofPattern("M月d日"))} · 查看这一天的总结", color = InkSoft, fontSize = 12.sp)
-                    }
-                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Green)
-                }
-            }
-        }
         item(key = "date") {
             DateNavigator(date, today, recordedDates, organizedDates, onOpenCalendar = { calendarOpen = true }, onSelect = selectDate)
         }
-        item(key = "stats") { TodayStats(day) }
         item(key = "recording") {
             RecordingCard(
                 status = recordingStatus,
@@ -157,7 +141,19 @@ internal fun TodayScreen(
                 onEndInterrupted = onEndInterruptedRecording,
             )
         }
-        item(key = "heat") {
+        item(key = "journal") {
+            SettingsModeEntry("一日回顾", "${formatStatDuration(day.savedMillis)} 已录 · ${day.conversations.size} 场对话 · 查看这一天的总结") {
+                onOpen(AppScreen.Daily(date.toString()))
+            }
+        }
+        item(key = "recording-details") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { onOpen(AppScreen.RawRecordings(date.toString())) }) { Text("原始录音（${day.totalChunks}）", fontSize = 12.sp) }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { detailsOpen = !detailsOpen }) { Text(if (detailsOpen) "收起统计与缺口" else "统计与缺口", fontSize = 12.sp) }
+            }
+        }
+        if (detailsOpen) item(key = "heat") {
             RecentHeatPanel(
                 recorded = recordedDates,
                 organized = organizedDates,
@@ -419,8 +415,33 @@ internal fun RecordingCard(
     onEndInterrupted: () -> Unit,
 ) {
     val markWindows = (LocalContext.current.applicationContext as SonfolioApplication).preferences.markerWindows
+    val app = LocalContext.current.applicationContext as SonfolioApplication
+    val transcription by app.transcriptionSettings.config.collectAsStateWithLifecycle()
+    val summary by app.summarySettings.config.collectAsStateWithLifecycle()
     var sliceHelp by remember { mutableStateOf(false) }
     var lastMarked by remember(status.startedAtMillis) { mutableStateOf<Pair<Long, Int>?>(null) }
+    var markPending by remember { mutableStateOf(false) }
+    var markError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        com.gongfpp.sonfolio.recording.RecordingController.feedback.collect { feedback ->
+            when (feedback) {
+                is com.gongfpp.sonfolio.recording.RecordingFeedback.Marked -> {
+                    lastMarked = feedback.markedAtMillis to feedback.windowMinutes
+                    markPending = false; markError = null
+                }
+                is com.gongfpp.sonfolio.recording.RecordingFeedback.Failed -> if (markPending) {
+                    markPending = false; markError = feedback.message
+                }
+            }
+        }
+    }
+    LaunchedEffect(markPending) {
+        if (markPending) {
+            delay(15_000)
+            markPending = false
+            markError = "暂未收到保存回执，请到对话详情确认标记"
+        }
+    }
     var nowMillis by remember(status.startedAtMillis) {
         mutableLongStateOf(System.currentTimeMillis())
     }
@@ -433,7 +454,7 @@ internal fun RecordingCard(
     val elapsed = status.startedAtMillis
         ?.let { startedAt -> formatElapsed(nowMillis - startedAt) }
         ?: "00:00:00"
-    val enabled = status.isRecording
+    val enabled = status.isRecording && !markPending
     val onWhite = Color.White
 
     Surface(
@@ -457,7 +478,7 @@ internal fun RecordingCard(
                         color = onWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp,
                     )
                     Text(
-                        if (status.isRecording) "每 5 分钟保存一段录音 · 全程在本机" else "点击后持续在后台录音",
+                        if (status.isRecording) "每 5 分钟保存一段录音 · 原音存本机" else "点击后持续在后台录音",
                         color = onWhite.copy(alpha = .85f), fontSize = 12.sp,
                     )
                 }
@@ -503,7 +524,7 @@ internal fun RecordingCard(
                             .clip(RoundedCornerShape(11.dp))
                             .background(AmberPale)
                             .clickable(enabled = enabled) {
-                                lastMarked = System.currentTimeMillis() to markWindows.first()
+                                markPending = true; markError = null
                                 onMark(markWindows.first())
                             }
                             .padding(horizontal = 10.dp, vertical = 9.dp),
@@ -519,7 +540,7 @@ internal fun RecordingCard(
                                 .clip(CircleShape)
                                 .background(if (enabled) AmberPale else Color(0xFFE8E8E3))
                                 .clickable(enabled = enabled) {
-                                    lastMarked = System.currentTimeMillis() to minutes
+                                    markPending = true; markError = null
                                     onMark(minutes)
                                 },
                             contentAlignment = Alignment.Center,
@@ -529,7 +550,11 @@ internal fun RecordingCard(
                     }
                 }
             }
-            lastMarked?.let { (markedAt, minutes) ->
+            if (markPending || markError != null) Text(
+                if (markPending) "正在保存标记…" else markError.orEmpty(),
+                Modifier.padding(horizontal = 18.dp, vertical = 4.dp), color = Color(0xFFFFE9B8), fontSize = 11.sp,
+            )
+            lastMarked?.takeUnless { markPending || markError != null }?.let { (markedAt, minutes) ->
                 Text(
                     "★ 已标记 ${formatClock(markedAt)} 往前 ${minutes} 分钟 · 涉及的对话会高亮保留",
                     modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
@@ -547,6 +572,10 @@ internal fun RecordingCard(
                     tint = onWhite.copy(alpha = .9f),
                 )
             }
+            Text(
+                "转文字：${if (transcription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) "上传音频至 ${transcription.provider.label}" else "本机处理"} · 总结：${if (summary.mode == com.gongfpp.sonfolio.summary.SummaryMode.REMOTE) "发送文字至 ${com.gongfpp.sonfolio.summary.SummaryProvider.fromEndpoint(summary.endpoint).label}" else "本机处理"}",
+                Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp), color = onWhite.copy(alpha = .85f), fontSize = 11.sp,
+            )
             if (sliceHelp) AlertDialog(onDismissRequest = { sliceHelp = false },
                 title = { Text("文件切片不等于对话切割") },
                 text = { Text("5 分钟切片是为了边录边处理，并减少异常退出时未收尾的范围。相邻语音间隔不超过 2 分钟、且没有已知录音缺口时，会合并为同一场对话，能够跨越多个文件。\n\n总结使用整场对话的已识别文字；长内容分段时会携带上一部分的总结。后续转写到达后会更新基础小结，旧 AI 结果会标为需要重新生成。\n\n当前按时间连续性合并，不是语义主题识别：同一主题停顿过久仍可能被分开，总结也需结合原文核对。") },
