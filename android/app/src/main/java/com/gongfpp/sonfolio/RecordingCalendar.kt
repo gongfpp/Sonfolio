@@ -15,6 +15,11 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.YearMonth
 
+/** 点击窗口内日期不移动窗口；从月历跳入更早日期时才换页。 */
+internal fun calendarWindowEnd(currentEnd: LocalDate, selected: LocalDate, today: LocalDate): LocalDate =
+    if (selected in currentEnd.minusDays(13)..currentEnd) currentEnd.coerceAtMost(today)
+    else selected.plusDays(6).coerceAtMost(today)
+
 internal fun datesInRange(start: Long, end: Long): List<LocalDate> {
     val first = localDateAt(start)
     val last = localDateAt((end - 1).coerceAtLeast(start))

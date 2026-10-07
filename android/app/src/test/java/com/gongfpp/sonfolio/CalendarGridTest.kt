@@ -7,6 +7,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CalendarGridTest {
+    @Test fun `selecting inside window retains later dates`() {
+        val today = LocalDate.of(2026, 9, 29)
+        (0..13).forEach { assertEquals(today, calendarWindowEnd(today, today.minusDays(it.toLong()), today)) }
+    }
+
+    @Test fun `jumping from month calendar reveals selected date without future days`() {
+        val today = LocalDate.of(2026, 9, 29)
+        val selected = LocalDate.of(2025, 12, 31)
+        val end = calendarWindowEnd(today, selected, today)
+        assertTrue(selected in end.minusDays(13)..end)
+        assertTrue(end <= today)
+        assertEquals(today, calendarWindowEnd(end, today, today))
+    }
     /** 从任意一天出发的「最近 14 天」都必须铺满整行，任何一行都不能少于 7 格。 */
     @Test fun `two week window always fills whole rows`() {
         val start = LocalDate.of(2026, 1, 1)

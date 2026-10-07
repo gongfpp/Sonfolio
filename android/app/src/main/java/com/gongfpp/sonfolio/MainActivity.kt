@@ -174,6 +174,8 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         }
     }
     val isMainScreen = screen.isMainScreen
+    var settingsSubpage by remember { mutableStateOf(false) }
+    val editingSettings = screen is AppScreen.Settings && settingsSubpage
 
     Scaffold(
         containerColor = Paper,
@@ -183,8 +185,8 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                 if (recordingStatus.isRecording && screen !is AppScreen.Today) {
                     androidx.compose.material3.Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), color = ActionFill, shape = RoundedCornerShape(16.dp)) {
                         Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.material3.TextButton(onClick = { navigation = navigation.selectTab(AppScreen.Today) }, modifier = Modifier.weight(1f)) {
-                                Text("正在记录 · 返回声迹", color = Color.White, fontSize = 13.sp)
+                            androidx.compose.material3.TextButton(enabled = !editingSettings, onClick = { navigation = navigation.selectTab(AppScreen.Today) }, modifier = Modifier.weight(1f)) {
+                                Text(if (editingSettings) "正在记录" else "正在记录 · 返回声迹", color = Color.White, fontSize = 13.sp)
                             }
                             val minutes = application.preferences.markerWindows.first()
                             androidx.compose.material3.FilledTonalButton(
@@ -195,7 +197,7 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                         }
                     }
                 }
-                NavigationBar(containerColor = Paper) {
+                if (!editingSettings) NavigationBar(containerColor = Paper) {
                     NavigationBarItem(
                         selected = screen is AppScreen.Today,
                         onClick = { navigation = navigation.selectTab(AppScreen.Today) },
@@ -239,6 +241,7 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                         recordingStatus = recordingStatus,
                         onOpenRawRecordings = { openScreen(AppScreen.RawRecordings()) },
                         onRebuildConversations = viewModel::rebuildConversations,
+                        onSubpageChange = { settingsSubpage = it },
                     )
                     is AppScreen.Daily -> DailyScreen(viewModel = viewModel, initialDate = current.date, onBack = goBack, onOpenConversation = { openScreen(AppScreen.Conversation(id = it)) })
                     is AppScreen.RawRecordings -> RawRecordingsScreen(

@@ -44,7 +44,8 @@ if (flags.includes('--ui')) {
   if (showing === 'true') throw new Error('手机仍在锁屏，UI 验收阻塞，请解锁');
   if (showing !== 'false') throw new Error('无法确认手机是否已解锁，未启动 UI 测试');
 }
-const uiClasses = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest'];
+nonUi.push('UsageStoreIntegrationTest');
+const uiClasses = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest', 'SettingsExperienceTest'];
 const requested = flags.filter(flag => flag.startsWith('--class=')).map(flag => flag.slice(8));
 if (requested.some(name => ![...nonUi, ...uiClasses, 'RecordingReliabilityTest', 'LocalSummaryQualityTest'].includes(name))) throw new Error('未知测试类');
 if (requested.some(name => uiClasses.includes(name)) && !flags.includes('--ui')) throw new Error('界面测试需要 --ui，不能绕过亮屏检查');

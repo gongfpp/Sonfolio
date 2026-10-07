@@ -26,7 +26,6 @@ import com.gongfpp.sonfolio.HelpHint
 import com.gongfpp.sonfolio.SonfolioApplication
 import com.gongfpp.sonfolio.Green
 import com.gongfpp.sonfolio.formatModelSize
-import com.gongfpp.sonfolio.starRating
 import com.gongfpp.sonfolio.models.ModelCatalog
 import com.gongfpp.sonfolio.models.ModelDownloadControl
 import kotlinx.coroutines.*
@@ -41,7 +40,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
     LocalAsrEngine.QWEN3_ASR -> "需要 conv_frontend.onnx、encoder/decoder onnx 与 tokenizer/ 目录"
 }
 
-@Composable internal fun TranscriptionSettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyChange: (Boolean) -> Unit = {}) {
+@Composable internal fun TranscriptionSettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyChange: (Boolean) -> Unit = {}, onSaved: () -> Unit = {}) {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.transcriptionSettings.config.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableStateOf(saved.mode) }
@@ -163,11 +162,9 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
             } else {
                 Box {
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("识别提供商：${provider.label} ▾") }
-                    DropdownMenu(providerMenu, { providerMenu = false }) {
-                        SpeechProvider.entries.forEach { option -> DropdownMenuItem(text = { Text(option.label) }, onClick = {
+                    if (providerMenu) com.gongfpp.sonfolio.SettingsChoices("选择识别提供商", SpeechProvider.entries, provider, { it.label }, { providerMenu = false }) { option ->
                             if (option != provider) { provider = option; model = option.models.first(); key = ""; keyTouched = false; appId = "" }
                             providerMenu = false
-                        }) }
                     }
                 }
                 if (provider.needsAppId) {
@@ -200,9 +197,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box {
                         OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("语音模型：${provider.modelLabel(model)} ▾") }
-                        DropdownMenu(modelMenu, { modelMenu = false }) {
-                            provider.models.forEach { option -> DropdownMenuItem(text = { Text(provider.modelLabel(option)) }, onClick = { model = option; modelMenu = false }) }
-                        }
+                        if (modelMenu) com.gongfpp.sonfolio.SettingsChoices("选择语音模型", provider.models, model, { provider.modelLabel(it) }, { modelMenu = false }) { model = it; modelMenu = false }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("内置官方语音模型，不是聊天总结模型。", fontSize = 11.sp, modifier = Modifier.weight(1f))
@@ -263,14 +258,17 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                     try {
                         withContext(Dispatchers.IO) {
                             app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenAppId, chosenEngine, chosenCustom)
-                            app.recordingRepository.enqueuePendingAsr()
+                            try { app.recordingRepository.enqueuePendingAsr() }
+                            catch (error: CancellationException) { throw error }
+                            catch (_: Exception) { error("设置已保存，但待处理录音尚未重新排队；重新打开应用后会重试。") }
                         }
                         key = ""; keyTouched = false; message = "转文字设置已保存。已有文字不重做；在线识别不会自动上传历史录音。"
+                        onSaved()
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) { message = error.message ?: "设置保存失败，请重试" }
                     finally { busy = false }
                 }
-            }) { Text("保存转文字设置") }
+            }) { Text(if (busy) "正在处理…" else "保存转文字设置") }
             OutlinedButton(enabled = !busy, onClick = {
                 if (busy) return@OutlinedButton
                 busy = true
@@ -295,30 +293,30 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
         }
     }
     if (engineMenu) {
-        AlertDialog(
-            onDismissRequest = { engineMenu = false },
-            title = { Text("选择本地识别引擎") },
-            text = {
+        com.gongfpp.sonfolio.SettingsChoiceDialog("选择本地识别引擎", { engineMenu = false }) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     LocalAsrEngine.entries.forEach { option ->
                         val artifact = ModelCatalog.byId(option.artifactId) ?: return@forEach
                         Row(
                             Modifier.fillMaxWidth().clickable { localEngine = option; customAsrId = null; engineMenu = false }.padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = Alignment.Top,
                         ) {
-                            RadioButton(customAsrId == null && localEngine == option, onClick = null)
+                            RadioButton(customAsrId == null && localEngine == option, onClick = null, modifier = Modifier.size(24.dp))
                             Column(Modifier.padding(start = 8.dp).weight(1f)) {
-                                Text(option.displayName + if (option.recommended) "（推荐）" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(option.displayName + if (option.recommended) "（推荐）" else "", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
                                 Text(option.blurb, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
-                                    "${formatModelSize(artifact.bytes)} · 速度 ${starRating(option.speedStars)} · 准确率 ${starRating(option.accuracyStars)}",
+                                    "模型大小：${formatModelSize(artifact.bytes)}",
                                     modifier = Modifier.padding(top = 2.dp),
                                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                Text("处理速度：${option.speedStars} / 5", fontSize = 12.sp)
+                                Text("识别准确度：${option.accuracyStars} / 5", fontSize = 12.sp)
                                 if (option.supportsHotwords) Text("支持个人词汇热词", fontSize = 10.sp, color = Green)
                             }
                         }
                     }
+                    Text("速度与准确度均为 5 分制相对评分，不是准确率百分比，也不是推荐星级；实际表现取决于录音环境。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (customModels.isNotEmpty()) {
                         Text("自定义模型", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                         customModels.forEach { model ->
@@ -342,9 +340,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                         Text("＋ 导入自定义 ONNX 模型")
                     }
                 }
-            },
-            confirmButton = { TextButton(onClick = { engineMenu = false }) { Text("完成") } },
-        )
+        }
     }
     if (importKind != null) {
         AlertDialog(

@@ -41,7 +41,7 @@ class PublicScreenshotsTest {
         }
         ui.onNodeWithText("转文字方式").performClick()
         capture("transcription")
-        ui.onNodeWithText("返回设置").performClick()
+        ui.onNodeWithContentDescription("返回").performClick()
         ui.onNodeWithText("总结方式").performClick()
         capture("summary")
         // App-local theme override, never changes the phone's system theme or security settings.

@@ -54,15 +54,11 @@ internal fun OrganizeSettingsCard(preferences: SonfolioPreferences, onRebuildCon
                 OutlinedButton(onClick = { gapMenu = true }, modifier = Modifier.fillMaxWidth()) {
                     Text("相邻语音间隔：$gapMinutes 分钟 ▾")
                 }
-                DropdownMenu(gapMenu, { gapMenu = false }) {
-                    SonfolioPreferences.CONVERSATION_GAP_OPTIONS.forEach { value ->
-                        DropdownMenuItem(text = { Text("$value 分钟") }, onClick = {
+                if (gapMenu) SettingsChoices("选择对话合并间隔", SonfolioPreferences.CONVERSATION_GAP_OPTIONS, gapMinutes, { "$it 分钟" }, { gapMenu = false }) { value ->
                             gapMinutes = value
                             preferences.setConversationGapMinutes(value)
                             gapMenu = false
                             onRebuildConversations()
-                        })
-                    }
                 }
             }
             Text("多段连续谈话（例如持续一两小时）可把间隔调大，减少被切成多场对话。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

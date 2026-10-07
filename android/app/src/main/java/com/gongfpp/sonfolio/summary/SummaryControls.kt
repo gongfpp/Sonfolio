@@ -30,7 +30,7 @@ import java.io.File
 private const val SAVED_SECRET_MASK = "*****"
 
 @Composable
-internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyChange: (Boolean) -> Unit = {}) {
+internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyChange: (Boolean) -> Unit = {}, onSaved: () -> Unit = {}) {
     val app = LocalContext.current.applicationContext as SonfolioApplication
     val saved by app.summarySettings.config.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableStateOf(saved.mode) }
@@ -127,18 +127,18 @@ internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyCh
                                         ?: "总结模型：${selectedSummary.label} · ${com.gongfpp.sonfolio.formatModelSize(selectedSummary.bytes)} ▾",
                                 )
                             }
-                            DropdownMenu(summaryModelMenu, { summaryModelMenu = false }) {
+                            if (summaryModelMenu) com.gongfpp.sonfolio.SettingsChoiceDialog("选择本地总结模型", { summaryModelMenu = false }) {
                                 summaryModels.forEach { option ->
                                     // 用只比大小的 available（不哈希大文件）；真正启用前仍会完整校验。
                                     val installed = com.gongfpp.sonfolio.models.ModelCatalog.available(context.filesDir, option)
-                                    DropdownMenuItem(
-                                        text = { Text(option.label + " · " + com.gongfpp.sonfolio.formatModelSize(option.bytes) + if (installed) "" else "（未下载）") },
-                                        onClick = {
+                                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable {
                                             selectedSummaryId = option.id
                                             summaryModelMenu = false
                                             message = if (installed) "已选择 ${option.label}，保存设置后生效" else "请先下载该模型，再保存设置"
-                                        },
-                                    )
+                                        }, verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(selectedSummaryId == option.id, onClick = null)
+                                        Text(option.label + " · " + com.gongfpp.sonfolio.formatModelSize(option.bytes) + if (installed) "" else "（未下载）", Modifier.weight(1f))
+                                    }
                                 }
                             }
                         }
@@ -189,13 +189,11 @@ internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyCh
             if (mode == SummaryMode.REMOTE) {
                 Box {
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("提供商：${provider.label} ▾") }
-                    DropdownMenu(providerMenu, { providerMenu = false }) {
-                        SummaryProvider.entries.forEach { option -> DropdownMenuItem(text = { Text(option.label) }, onClick = {
+                    if (providerMenu) com.gongfpp.sonfolio.SettingsChoices("选择总结提供商", SummaryProvider.entries, provider, { it.label }, { providerMenu = false }) { option ->
                             if (option != provider) {
                                 provider = option; endpoint = option.endpoint; model = option.defaults.firstOrNull().orEmpty(); apiKey = ""; keyTouched = false
                             }
                             providerMenu = false
-                        }) }
                     }
                 }
                 if (provider == SummaryProvider.CUSTOM) {
@@ -207,9 +205,7 @@ internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyCh
                     // 提供商与模型都是必选项，不折叠进「高级」。
                     Box {
                         OutlinedButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("模型：$model ▾") }
-                        DropdownMenu(modelMenu, { modelMenu = false }) {
-                            (listOf(model) + listedModels).filter { it.isNotBlank() }.distinct().forEach { id -> DropdownMenuItem(text = { Text(id) }, onClick = { model = id; modelMenu = false }) }
-                        }
+                        if (modelMenu) com.gongfpp.sonfolio.SettingsChoices("选择总结模型", (listOf(model) + listedModels).filter { it.isNotBlank() }.distinct(), model, { it }, { modelMenu = false }) { model = it; modelMenu = false }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(modelListNote, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
@@ -304,13 +300,15 @@ internal fun SummarySettingsCard(onDirtyChange: (Boolean) -> Unit = {}, onBusyCh
                 val chosenAutomatic = automatic; val chosenConsent = consent
                 val chosenLocal = if (chosenMode == SummaryMode.LOCAL && (selectedSummaryId != null || saved.localFile.isEmpty())) selectedSummaryId ?: com.gongfpp.sonfolio.models.ModelCatalog.summary.id else null
                 val chosenCorrection = correctionOnline
-                action(onSuccess = { apiKey = ""; keyTouched = false; selectedSummaryId = app.summarySettings.selectedCatalogModelId() }) {
+                action(onSuccess = { apiKey = ""; keyTouched = false; selectedSummaryId = app.summarySettings.selectedCatalogModelId(); onSaved() }) {
                     app.summarySettings.save(chosenMode, chosenEndpoint, chosenModel, key, chosenAutomatic, chosenConsent, chosenLocal)
                     app.preferences.setCorrectionOnlineEnabled(chosenCorrection)
-                    app.summaryCoordinator.cancelAll()
+                    try { app.summaryCoordinator.cancelAll() }
+                    catch (error: CancellationException) { throw error }
+                    catch (_: Exception) { error("设置已保存，但旧队列未能更新；请重新打开应用检查处理状态。") }
                     "总结设置已保存，旧队列已取消，已有小结保留"
                 }
-            }) { Text("保存总结设置") }
+            }) { Text(if (busy) "正在处理…" else "保存总结设置") }
             if (saved.mode != SummaryMode.BASIC) {
                 OutlinedButton(enabled = !busy, onClick = { action { app.summaryCoordinator.test(app.summarySettings.read()) } }) { Text("测试已保存配置") }
                 Text("只验证连通性：本地确认模型就绪；在线只发一个最小请求，不读取真实转写。", fontSize = 11.sp)

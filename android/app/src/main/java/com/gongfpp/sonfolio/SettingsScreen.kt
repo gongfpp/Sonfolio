@@ -83,6 +83,7 @@ internal fun SettingsScreen(
     recordingStatus: RecordingStatus,
     onOpenRawRecordings: () -> Unit,
     onRebuildConversations: () -> Unit,
+    onSubpageChange: (Boolean) -> Unit = {},
 ) {
     var chargeOnly by remember { mutableStateOf(preferences.chargeOnly) }
     val settingsScope = rememberCoroutineScope()
@@ -98,31 +99,39 @@ internal fun SettingsScreen(
     var editorBusy by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var section by rememberSaveable { mutableStateOf<String?>(null) }
+    var savedMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    val settingsScroll = rememberScrollState()
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(editor, section) { onSubpageChange(editor != null || section != null) }
     BackHandler(enabled = section != null && editor == null) { section = null }
     fun closeEditor() {
         if (!editorBusy) { if (editorDirty) confirmDiscard = true else editor = null }
     }
+    BackHandler(enabled = editor != null) { closeEditor() }
     editor?.let { page ->
-        androidx.compose.ui.window.Dialog(onDismissRequest = ::closeEditor,
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                Column(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                    DetailTopBar(if (page == "transcription") "转文字方式" else "总结方式", "", ::closeEditor)
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(enabled = !editorBusy, onClick = ::closeEditor) { Text("返回设置") }
-                        Text(if (editorDirty) "未保存更改" else "当前配置已保存", color = InkSoft, fontSize = 12.sp)
+                        Text(if (editorBusy) "正在处理，请稍候…" else if (editorDirty) "未保存更改" else "当前配置已保存", color = InkSoft, fontSize = 12.sp)
                     }
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(18.dp)) {
-                        if (page == "transcription") com.gongfpp.sonfolio.processing.TranscriptionSettingsCard({ editorDirty = it }, { editorBusy = it })
-                        else com.gongfpp.sonfolio.summary.SummarySettingsCard({ editorDirty = it }, { editorBusy = it })
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                        val onSaved: () -> Unit = {
+                            focusManager.clearFocus()
+                            savedMessage = if (page == "transcription") "转文字设置已保存" else "总结设置已保存"
+                            editorDirty = false; editorBusy = false; editor = null
+                        }
+                        if (page == "transcription") com.gongfpp.sonfolio.processing.TranscriptionSettingsCard({ editorDirty = it }, { editorBusy = it }, onSaved)
+                        else com.gongfpp.sonfolio.summary.SummarySettingsCard({ editorDirty = it }, { editorBusy = it }, onSaved)
                     }
                 }
             }
-        }
     }
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("放弃尚未保存的更改？") },
         text = { Text("已经生效的配置不会改变。下载完成的模型文件也会保留。") },
         confirmButton = { TextButton(onClick = { confirmDiscard = false; editorDirty = false; editor = null }) { Text("放弃更改") } },
         dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } })
+    if (editor != null) return
     val used by remember { app.database.recordingDao().observeStorageBytes() }.collectAsStateWithLifecycle(initialValue = 0L)
     val availableState = remember { mutableStateOf(0L) }
     LaunchedEffect(used) {
@@ -134,11 +143,13 @@ internal fun SettingsScreen(
     var minimumSpeechSeconds by remember { mutableStateOf(preferences.minimumSpeechSeconds.toFloat()) }
     var minimumTextCharacters by remember { mutableStateOf(preferences.minimumTextCharacters.toFloat()) }
     key(section) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 14.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
         if (section != null) DetailTopBar(section.orEmpty(), "", { section = null })
+        Column(Modifier.weight(1f).verticalScroll(if (section == null) settingsScroll else rememberScrollState())) {
         if (section == null) {
         Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
+        savedMessage?.let { Text(it, color = Green, modifier = Modifier.padding(top = 8.dp)) }
         SectionTitle("识别与总结")
         SettingsModeEntry("转文字方式", "已生效：${activeTranscription.mode.label} · ${if (activeTranscription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) activeTranscription.provider.label else activeTranscription.localEngine.displayName}") {
             editorDirty = false; editorBusy = false; editor = "transcription"
@@ -150,11 +161,13 @@ internal fun SettingsScreen(
         SectionTitle("录音与数据")
         SettingsModeEntry("原始录音", "点击回听，长按管理") { onOpenRawRecordings() }
         SettingsModeEntry("录音设置", "标记时长、识别语言、短录音过滤") { section = "录音设置" }
+        SettingsModeEntry("后台运行", "检查电池限制、通知与自启动设置") { section = "后台运行" }
         SettingsModeEntry("存储与备份", "空间占用、保留策略、完整备份") { section = "存储与备份" }
         SettingsModeEntry("用量记录", "查看在线调用与用量") { section = "用量记录" }
         Text("外观跟随系统 · 原音保存在本机", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp))
         }
         if (section == "用量记录") UsageCard()
+        if (section == "后台运行") BackgroundSettingsCard()
         if (section == "处理与整理") {
         OrganizeSettingsCard(preferences, onRebuildConversations)
         SettingsModeEntry("查看处理进度", "查看每段录音的处理阶段，或重试未完成的任务") { onOpenRawRecordings() }
@@ -343,6 +356,7 @@ internal fun SettingsScreen(
             }
         }
         com.gongfpp.sonfolio.recording.BackupSettingsCard()
+        }
         }
     }
     }

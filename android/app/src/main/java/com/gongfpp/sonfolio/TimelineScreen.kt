@@ -61,6 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gongfpp.sonfolio.processing.ChunkProcessing
@@ -150,7 +153,8 @@ internal fun TodayScreen(
                 date = date,
                 today = today,
                 day = day,
-                onSelect = selectDate,
+                // 在两周面板切日保留当前位置，避免每次点击都跳回录音卡。
+                onSelect = { next -> selectedDate = next.takeUnless { it == today }?.toString() },
                 onOpenCalendar = { calendarOpen = true },
                 onOpenRaw = { onOpen(AppScreen.RawRecordings(date.toString())) },
             )
@@ -283,7 +287,10 @@ internal fun RecentHeatPanel(
     onOpenCalendar: () -> Unit,
     onOpenRaw: () -> Unit,
 ) {
-    val days = remember(date) { (13 downTo 0).map { date.minusDays(it.toLong()) } }
+    var endText by rememberSaveable(today.toString()) { mutableStateOf(calendarWindowEnd(today, date, today).toString()) }
+    val windowEnd = LocalDate.parse(endText)
+    LaunchedEffect(date) { endText = calendarWindowEnd(LocalDate.parse(endText), date, today).toString() }
+    val days = remember(windowEnd) { (13 downTo 0).map { windowEnd.minusDays(it.toLong()) } }
     var gapsOpen by rememberSaveable(date.toString()) { mutableStateOf(false) }
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
@@ -293,8 +300,13 @@ internal fun RecentHeatPanel(
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("最近两周", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text(if (windowEnd == today) "最近两周" else "${days.first().monthValue}/${days.first().dayOfMonth} — ${windowEnd.monthValue}/${windowEnd.dayOfMonth}", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 TextButton(onClick = onOpenCalendar) { Text("日历 ›", color = Green, fontSize = 12.sp) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = { endText = windowEnd.minusDays(14).toString() }) { Text("前两周") }
+                TextButton(onClick = { endText = today.toString(); onSelect(today) }) { Text("回到今天") }
+                TextButton(enabled = windowEnd < today, onClick = { endText = windowEnd.plusDays(14).coerceAtMost(today).toString() }) { Text("后两周") }
             }
             // 周一到周日对齐的两周热力网格。首尾都补齐到整行：否则最后一行格子少时会被 weight
             // 拉伸，只有一格时会占满整行宽，看起来就是一个“巨大的格子”。
@@ -307,7 +319,7 @@ internal fun RecentHeatPanel(
             weeks.forEach { week ->
                 Row(Modifier.fillMaxWidth().padding(top = 3.dp)) {
                     week.forEach { cell ->
-                        Box(Modifier.weight(1f).height(30.dp).padding(horizontal = 1.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.weight(1f).height(48.dp).padding(horizontal = 1.dp), contentAlignment = Alignment.Center) {
                             if (cell != null) {
                                 CalendarDay(
                                     day = cell,
@@ -323,7 +335,7 @@ internal fun RecentHeatPanel(
                 }
             }
             Text(
-                "深绿 = 已整理 · 浅绿 = 有录音 · 琥珀框 = 选中 · 绿框 = 今天 · 近两周 ${days.count { it in recorded || it in organized }} 天有记录",
+                "深绿 = 已整理 · 浅绿 = 有录音 · 琥珀框 = 选中 · 绿框 = 今天 · 当前两周 ${days.count { it in recorded || it in organized }} 天有记录",
                 modifier = Modifier.padding(top = 6.dp), color = InkSoft, fontSize = 10.5.sp,
             )
             if (day.totalChunks > 0) {
@@ -669,7 +681,10 @@ private fun CalendarDay(
         else -> InkSoft
     }
     val shape = RoundedCornerShape(8.dp)
-    val base = Modifier.fillMaxSize().clip(shape).background(background).clickable(onClick = onClick)
+    val base = Modifier.fillMaxSize().clip(shape).background(background).clickable(onClick = onClick).semantics {
+        contentDescription = "回看 $day"
+        this.selected = selected
+    }
     val styled = when {
         selected -> base.border(2.dp, Amber, shape)
         isToday -> base.border(1.5.dp, Green, shape)
@@ -679,7 +694,7 @@ private fun CalendarDay(
         Text(
             day.dayOfMonth.toString(),
             color = foreground,
-            fontSize = 11.sp,
+            fontSize = 14.sp,
             fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
         )
     }

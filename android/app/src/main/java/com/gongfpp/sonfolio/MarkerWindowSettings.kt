@@ -18,13 +18,9 @@ import androidx.compose.ui.unit.sp
                 var expanded by remember { mutableStateOf(false) }
                 Box {
                     OutlinedButton(onClick = { expanded = true }) { Text("${listOf("主按钮", "快捷一", "快捷二")[index]}：前 $minutes 分钟") }
-                    DropdownMenu(expanded, { expanded = false }) {
-                        SonfolioPreferences.MARKER_OPTIONS.forEach { value ->
-                            DropdownMenuItem(text = { Text("前 $value 分钟") }, onClick = {
+                    if (expanded) SettingsChoices("选择标记时长", SonfolioPreferences.MARKER_OPTIONS, minutes, { "前 $it 分钟" }, { expanded = false }) { value ->
                                 preferences.setMarkerWindow(index, value)
                                 windows = preferences.markerWindows; expanded = false
-                            })
-                        }
                     }
                 }
             }
