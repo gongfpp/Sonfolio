@@ -23,13 +23,19 @@ internal fun UsageCard() {
     var refreshKey by remember { mutableIntStateOf(0) }
     val snapshot = remember(refreshKey) { app.usageStore.snapshot() }
     val history = remember(refreshKey) { app.usageStore.monthlyHistory(6) }
+    val details = remember(refreshKey) { app.usageStore.details() }
+    var grouping by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("功能") }
+    DisposableEffect(app.usageStore) {
+        val remove = app.usageStore.observeChanges { refreshKey++ }
+        onDispose { remove() }
+    }
     Surface(Modifier.fillMaxWidth().padding(top = 13.dp), RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("在线用量", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
                 HelpHint(
                     title = "在线用量说明",
-                    body = "只统计本机发出的在线识别、总结与纠错调用，**按月归零，不记录任何音频或文字内容**。\n\n" +
+                    body = "只统计本机收到成功响应的在线识别、总结与纠错调用，**按月累计，不记录任何音频或文字内容**。失败或超时请求也可能被服务商计费，因此这里不是账单。\n\n" +
                         "识别按音频时长、总结/纠错按模型返回的 Token 数统计；**单价与账单以各服务商控制台为准，这里不做费用估算**。\n\n" +
                         "OpenCode Go 这类订阅制服务按模型分别计算额度，不按次计费。**历史录音不会自动上传**。",
                 )
@@ -38,15 +44,25 @@ internal fun UsageCard() {
             Text("近 6 个月调用次数", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             MonthlyUsageBars(history)
             Text("本月明细 · ${snapshot.month}", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("功能", "模型").forEach { option ->
+                    FilterChip(selected = grouping == option, onClick = { grouping = option }, label = { Text("按$option") })
+                }
+            }
             if (snapshot.asr.isEmpty() && snapshot.llm.isEmpty()) {
                 Text("本月还没有在线调用。", fontSize = 12.sp)
             } else {
-                snapshot.asr.forEach { row ->
-                    Text("识别 · ${row.provider}：${row.calls} 次 · ${formatUsageDuration(row.seconds)}", fontSize = 12.sp)
+                details.groupBy { if (grouping == "功能") it.feature else "${it.model} · ${it.provider}" }.forEach { (label, rows) ->
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    Text(label, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("${rows.sumOf { it.calls }} 次调用", fontSize = 12.sp)
+                    rows.forEach { row ->
+                        val dimension = if (grouping == "功能") "${row.model} · ${row.provider}" else row.feature
+                        val amount = if (row.kind == "asr") formatUsageDuration(row.seconds) else "${row.tokens} tokens"
+                        Text("$dimension\n${row.calls} 次 · $amount", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                snapshot.llm.forEach { row ->
-                    Text("总结/纠错 · ${row.model}：${row.calls} 次 · ${row.tokens} tokens", fontSize = 12.sp)
-                }
+                Text("旧记录未保存的模型或功能无法补分。这里只统计在线用量，不包含本地推理。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

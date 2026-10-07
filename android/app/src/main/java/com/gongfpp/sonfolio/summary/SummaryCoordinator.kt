@@ -235,7 +235,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         withTimeout(CORRECTION_TIMEOUT_MILLIS) {
             parts.forEach { part ->
                 ensureActive()
-                val raw = withGenerator(config) { generate ->
+                val raw = withGenerator(config, "转写纠错") { generate ->
                     generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(part.map { it.second }))
                 }
                 val texts = runCatching { CorrectionPrompt.parse(raw, part.size) }.getOrNull()
@@ -251,7 +251,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
                         for (row in part) {
                             ensureActive()
                             val single = runCatching {
-                                val one = withGenerator(config) { generate ->
+                                val one = withGenerator(config, "转写纠错") { generate ->
                                     generate(CorrectionPrompt.SYSTEM, CorrectionPrompt.user(listOf(row.second)))
                                 }
                                 CorrectionPrompt.parse(one, 1).single()
@@ -282,7 +282,7 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
             return "连通成功：本地模型已就绪（未运行推理）"
         }
         RemoteSummaryTransport(app.summarySettings, app.usageStore)
-            .generate(config, "你是连接测试助手。", "只回复：ok", maxTokens = 8, jsonMode = false)
+            .generate(config, "你是连接测试助手。", "只回复：ok", maxTokens = 8, jsonMode = false, feature = "连接测试")
         return "连通成功：${config.model} 已响应（只发了一个最小请求）"
     }
 
@@ -290,10 +290,10 @@ class SummaryCoordinator(private val app: SonfolioApplication) {
         return withGenerator(config) { generate -> generate(system, user) }
     }
 
-    internal suspend fun <T> withGenerator(config: SummaryConfig, block: suspend (suspend (String, String) -> String) -> T): T {
+    internal suspend fun <T> withGenerator(config: SummaryConfig, feature: String = "总结", block: suspend (suspend (String, String) -> String) -> T): T {
         check(app.summarySettings.read().revision == config.revision) { "总结配置已改变，任务已取消" }
         return when (config.mode) {
-            SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings, app.usageStore).generate(config, system, user) }
+            SummaryMode.REMOTE -> block { system, user -> RemoteSummaryTransport(app.summarySettings, app.usageStore).generate(config, system, user, feature = feature) }
             SummaryMode.LOCAL -> localMutex.withLock {
                 val file = app.summarySettings.modelFile(config)
                 require(file?.isFile == true) { "请先在设置中下载总结模型" }
@@ -343,7 +343,7 @@ class SummaryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val startIndex = if (resume && summary != null) cached!!.progressIndex else 0
             if (startIndex == 0) summary = null
             withTimeout(9 * 60_000L) {
-                coordinator.withGenerator(config) { generate ->
+                coordinator.withGenerator(config, if (key.startsWith("day:")) "一日回顾" else "对话总结") { generate ->
                 for (index in startIndex until parts.size) {
                     ensureActive()
                     val label = if (parts.size <= 1) "正在生成小结…" else "正在整理 ${index + 1}/${parts.size} 部分"

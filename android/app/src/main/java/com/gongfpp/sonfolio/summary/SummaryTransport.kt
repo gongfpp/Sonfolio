@@ -24,7 +24,7 @@ internal class RemoteSummaryTransport(
     private val usage: com.gongfpp.sonfolio.UsageStore? = null,
     private val open: (String) -> HttpsURLConnection = { URL(it).openConnection() as HttpsURLConnection },
 ) {
-    suspend fun generate(config: SummaryConfig, system: String, user: String, maxTokens: Int = 2400, jsonMode: Boolean = true): String = suspendCancellableCoroutine { continuation ->
+    suspend fun generate(config: SummaryConfig, system: String, user: String, maxTokens: Int = 2400, jsonMode: Boolean = true, feature: String = "总结"): String = suspendCancellableCoroutine { continuation ->
         val connection = AtomicReference<HttpsURLConnection?>()
         val future = executor.submit {
             try {
@@ -80,7 +80,7 @@ internal class RemoteSummaryTransport(
                 val choice = body.getJSONArray("choices").getJSONObject(0)
                 verifyTransport(choice.optString("finish_reason") != "length") { "模型输出被截断，请重试或更换模型" }
                 val text = choice.getJSONObject("message").getString("content")
-                usage?.recordLlm(config.model, body.optJSONObject("usage")?.optLong("total_tokens") ?: 0L)
+                usage?.recordLlm(config.model, body.optJSONObject("usage")?.optLong("total_tokens") ?: 0L, SummaryProvider.fromEndpoint(config.endpoint).label, feature)
                 if (continuation.isActive) continuation.resume(text)
             } catch (error: Throwable) {
                 val message = when (error) {

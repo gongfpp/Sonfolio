@@ -35,7 +35,7 @@ internal class RemoteSpeechTransport(
         // 豆包录音文件识别走异步 submit/query，两次请求共用同一个 X-Api-Request-Id。
         if (config.provider == SpeechProvider.DOUBAO) {
             val result = doubaoRecognize(config, wav, chunkId, startedAt)
-            usage?.recordAsr(config.provider.name, window.durationMillis / 1_000)
+            usage?.recordAsr(config.provider.name, window.durationMillis / 1_000, config.model)
             return@withContext doubaoResultText(result)
         }
         val key = store.apiKey(config, chunkId, startedAt)
@@ -74,7 +74,7 @@ internal class RemoteSpeechTransport(
                 }
                 check(store.isAuthorized(config, chunkId, startedAt)) { "转文字配置已改变，请重新处理；已发出的请求无法撤回" }
                 val text = parse(config.provider, response)
-                usage?.recordAsr(config.provider.name, window.durationMillis / 1_000)
+                usage?.recordAsr(config.provider.name, window.durationMillis / 1_000, config.model)
                 text
             } catch (error: CancellationException) { throw error }
             catch (error: java.io.IOException) { error("识别网络中断或超时，录音已保留；重试可能再次计费") }
@@ -126,7 +126,7 @@ internal class RemoteSpeechTransport(
         val wav = wav(FloatArray(16_000))
         if (config.provider == SpeechProvider.DOUBAO) {
             doubaoRecognize(config, wav, chunkId, startedAt)
-            usage?.recordAsr(config.provider.name, 1)
+            usage?.recordAsr(config.provider.name, 1, config.model, "连接测试")
             "连通成功：豆包识别服务已响应（静音样例，未上传真实录音）"
         } else {
             val key = store.apiKey(config, chunkId, startedAt)
@@ -137,7 +137,7 @@ internal class RemoteSpeechTransport(
                 429 -> "连通失败：识别服务限流或额度不足"
                 else -> "连通失败：识别服务返回 HTTP ${result.status}"
             } }
-            usage?.recordAsr(config.provider.name, 1)
+            usage?.recordAsr(config.provider.name, 1, config.model, "连接测试")
             "连通成功：${config.provider.label} 识别服务已响应（静音样例，未上传真实录音）"
         }
     }
@@ -234,7 +234,7 @@ internal class RemoteSpeechTransport(
                 samples.copyInto(concat, cursor); cursor += samples.size
             }
             val result = doubaoRecognize(config, wavLong(concat), chunkId, startedAt)
-            usage?.recordAsr(config.provider.name, totalSamples / 16_000L)
+            usage?.recordAsr(config.provider.name, totalSamples / 16_000L, config.model)
             val utterances = result.optJSONArray("utterances")
             if (utterances == null) {
                 val text = result.optString("text", "").trim()
