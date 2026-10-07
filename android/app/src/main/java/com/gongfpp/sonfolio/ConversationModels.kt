@@ -42,6 +42,7 @@ data class TranscriptLine(
     val originalText: String? = null,
     /** 展示层把语气词碎句并入后，这一行实际覆盖的原始转写 id（含自身）。 */
     val mergedIds: List<String> = listOf(id),
+    val sourceStarts: Map<String, Long> = mapOf(id to startedAtMillis),
 )
 
 data class SearchHit(

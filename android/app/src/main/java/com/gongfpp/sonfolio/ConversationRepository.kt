@@ -335,9 +335,12 @@ class ConversationRepository(
         val row = conversationDao.getTranscriptWindow(transcriptId) ?: return emptyList()
         val correction = conversationDao.getTranscriptForCorrection(transcriptId)
         val baseline = correction?.originalText ?: correction?.text
-        conversationDao.updateTranscriptText(transcriptId, trimmed)
-        // 展示层会把语气词碎句并入相邻句；编辑合并行时清空同组的其他原始句，避免下次展示重复。
-        mergedSiblings(transcriptId, row.conversationId).forEach { conversationDao.clearTranscriptText(it) }
+        database.withTransaction {
+            val siblings = mergedSiblings(transcriptId, row.conversationId)
+            conversationDao.updateTranscriptText(transcriptId, trimmed)
+            // 先确定展示分组，再保存修改；合并隐藏的碎句也必须保留原文。
+            siblings.forEach { conversationDao.clearTranscriptText(it) }
+        }
         val prompts = if (baseline != null && baseline.trim() != trimmed) {
             // 词汇记录失败不应影响已经确认的文字修正。
             runCatching { vocabulary.recordCorrections(baseline, trimmed) }
@@ -368,8 +371,7 @@ class ConversationRepository(
                 val current = conversationDao.getTranscriptForCorrection(id)?.text
                 if (current == trimmed) return@forEach
                 conversationDao.updateTranscriptText(id, trimmed)
-                // 与手动编辑一致：清空展示层合并组的其他原始句，避免下次展示重复。
-                mergedSiblings(id, window.conversationId).forEach { conversationDao.clearTranscriptText(it) }
+                // 模型输入按原始句编号，不是展示层合并行；不能清空相邻原句。
                 if (conversationId == null) conversationId = window.conversationId
                 minStart = minOf(minStart, window.startedAtMillis)
                 maxEnd = maxOf(maxEnd, window.endedAtMillis)
@@ -380,7 +382,22 @@ class ConversationRepository(
         invalidateDerivedForCorrection(conversationId, minStart, maxEnd)
     }
 
-    /** 撤销本场对话的 AI 纠错：把 text 还原为 originalText，并重建派生数据。 */
+    /** 恢复选中展示行对应的原始句组，不影响其他句子的后续手工修改。 */
+    suspend fun restoreTranscriptLine(transcriptId: String) {
+        val ref = conversationDao.getTranscriptWindow(transcriptId) ?: return
+        val conversationId = ref.conversationId ?: return
+        val originals = conversationDao.getTranscriptOriginalRows(conversationId)
+        val originalGroups = TranscriptMerger.merge(originals.map {
+            TranscriptLine(it.id, it.startedAtMillis, it.endedAtMillis, it.originalText ?: it.text, "", 0L)
+        })
+        val ids = originalGroups.firstOrNull { transcriptId in it.mergedIds }?.mergedIds ?: listOf(transcriptId)
+        val changed = originals.filter { it.id in ids && it.originalText != null }
+        if (changed.isEmpty()) return
+        database.withTransaction { changed.forEach { conversationDao.revertTranscriptText(it.id) } }
+        invalidateDerivedForCorrection(conversationId, changed.minOf { it.startedAtMillis }, changed.maxOf { it.endedAtMillis })
+    }
+
+    /** 内部整场恢复原文；包含手工修改，不能作为“仅撤销 AI 批次”的 UI 入口。 */
     suspend fun revertTranscriptCorrections(conversationId: String) {
         val rows = conversationDao.correctedTranscripts(conversationId)
         if (rows.isEmpty()) return

@@ -176,6 +176,7 @@ internal class MemoryBackup(private val context: Context, private val database: 
                                 when (row.getString("processingState")) {
                                     "VAD_RUNNING" -> row.put("processingState", "RECORDED")
                                     "ASR_RUNNING" -> row.put("processingState", "VAD_READY")
+                                    "CORRECTION_RUNNING" -> row.put("processingState", "CORRECTION_PENDING")
                                 }
                             }
                             if (table == "summary_runs" && row.getString("state") in listOf("RUNNING", "QUEUED")) row.put("state", "CANCELLED").put("message", "备份已恢复，请重新配置总结方式后手动生成")

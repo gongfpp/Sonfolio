@@ -124,7 +124,13 @@ class SonfolioViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun retryProcessing(chunkId: String) {
-        viewModelScope.launch { recordingRepository.retryProcessing(chunkId) }
+        viewModelScope.launch {
+            val result = runCatching { recordingRepository.retryProcessing(chunkId) }
+            android.widget.Toast.makeText(getApplication(),
+                if (result.isSuccess) "已请求继续处理，不再等待充电；缺少模型或授权时请按录音状态提示操作"
+                else "未能加入处理队列：${result.exceptionOrNull()?.message ?: "请重试"}",
+                android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     fun markCurrentMoment(windowMinutes: Int = 3) {

@@ -80,6 +80,7 @@ internal fun RealConversationScreen(
     // 普通进入先看小结；从搜索命中进入时直接展示并定位对应转写。
     var transcriptOpen by rememberSaveable(conversationId) { mutableStateOf(initialTranscriptId != null) }
     var seekLineId by remember(conversationId) { mutableStateOf<String?>(null) }
+    var selectedLineId by rememberSaveable(conversationId, initialTranscriptId) { mutableStateOf(initialTranscriptId) }
     var playLineId by remember(conversationId) { mutableStateOf<String?>(null) }
     var playNonce by rememberSaveable(conversationId) { mutableLongStateOf(0L) }
     var titleDraft by remember(conversationId) { mutableStateOf<String?>(null) }
@@ -91,12 +92,12 @@ internal fun RealConversationScreen(
     var initialLocated by rememberSaveable(conversationId, initialTranscriptId) { mutableStateOf(false) }
     LaunchedEffect(initialTranscriptId, lines) {
         if (!initialLocated && initialTranscriptId != null) {
-            val index = lines.indexOfFirst { it.id == initialTranscriptId }
-            if (index >= 0) { listState.scrollToItem(index + 1); initialLocated = true }
+            val index = lines.indexOfFirst { initialTranscriptId in it.mergedIds }
+            if (index >= 0) { listState.scrollToItem(index + 1); seekLineId = initialTranscriptId; initialLocated = true }
         }
     }
     LaunchedEffect(seekLineId, lines) {
-        val idx = lines.indexOfFirst { it.id == seekLineId }
+        val idx = lines.indexOfFirst { seekLineId in it.mergedIds }
         if (idx >= 0) listState.scrollToItem(idx + 1)
     }
     val chunkStart = lines.minOfOrNull { it.startedAtMillis } ?: 0L
@@ -209,13 +210,13 @@ internal fun RealConversationScreen(
                     }
                 } else {
                     items(lines, key = { it.id }) { line ->
-                        val located = line.id == seekLineId || (seekLineId == null && line.id == initialTranscriptId)
+                        val located = selectedLineId in line.mergedIds
                         // Amber is a fixed light highlight; its foreground must not inherit dark-theme ink.
                         val amberBackground = line.isMarked && !located
                         val lineInk = if (amberBackground) Color(0xFF443716) else Ink
                         val lineSecondary = if (amberBackground) Color(0xFF69562C) else InkSoft
                         Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { seekLineId = line.id },
+                            modifier = Modifier.fillMaxWidth().clickable { selectedLineId = line.id; seekLineId = line.id },
                             shape = RoundedCornerShape(8.dp),
                             color = when {
                                 located -> PaleGreenStrong
@@ -226,7 +227,10 @@ internal fun RealConversationScreen(
                             Column(Modifier.padding(vertical = 6.dp, horizontal = 5.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
-                                        onClick = { seekLineId = line.id; playLineId = line.id; playNonce++ },
+                                        onClick = {
+                                            val target = selectedLineId?.takeIf { it in line.mergedIds } ?: line.id
+                                            selectedLineId = target; seekLineId = target; playLineId = target; playNonce++
+                                        },
                                         modifier = Modifier.size(48.dp),
                                     ) {
                                         Icon(Icons.Default.PlayArrow, contentDescription = "播放这一句", tint = if (amberBackground) Color(0xFF226548) else Green, modifier = Modifier.size(18.dp))
@@ -295,13 +299,13 @@ internal fun RealConversationScreen(
             )
         }
         if (markerDialog) {
-            val point = lines.firstOrNull { it.id == seekLineId }?.endedAtMillis
+            val point = lines.firstOrNull { selectedLineId in it.mergedIds }?.endedAtMillis
                 ?: conversation?.endedAtMillis ?: System.currentTimeMillis()
             AlertDialog(
                 onDismissRequest = { markerDialog = false },
                 title = { Text("标记") },
                 text = { Column {
-                    Text("从选中的转写行（未选中则从这场对话的结尾）向前标记为重要。", fontSize = 12.sp, color = InkSoft, modifier = Modifier.padding(bottom = 6.dp))
+                    Text("从 ${formatClock(point)}（${if (selectedLineId != null) "选中句末" else "对话结尾"}）向前标记为重要。", fontSize = 12.sp, color = InkSoft, modifier = Modifier.padding(bottom = 6.dp))
                     listOf(30 to "30 秒", 60 to "1 分", 180 to "3 分", 300 to "5 分", 600 to "10 分", 1200 to "20 分", 1800 to "30 分").forEach { (seconds, label) ->
                         TextButton(onClick = {
                             viewModel.addBackwardMarker(point, seconds * 1_000L)
@@ -320,6 +324,14 @@ internal fun RealConversationScreen(
                     OutlinedTextField(editLineText, { editLineText = it }, label = { Text("识别文字") }, minLines = 2)
                     if (line.originalText == null) Text("保存后会保留原始识别版本。", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
                     else Text("原始版本：${line.originalText}", color = InkSoft, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                    if (line.originalText != null) TextButton(onClick = {
+                        exportScope.launch {
+                            val app = exportContext.applicationContext as SonfolioApplication
+                            val result = runCatching { app.conversationRepository.restoreTranscriptLine(line.id) }
+                            if (result.isSuccess) editingLine = null
+                            Toast.makeText(exportContext, if (result.isSuccess) "这一句已恢复为原始识别文字" else "恢复失败，请重试", Toast.LENGTH_LONG).show()
+                        }
+                    }) { Text("恢复这一句原文") }
                 } },
                 confirmButton = { TextButton(onClick = {
                     viewModel.updateTranscriptText(line.id, editLineText) { candidates -> vocabularyPrompt = candidates }

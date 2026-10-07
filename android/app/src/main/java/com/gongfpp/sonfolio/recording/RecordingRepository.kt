@@ -247,7 +247,14 @@ class RecordingRepository(
         if (state.endsWith("RUNNING")) {
             // WorkManager 会自行恢复被中断的任务；只有在确认没有未完成任务时才允许重置。
             val scheduler = processingScheduler ?: return
-            if (scheduler.hasUnfinishedProcessingWork(chunkId)) return
+            if (scheduler.hasUnfinishedProcessingWork(chunkId)) {
+                when (state) {
+                    ChunkProcessing.VAD_RUNNING -> scheduler.enqueueVad(chunkId, manual = true)
+                    ChunkProcessing.ASR_RUNNING -> scheduler.enqueueAsr(chunkId, manual = true)
+                    ChunkProcessing.CORRECTION_RUNNING -> scheduler.enqueueCorrection(chunkId, manual = true)
+                }
+                return
+            }
             when (state) {
                 ChunkProcessing.VAD_RUNNING -> recordingDao.updateProcessingState(chunkId, ChunkProcessing.RECORDED, "应用退出后等待重新处理")
                 ChunkProcessing.ASR_RUNNING -> {
@@ -260,7 +267,7 @@ class RecordingRepository(
         }
         if (state in setOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) {
             recordingDao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，等待整理")
-            processingScheduler?.enqueueAssembly(chunkId)
+            processingScheduler?.enqueueAssembly(chunkId, manual = true)
         } else if (state in setOf(ChunkProcessing.CORRECTION_PENDING, ChunkProcessing.CORRECTION_FAILED)) {
             recordingDao.updateProcessingState(chunkId, ChunkProcessing.CORRECTION_PENDING, "等待错别字与标点纠错")
             processingScheduler?.enqueueCorrection(chunkId, manual = true)
@@ -347,6 +354,7 @@ class RecordingRepository(
      */
     suspend fun endInterruptedSession(nowMillis: Long = System.currentTimeMillis()) {
         recordingDao.closeOpenGaps("INTERRUPTION", nowMillis, automatic = false)
+        recordingDao.closeOpenGaps("SYSTEM_SILENCED", nowMillis, automatic = false)
         RecordingController.updateHealth { it.copy(failure = null) }
     }
 

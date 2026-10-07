@@ -28,6 +28,17 @@ class TranscriptMergerTest {
         assertEquals("嗯啊？我说的是录音", merged.single().text)
         assertEquals(listOf("a", "b", "c"), merged.single().mergedIds)
         assertEquals(0L, merged.single().startedAtMillis)
+        assertEquals(2_000L, merged.single().sourceStarts["c"])
+    }
+
+    @Test fun correctedMergedLineIncludesOriginalTextAndAllSourceTimes() {
+        val merged = TranscriptMerger.merge(listOf(
+            line("a", 0, "嗯"), line("b", 1_000, "周五提交预算").copy(originalText = "周五提交预蒜"),
+            line("c", 2_000, "").copy(originalText = "啊"),
+        )).single()
+        assertEquals("嗯周五提交预蒜啊", merged.originalText)
+        assertEquals(listOf("a", "b", "c"), merged.mergedIds)
+        assertEquals(mapOf("a" to 0L, "b" to 1_000L, "c" to 2_000L), merged.sourceStarts)
     }
 
     @Test fun punctuationOnlyAndRepeatedFillersAreNonNutritive() {

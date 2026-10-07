@@ -7,11 +7,12 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import androidx.work.Constraints
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkInfo
+import androidx.work.Data
+import java.util.UUID
 import com.gongfpp.sonfolio.SonfolioPreferences
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -19,22 +20,14 @@ import com.gongfpp.sonfolio.SonfolioApplication
 
 class ProcessingScheduler(context: Context) {
     private val appContext = context.applicationContext
-    fun enqueueAssembly(chunkId: String) = AssemblyWorker.enqueue(appContext, chunkId)
+    suspend fun enqueueAssembly(chunkId: String, manual: Boolean = false) = enqueueStage(
+        chunkId, manual, "assemble:$chunkId", OneTimeWorkRequestBuilder<AssemblyWorker>(), "sonfolio-assembly", "chunk", constrained = false,
+    )
 
     /** 第 5 步纠错；manual=true 表示用户「继续处理」，不受仅充电约束。 */
-    fun enqueueCorrection(chunkId: String, manual: Boolean = false) {
-        runCatching {
-            val request = OneTimeWorkRequestBuilder<TranscriptCorrectionWorker>()
-                .setConstraints(if (manual) Constraints.NONE else constraints())
-                .setInputData(workDataOf("chunk" to chunkId))
-                .addTag(TranscriptCorrectionWorker.TAG)
-                .addTag("processing-manual:$manual")
-                .build()
-            WorkManager.getInstance(appContext).enqueueUniqueWork(
-                "sonfolio-correct-$chunkId", ExistingWorkPolicy.KEEP, request,
-            )
-        }.onFailure { Log.e("ProcessingScheduler", "无法加入纠错队列，文字保持原样", it) }
-    }
+    suspend fun enqueueCorrection(chunkId: String, manual: Boolean = false) = enqueueStage(
+        chunkId, manual, "sonfolio-correct-$chunkId", OneTimeWorkRequestBuilder<TranscriptCorrectionWorker>(), TranscriptCorrectionWorker.TAG, "chunk",
+    )
 
     /** 整理完成后的录音压缩；约束比 ASR 宽松，但避免低电与低存储时写入大文件。 */
     fun enqueueCompression(chunkId: String) {
@@ -83,44 +76,49 @@ class ProcessingScheduler(context: Context) {
     }
 
     /** manual=true 表示用户主动「继续处理」：不受充电/仅充电设置约束，立即排入。 */
-    fun enqueueVad(audioChunkId: String, manual: Boolean = false) {
-        runCatching {
-        val request = OneTimeWorkRequestBuilder<VadWorker>()
-            .setConstraints(if (manual) Constraints.NONE else constraints())
-            .setInputData(workDataOf(VadWorker.AUDIO_CHUNK_ID to audioChunkId))
-            .addTag(VadWorker.TAG)
-            .addTag("processing-manual:$manual")
-            .build()
-        WorkManager.getInstance(appContext).enqueueUniqueWork(
-            "sonfolio-vad-$audioChunkId",
-            ExistingWorkPolicy.KEEP,
-            request,
-        )
-        }.onFailure { Log.e("ProcessingScheduler", "无法加入处理队列，录音保持待处理状态", it) }
-    }
+    suspend fun enqueueVad(audioChunkId: String, manual: Boolean = false) = enqueueStage(
+        audioChunkId, manual, "sonfolio-vad-$audioChunkId", OneTimeWorkRequestBuilder<VadWorker>(), VadWorker.TAG, VadWorker.AUDIO_CHUNK_ID,
+    )
 
     /**
-     * ASR is kept in one unique chain because the int8 SenseVoice model is large. Serializing
-     * chunks prevents two native recognizers from competing for the phone's memory.
+     * 每份录音独立排队，避免手动请求被其他录音的充电约束挡住。
+     * 真正的串行执行由 AsrWorker 的锁保证，不靠任务依赖链。
      */
-    fun enqueueAsr(audioChunkId: String, manual: Boolean = false) {
-        scope.launch {
-            runCatching {
-                scheduleLock.withLock {
-                    val manager = WorkManager.getInstance(appContext)
-                    val chunkTag = "sonfolio-asr-chunk-$audioChunkId"
-                    if (manager.getWorkInfosByTag(chunkTag).get().any { !it.state.isFinished }) return@withLock
-                    val request = OneTimeWorkRequestBuilder<AsrWorker>()
-                        .setConstraints(if (manual) Constraints.NONE else constraints())
-                        .setInputData(workDataOf(AsrWorker.AUDIO_CHUNK_ID to audioChunkId))
-                        .addTag(AsrWorker.TAG)
-                        .addTag("processing-manual:$manual")
-                        .addTag(chunkTag)
-                        .build()
-                    manager.enqueueUniqueWork(ASR_QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).result.get()
-                }
-            }.onFailure { Log.e("ProcessingScheduler", "无法加入转写队列，录音保持待处理状态", it) }
+    suspend fun enqueueAsr(audioChunkId: String, manual: Boolean = false) = enqueueStage(
+        audioChunkId, manual, "sonfolio-asr-$audioChunkId", OneTimeWorkRequestBuilder<AsrWorker>(), AsrWorker.TAG, AsrWorker.AUDIO_CHUNK_ID,
+        legacyAsrTag = "sonfolio-asr-chunk-$audioChunkId",
+    )
+
+    private suspend fun enqueueStage(
+        chunkId: String, manual: Boolean, name: String, builder: OneTimeWorkRequest.Builder,
+        tag: String, inputKey: String, constrained: Boolean = true, legacyAsrTag: String? = null,
+    ): Unit = withContext(Dispatchers.IO) {
+        scheduleLock.withLock {
+            val manager = WorkManager.getInstance(appContext)
+            val active = (legacyAsrTag?.let { manager.getWorkInfosByTag(it).get() }
+                ?: manager.getWorkInfosForUniqueWork(name).get()).filter { !it.state.isFinished }
+            if (!manual && active.isNotEmpty()) return@withLock
+            // 旧版本 ASR 链中 BLOCKED 的节点无法用 updateWork 脱离依赖；另排独立任务。
+            // 旧节点不取消（取消会级联到其他录音），日后运行时根据已完成状态直接退出。
+            val existing = active.firstOrNull { it.state == WorkInfo.State.RUNNING }
+                ?: active.firstOrNull { it.state != WorkInfo.State.BLOCKED }
+            builder.setConstraints(if (manual || !constrained) Constraints.NONE else constraints())
+                .setInputData(workDataOf(inputKey to chunkId, MANUAL to manual))
+                .addTag(tag).addTag("processing-manual:$manual")
+            legacyAsrTag?.let { builder.addTag(it) }
+            if (existing != null) {
+                builder.setId(existing.id)
+                manager.updateWork(builder.build()).get()
+            } else {
+                manager.enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, builder.build()).result.get()
+            }
         }
+    }
+
+    /** updateWork 不改变正在运行的本轮 inputData，阶段交接时读取最新持久化标记。 */
+    suspend fun isManual(workId: UUID, input: Data): Boolean = withContext(Dispatchers.IO) {
+        input.getBoolean(MANUAL, false) ||
+            WorkManager.getInstance(appContext).getWorkInfoById(workId).get()?.tags?.contains("processing-manual:true") == true
     }
 
     /** 该切片是否仍有未完成的 VAD/ASR 任务；用于区分正在执行的 RUNNING 状态与进程被杀后的孤儿状态。 */
@@ -137,8 +135,7 @@ class ProcessingScheduler(context: Context) {
         .build()
 
     companion object {
-        private const val ASR_QUEUE_NAME = "sonfolio-asr-queue"
-        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        const val MANUAL = "processing_manual"
         private val scheduleLock = Mutex()
     }
 }

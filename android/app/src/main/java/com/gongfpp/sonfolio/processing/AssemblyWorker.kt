@@ -18,7 +18,7 @@ class AssemblyWorker(context: Context, params: WorkerParameters) : CoroutineWork
             if (TranscriptCorrectionWorker.correctionEnabled(app, app.summarySettings.read().mode)) {
                 // 第 5 步：先纠错，再由 TranscriptCorrectionWorker 完成并排队 AI 总结。
                 dao.updateProcessingState(id, ChunkProcessing.CORRECTION_PENDING, "等待错别字与标点纠错")
-                app.processingScheduler.enqueueCorrection(id)
+                app.processingScheduler.enqueueCorrection(id, app.processingScheduler.isManual(this.id, inputData))
             } else {
                 dao.updateProcessingState(id, ChunkProcessing.ASR_READY, null)
                 try { app.summaryCoordinator.enqueueForNewChunk(id) }
@@ -33,12 +33,6 @@ class AssemblyWorker(context: Context, params: WorkerParameters) : CoroutineWork
             dao.updateProcessingState(id, if (runAttemptCount < 2) ChunkProcessing.ASSEMBLY_PENDING else ChunkProcessing.ASSEMBLY_FAILED,
                 if (runAttemptCount < 2) "文字已保存，整理遇到问题，稍后自动重试" else "文字已保存，整理未完成；点击继续处理，不会重新识别录音")
             if (runAttemptCount < 2) Result.retry() else Result.success()
-        }
-    }
-    companion object {
-        fun enqueue(context: Context, id: String) {
-            WorkManager.getInstance(context).enqueueUniqueWork("assemble:$id", ExistingWorkPolicy.KEEP,
-                OneTimeWorkRequestBuilder<AssemblyWorker>().setInputData(workDataOf("chunk" to id)).build())
         }
     }
 }

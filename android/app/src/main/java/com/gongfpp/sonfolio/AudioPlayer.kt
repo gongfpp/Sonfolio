@@ -55,8 +55,8 @@ internal fun RealAudioPlayer(
         timelineState.value = withContext(Dispatchers.Default) { PlaybackTimeline.forConversation(lines, chunks, gaps) }
     }
     val timeline = timelineState.value
-    val locateTime = requestedLineId?.let { id -> lines.firstOrNull { it.id == id }?.startedAtMillis }
-    val playTime = playRequest?.let { (id, _) -> lines.firstOrNull { it.id == id }?.startedAtMillis }
+    val locateTime = requestedLineId?.let { id -> lines.firstOrNull { id in it.mergedIds }?.sourceStarts?.get(id) }
+    val playTime = playRequest?.let { (id, _) -> lines.firstOrNull { id in it.mergedIds }?.sourceStarts?.get(id) }
     TimelineAudioPlayer(
         timeline = timeline,
         requestedTime = locateTime,

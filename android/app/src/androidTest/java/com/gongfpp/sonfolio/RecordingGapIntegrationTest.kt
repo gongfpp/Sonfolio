@@ -14,6 +14,21 @@ import org.junit.runner.RunWith
 class RecordingGapIntegrationTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun endingInterruptedRecordingClosesBothGapKindsWithoutDeletingHistory() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+        try {
+            val dao = db.recordingDao()
+            dao.openGap(10_000, "系统静音", "SYSTEM_SILENCED")
+            dao.openGap(20_000, "采集中断")
+            val ids = dao.getGaps().map { it.id }
+            com.gongfpp.sonfolio.recording.RecordingRepository(dao).endInterruptedSession(30_000)
+            assertEquals(ids, dao.getGaps().map { it.id })
+            assertTrue(dao.getGaps().all { it.endedAtMillis == 30_000L })
+            assertNull(dao.getOpenGap("SYSTEM_SILENCED"))
+            assertNull(dao.getOpenGap("INTERRUPTION"))
+        } finally { db.close() }
+    }
+
     @Test fun lateBridgeRedirectsOldIdAndLeavesOtherDaysUntouched() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
         val prefsName = "qa-alias-${System.nanoTime()}"

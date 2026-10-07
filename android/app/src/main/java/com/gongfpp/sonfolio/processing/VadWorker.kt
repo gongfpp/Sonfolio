@@ -54,7 +54,7 @@ class VadWorker(
                 if (entities.isNotEmpty()) dao.insertSpeechSegments(entities)
                 dao.updateProcessingState(chunkId, ChunkProcessing.VAD_READY, null)
             }
-            app.processingScheduler.enqueueAsr(chunkId)
+            app.processingScheduler.enqueueAsr(chunkId, app.processingScheduler.isManual(id, inputData))
             Result.success()
         } catch (error: CancellationException) {
             throw error

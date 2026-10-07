@@ -125,7 +125,7 @@ class BackupIntegrationTest {
             val file = File(File(root, "recordings").apply { mkdirs() }, "source.wav")
             WavChunkWriter(file, 16_000, 1).use { it.write(ByteArray(32_000), 32_000) }
             val audio = file.readBytes()
-            source.recordingDao().insertChunk(AudioChunkEntity("backup-test", 1_000, 2_000, file.path, file.length(), 16_000, 1, "ASR_READY", null))
+            source.recordingDao().insertChunk(AudioChunkEntity("backup-test", 1_000, 2_000, file.path, file.length(), 16_000, 1, "CORRECTION_RUNNING", null))
             source.recordingDao().insertSpeechSegments(listOf(SpeechSegmentEntity("speech", "backup-test", 0, 1_000, 1f, "ASR_READY")))
             source.recordingDao().insertTranscript(TranscriptEntity("text", "speech", null, 1_000, 2_000, "备份测试资料", "zh", "test", "test", "ASR_READY", null))
             source.recordingDao().insertMarker(MarkerEntity("mark", 1_500, 1_000, 0, null))
@@ -133,6 +133,7 @@ class BackupIntegrationTest {
             MemoryBackup(context, source, fixtureMutex).export(archive)
             MemoryBackup(context, target, fixtureMutex).restore(archive)
             val restored = target.recordingDao().getChunk("backup-test")!!
+            assertEquals("CORRECTION_PENDING", restored.processingState)
             assertNotEquals(file.path, restored.localPath)
             assertArrayEquals(audio, File(restored.localPath).readBytes())
             assertEquals("备份测试资料", target.conversationDao().getReadyRowsInWindow(Long.MIN_VALUE, Long.MAX_VALUE).single().text)

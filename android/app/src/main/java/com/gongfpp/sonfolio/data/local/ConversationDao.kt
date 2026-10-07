@@ -184,7 +184,7 @@ interface ConversationDao {
         JOIN audio_chunks a ON a.id = s.audioChunkId
         WHERE t.conversationId = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :conversationId), :conversationId)
           AND t.processingState = 'ASR_READY'
-          AND t.text <> ''
+          AND (t.text <> '' OR t.originalText IS NOT NULL)
         ORDER BY t.startedAtMillis ASC
         """,
     )
@@ -230,7 +230,7 @@ interface ConversationDao {
     suspend fun updateTranscriptText(id: String, text: String)
 
     /** 清空某条转写文字（被合并进相邻展示行后不再单独显示；originalText 仍保留）。 */
-    @Query("UPDATE transcripts SET text = '' WHERE id = :id")
+    @Query("UPDATE transcripts SET originalText = COALESCE(originalText, text), text = '' WHERE id = :id")
     suspend fun clearTranscriptText(id: String)
 
     /** 本场对话里被 AI 纠错改过的行（text 与 originalText 不同）。 */
@@ -241,8 +241,11 @@ interface ConversationDao {
     suspend fun correctedTranscripts(conversationId: String): List<TranscriptCorrectionRow>
 
     /** 撤销 AI 纠错：把文字还原为 originalText，并清除该标记。 */
-    @Query("UPDATE transcripts SET text = originalText, originalText = NULL WHERE id = :id")
+    @Query("UPDATE transcripts SET text = originalText, originalText = NULL WHERE id = :id AND originalText IS NOT NULL")
     suspend fun revertTranscriptText(id: String)
+
+    @Query("SELECT * FROM transcripts WHERE conversationId = COALESCE((SELECT canonicalId FROM conversation_aliases WHERE oldId = :conversationId), :conversationId) ORDER BY startedAtMillis, id")
+    suspend fun getTranscriptOriginalRows(conversationId: String): List<TranscriptEntity>
 
     @Query("SELECT id, conversationId, startedAtMillis, endedAtMillis FROM transcripts WHERE id = :id LIMIT 1")
     suspend fun getTranscriptWindow(id: String): TranscriptRef?

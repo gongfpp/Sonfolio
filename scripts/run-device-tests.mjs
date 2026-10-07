@@ -45,6 +45,7 @@ if (flags.includes('--ui')) {
   if (showing !== 'false') throw new Error('无法确认手机是否已解锁，未启动 UI 测试');
 }
 nonUi.push('UsageStoreIntegrationTest');
+nonUi.push('ProcessingSchedulerIntegrationTest');
 const uiClasses = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest', 'SettingsExperienceTest'];
 const requested = flags.filter(flag => flag.startsWith('--class=')).map(flag => flag.slice(8));
 if (requested.some(name => ![...nonUi, ...uiClasses, 'RecordingReliabilityTest', 'LocalSummaryQualityTest'].includes(name))) throw new Error('未知测试类');

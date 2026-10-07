@@ -11,6 +11,8 @@ import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AsrWorker(
     appContext: Context,
@@ -18,7 +20,7 @@ class AsrWorker(
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
         val chunkId = inputData.getString(AUDIO_CHUNK_ID) ?: return Result.failure()
-        return AudioFileAccess.processingRead(chunkId) { process() }
+        return executionLock.withLock { AudioFileAccess.processingRead(chunkId) { process() } }
     }
 
     private suspend fun process(): Result {
@@ -31,7 +33,7 @@ class AsrWorker(
         // 已整理（含其后的纠错阶段）或已清理的切片不再重新识别。
         if (ChunkProcessing.isAssembled(chunk.processingState)) return Result.success()
         if (chunk.processingState in listOf(ChunkProcessing.ASSEMBLY_PENDING, ChunkProcessing.ASSEMBLY_FAILED)) {
-            AssemblyWorker.enqueue(applicationContext, chunkId); return Result.success()
+            app.processingScheduler.enqueueAssembly(chunkId, app.processingScheduler.isManual(id, inputData)); return Result.success()
         }
         val segments = dao.getSpeechSegments(chunkId)
         val config = app.transcriptionSettings.read()
@@ -144,7 +146,7 @@ class AsrWorker(
                 }
             }
             // Scheduling errors leave persisted text pending; opening the app can re-enqueue it.
-            runCatching { AssemblyWorker.enqueue(applicationContext, chunkId) }
+            app.processingScheduler.enqueueAssembly(chunkId, app.processingScheduler.isManual(id, inputData))
             Result.success()
         } catch (error: CancellationException) {
             throw error
@@ -153,6 +155,10 @@ class AsrWorker(
             // 失败已落库，队列本身成功结束这一项，避免取消后续其他录音。
             Result.success()
         } catch (error: Throwable) {
+            if (dao.getChunk(chunkId)?.processingState == ChunkProcessing.ASSEMBLY_PENDING) {
+                dao.updateProcessingState(chunkId, ChunkProcessing.ASSEMBLY_PENDING, "文字已保存，但整理未能排队；请继续处理")
+                return Result.success()
+            }
             dao.updateProcessingState(
                 chunkId,
                 ChunkProcessing.ASR_FAILED,
@@ -223,6 +229,7 @@ class AsrWorker(
             (config.provider == SpeechProvider.SILICONFLOW || config.provider == SpeechProvider.DOUBAO)) "auto" else language
 
     companion object {
+        private val executionLock = Mutex()
         const val AUDIO_CHUNK_ID = "audio_chunk_id"
         const val TAG = "sonfolio-asr"
     }

@@ -6,6 +6,11 @@ import androidx.work.WorkerParameters
 import com.gongfpp.sonfolio.SonfolioApplication
 import com.gongfpp.sonfolio.summary.SummaryMode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 /**
  * 第 5 步：把本切片的结构化转写交给已配置的总结模型，纠正错别字与标点。
@@ -18,7 +23,7 @@ class TranscriptCorrectionWorker(context: Context, params: WorkerParameters) : C
         val dao = app.database.recordingDao()
         val chunkId = inputData.getString("chunk") ?: return Result.failure()
         val chunk = dao.getChunk(chunkId) ?: return Result.success()
-        if (chunk.processingState !in listOf(ChunkProcessing.CORRECTION_PENDING, ChunkProcessing.CORRECTION_FAILED)) return Result.success()
+        if (chunk.processingState !in listOf(ChunkProcessing.CORRECTION_PENDING, ChunkProcessing.CORRECTION_FAILED, ChunkProcessing.CORRECTION_RUNNING)) return Result.success()
         val config = app.summarySettings.read()
         if (!correctionEnabled(app, config.mode)) { complete(app, chunkId); return Result.success() }
         dao.updateProcessingState(chunkId, ChunkProcessing.CORRECTION_RUNNING, null)
@@ -30,7 +35,17 @@ class TranscriptCorrectionWorker(context: Context, params: WorkerParameters) : C
             }
             complete(app, chunkId)
             Result.success()
+        } catch (error: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            complete(app, chunkId)
+            dao.updateProcessingState(chunkId, ChunkProcessing.CORRECTION_FAILED, "本次纠错超时，文字已保留；可点继续处理重试")
+            Result.success()
         } catch (error: CancellationException) {
+            withContext(NonCancellable) {
+                if (dao.getChunk(chunkId)?.processingState == ChunkProcessing.CORRECTION_RUNNING) {
+                    dao.updateProcessingState(chunkId, ChunkProcessing.CORRECTION_PENDING, "纠错已中断，文字已保留，等待继续处理")
+                }
+            }
             throw error
         } catch (error: Throwable) {
             if (runAttemptCount < 1) {

@@ -14,6 +14,34 @@ import org.junit.runner.RunWith
 /** ⑥ 标记撤销、标题、修正转写（保留原始版本）的数据层验收。 */
 @RunWith(AndroidJUnit4::class)
 class ConversationEditIntegrationTest {
+    @Test fun restoreMergedLinePreservesAllOriginalSentencesAndOtherManualEdits() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val db = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()
+        val prefs = "qa-restore-${System.nanoTime()}"
+        val repo = ConversationRepository(db, SonfolioPreferences(context, prefs))
+        try {
+            val dao = db.recordingDao()
+            val base = System.currentTimeMillis() - 60_000
+            dao.insertChunk(AudioChunkEntity("c", base, base + 10_000, "/qa/restore.wav", 4_000, 16_000, 1, "ASR_READY", null))
+            listOf("嗯", "周五提交预蒜", "另一条需要保留").forEachIndexed { i, text ->
+                dao.insertSpeechSegments(listOf(SpeechSegmentEntity("s$i", "c", i * 2_000L, i * 2_000L + 1_000, 1f, "ASR_READY")))
+                dao.insertTranscript(TranscriptEntity("t$i", "s$i", null, base + i * 2_000, base + i * 2_000 + 1_000, text, "zh", "qa", "qa", "ASR_READY", null))
+            }
+            repo.rebuildFromTranscripts()
+            val id = repo.observeTimeline().first().single().id
+            repo.applyTranscriptCorrections(mapOf("t1" to "周五提交预算"))
+            assertEquals("嗯周五提交预算", repo.observeTranscript(id).first().first().text)
+            repo.updateTranscriptText("t0", "周六提交预算")
+            repo.updateTranscriptText("t2", "另一条手工修改")
+            repo.restoreTranscriptLine("t0")
+            val lines = repo.observeTranscript(id).first()
+            assertEquals("嗯周五提交预蒜", lines.first().text)
+            assertEquals("另一条手工修改", lines.last().text)
+            assertNull(lines.first().originalText)
+            assertEquals(base + 2_000, lines.first().sourceStarts["t1"])
+        } finally { db.close(); context.deleteSharedPreferences(prefs) }
+    }
+
     @Test fun editTitleUndoMarkerAndCorrectTranscriptKeepOriginal() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, SonfolioDatabase::class.java).build()

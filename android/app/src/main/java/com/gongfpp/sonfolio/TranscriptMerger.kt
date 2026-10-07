@@ -36,6 +36,8 @@ internal object TranscriptMerger {
                     endedAtMillis = maxOf(previous.endedAtMillis, line.endedAtMillis),
                     text = previous.text + line.text,
                     mergedIds = previous.mergedIds + line.id,
+                    sourceStarts = previous.sourceStarts + line.sourceStarts,
+                    originalText = originalOf(listOf(previous, line)),
                 )
                 continue
             }
@@ -47,6 +49,8 @@ internal object TranscriptMerger {
                     startedAtMillis = head.startedAtMillis,
                     text = joined,
                     mergedIds = pending.map { it.id } + line.id,
+                    sourceStarts = (pending + line).flatMap { it.sourceStarts.entries }.associate { it.toPair() },
+                    originalText = originalOf(pending + line),
                 )
                 pending.clear()
             } else {
@@ -62,6 +66,8 @@ internal object TranscriptMerger {
                     endedAtMillis = maxOf(previous.endedAtMillis, pending.last().endedAtMillis),
                     text = previous.text + tail,
                     mergedIds = previous.mergedIds + pending.map { it.id },
+                    sourceStarts = previous.sourceStarts + pending.flatMap { it.sourceStarts.entries }.associate { it.toPair() },
+                    originalText = originalOf(listOf(previous) + pending),
                 )
             } else {
                 return lines
@@ -69,4 +75,7 @@ internal object TranscriptMerger {
         }
         return merged
     }
+
+    private fun originalOf(lines: List<TranscriptLine>): String? =
+        if (lines.any { it.originalText != null }) lines.joinToString("") { it.originalText ?: it.text } else null
 }
