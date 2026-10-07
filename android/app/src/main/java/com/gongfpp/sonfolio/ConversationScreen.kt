@@ -53,6 +53,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gongfpp.sonfolio.data.local.ConversationSummaryEntity
@@ -149,6 +152,7 @@ internal fun RealConversationScreen(
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize()
+                .testTag("conversation-transcript-list")
                 .padding(padding),
             state = listState,
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
@@ -216,7 +220,9 @@ internal fun RealConversationScreen(
                         val lineInk = if (amberBackground) Color(0xFF443716) else Ink
                         val lineSecondary = if (amberBackground) Color(0xFF69562C) else InkSoft
                         Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { selectedLineId = line.id; seekLineId = line.id },
+                            modifier = Modifier.fillMaxWidth().testTag("transcript-${line.id}")
+                                .semantics { selected = located }
+                                .clickable { selectedLineId = line.id; seekLineId = line.id },
                             shape = RoundedCornerShape(8.dp),
                             color = when {
                                 located -> PaleGreenStrong

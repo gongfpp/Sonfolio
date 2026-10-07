@@ -46,7 +46,7 @@ if (flags.includes('--ui')) {
 }
 nonUi.push('UsageStoreIntegrationTest');
 nonUi.push('ProcessingSchedulerIntegrationTest');
-const uiClasses = ['SearchResultsUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest', 'SettingsExperienceTest'];
+const uiClasses = ['SearchResultsUiTest', 'ConversationJourneyUiTest', 'ClientUiTest', 'ExperienceAcceptanceTest', 'PublicScreenshotsTest', 'SettingsExperienceTest'];
 const requested = flags.filter(flag => flag.startsWith('--class=')).map(flag => flag.slice(8));
 if (requested.some(name => ![...nonUi, ...uiClasses, 'RecordingReliabilityTest', 'LocalSummaryQualityTest'].includes(name))) throw new Error('未知测试类');
 if (requested.some(name => uiClasses.includes(name)) && !flags.includes('--ui')) throw new Error('界面测试需要 --ui，不能绕过亮屏检查');
@@ -57,7 +57,7 @@ let skipped = 0;
 for (const name of classes) {
   let output;
   try {
-    output = command(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', `${namespace}.${name}`, ...(name === 'PublicScreenshotsTest' && flags.includes('--screenshots') ? ['-e', 'publicScreenshots', 'true'] : []), runner]);
+    output = command(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', `${namespace}.${name}`, ...(flags.includes('--ui') ? ['-e', 'qaForeground', 'true'] : []), ...(name === 'PublicScreenshotsTest' && flags.includes('--screenshots') ? ['-e', 'publicScreenshots', 'true'] : []), runner]);
   } finally {
     if (personalSnapshot() !== before) throw new Error('个人录音文件或哈希发生变化，立即停止；不得继续运行套件');
   }
