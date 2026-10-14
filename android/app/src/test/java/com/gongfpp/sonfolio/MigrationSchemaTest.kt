@@ -77,7 +77,8 @@ class MigrationSchemaTest {
 
     /**
      * 让迁移对象在真实的 [SupportSQLiteDatabase] 类型下执行一次，只收集它 `execSQL` 的语句。
-     * 迁移体里除了 `execSQL` 不调用别的方法；其余方法用代理返回默认值。
+     * 迁移体里除了 `execSQL` 不调用别的方法；其余方法用代理返回默认值，代理不执行任何
+     * 真实数据库操作，因此本用例不覆盖数据读写。
      */
     private fun recordedSql(migration: Migration): List<String> {
         val recorded = mutableListOf<String>()
@@ -114,6 +115,10 @@ class MigrationSchemaTest {
         else -> null
     }
 
+    /**
+     * 断言结构一致：表集合、每张表的列名与 `notNull`、索引名/唯一性与列顺序。
+     * 边界：不比较列类型与默认值，也不比较数据内容——本门禁只覆盖结构漂移。
+     */
     private fun assertSchemaMatches(db: Connection, schema: JSONObject) {
         val entities = schema.getJSONArray("entities")
         val expectedTables = mutableSetOf<String>()
