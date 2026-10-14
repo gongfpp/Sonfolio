@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
 class MigrationIntegrationTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
-    /** 用导出的 Schema JSON 重建版本 4–9 的旧库，迁移到 10 后核对原音、对话字段、个人词汇与恒定列清理。 */
+    /** 用导出的 Schema JSON 重建版本 4–9 的旧库，迁移到 13 后核对原音、对话字段、个人词汇与恒定列清理。 */
     @Test fun upgradeFromVersion4Through9PreservesAudioAndConversationFields() = runBlocking {
         for (oldVersion in listOf(4, 5, 6, 7, 8, 9)) {
         val name = "migration-qa-${UUID.randomUUID()}.db"

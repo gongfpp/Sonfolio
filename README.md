@@ -11,7 +11,7 @@
 
 声迹在后台持续录音，自动做语音检测与转写，把相邻语音合并成一场对话，再按日期整理成时间线。录音、识别和基础整理默认都在手机上完成，不需要账号或自建后端；外部识别和 AI 总结由你自行决定是否启用。
 
-> 项目处于早期试用阶段（当前 `0.2.3`），「录音 → 转写 → 检索 → 回听」链路已跑通。全天后台运行、长期数据积累和本地 AI 总结仍在验证中，暂不建议作为重要记录的唯一保存方式。正式客户端位于 `android/`，仓库根目录的网页是交互原型。
+> 项目处于早期试用阶段（当前 `0.2.4-dev4（17）`），「录音 → 转写 → 检索 → 回听」链路已跑通。全天后台运行、长期数据积累和本地 AI 总结仍在验证中，暂不建议作为重要记录的唯一保存方式。正式客户端位于 `android/`，仓库根目录的网页是交互原型。
 
 ## 界面预览
 
@@ -80,7 +80,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - 技术选型与架构：[docs/technical-selection.md](docs/technical-selection.md)
 - 识别与总结质量评测：[docs/evaluation/README.md](docs/evaluation/README.md)
-- 最新开发验收：[docs/开发验收-0.2.3.md](docs/开发验收-0.2.3.md)
+- 最新开发验收：[docs/处理与找回修复-2026-10-07.md](docs/处理与找回修复-2026-10-07.md)
 
 客户端使用 Kotlin、Jetpack Compose、Room 和 WorkManager，语音链路采用 Silero VAD、SenseVoice／Qwen3-ASR／FireRedASR2 与 sherpa-onnx，本地生成式总结通过 llama.cpp。网页交互原型可在仓库根目录用 `python3 -m http.server 4173` 预览，仅作设计参考。
 
