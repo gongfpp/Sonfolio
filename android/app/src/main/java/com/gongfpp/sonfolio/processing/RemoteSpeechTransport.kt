@@ -90,17 +90,16 @@ internal class RemoteSpeechTransport(
      * 返回完整的 result 对象（含 text 与 utterances 分句）。
      */
     private suspend fun doubaoRecognize(config: TranscriptionConfig, wav: ByteArray, chunkId: String, startedAt: Long): JSONObject {
-        val appId = store.appId(config, chunkId, startedAt)
         val token = store.apiKey(config, chunkId, startedAt)
+        // 只支持新版控制台的单个 API Key；APP ID + Access Token 是旧版鉴权，已不再使用。
         val headers = mapOf(
-            "X-Api-App-Key" to appId,
-            "X-Api-Access-Key" to token,
+            "X-Api-Key" to token,
             "X-Api-Resource-Id" to config.model,
             "X-Api-Request-Id" to UUID.randomUUID().toString(),
             "X-Api-Sequence" to "-1",
         )
         val body = JSONObject()
-            .put("user", JSONObject().put("uid", appId))
+            .put("user", JSONObject().put("uid", "sonfolio"))
             .put("audio", JSONObject().put("format", "wav").put("data", Base64.encodeToString(wav, Base64.NO_WRAP)))
             .put("request", JSONObject().put("model_name", "bigmodel").put("enable_itn", true).put("enable_punc", true)
                 .put("show_utterances", true))
@@ -258,7 +257,7 @@ internal class RemoteSpeechTransport(
 
     private fun doubaoError(result: HttpResult): String = when {
         result.status == 401 || result.status == 403 || result.apiCode == "45000030" ->
-            "识别密钥无效、APP ID 不匹配或账号未开通该识别资源，请检查转文字设置"
+            "识别密钥无效或账号未开通该识别资源，请检查转文字设置"
         result.status == 429 || result.apiCode == "55000031" -> "识别服务限流或额度不足，稍后在原始录音中重试"
         result.apiCode == "45000002" -> "人声片段为空，已跳过"
         result.apiCode == "45000151" -> "音频格式不被豆包支持，录音已保留"

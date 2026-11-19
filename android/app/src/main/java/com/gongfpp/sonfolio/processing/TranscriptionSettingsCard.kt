@@ -49,7 +49,6 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
     var localEngine by rememberSaveable { mutableStateOf(saved.localEngine) }
     var key by remember { mutableStateOf("") }
     var keyTouched by remember { mutableStateOf(false) }
-    var appId by rememberSaveable { mutableStateOf(saved.appId) }
     var consent by remember(mode, provider) { mutableStateOf(false) }
     var consentWarning by remember { mutableStateOf(false) }
     var providerMenu by remember { mutableStateOf(false) }
@@ -65,7 +64,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val dirty = mode != saved.mode || provider != saved.provider || model != saved.model ||
-        localEngine != saved.localEngine || customAsrId != saved.customAsrId || appId != saved.appId || (keyTouched && key.isNotBlank())
+        localEngine != saved.localEngine || customAsrId != saved.customAsrId || (keyTouched && key.isNotBlank())
     LaunchedEffect(dirty) { onDirtyChange(dirty) }
     LaunchedEffect(busy) { onBusyChange(busy) }
 
@@ -163,14 +162,9 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                 Box {
                     OutlinedButton(onClick = { providerMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("识别提供商：${provider.label} ▾") }
                     if (providerMenu) com.gongfpp.sonfolio.SettingsChoices("选择识别提供商", SpeechProvider.entries, provider, { it.label }, { providerMenu = false }) { option ->
-                            if (option != provider) { provider = option; model = option.models.first(); key = ""; keyTouched = false; appId = "" }
+                            if (option != provider) { provider = option; model = option.models.first(); key = ""; keyTouched = false }
                             providerMenu = false
                     }
-                }
-                if (provider.needsAppId) {
-                    OutlinedTextField(appId, { appId = it }, Modifier.fillMaxWidth(), singleLine = true, enabled = !busy,
-                        label = { Text(if (saved.appId.isNotBlank() && provider == saved.provider) "APP ID（已保存，留空保留）" else "APP ID") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 }
                 val showSavedKey = !keyTouched && saved.hasKey && provider == saved.provider
                 OutlinedTextField(
@@ -178,13 +172,13 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                     onValueChange = { keyTouched = true; key = it },
                     modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused && showSavedKey) { keyTouched = true; key = "" } },
                     singleLine = true, enabled = !busy,
-                    label = { Text("${if (provider.needsAppId) "Access Token" else "识别密钥"}${if (showSavedKey) "（已保存）" else ""}") },
+                    label = { Text("${if (provider == SpeechProvider.DOUBAO) "API Key" else "识别密钥"}${if (showSavedKey) "（已保存）" else ""}") },
                     trailingIcon = { IconButton(onClick = { keyHelp = true }) { Text("？") } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     visualTransformation = if (showSavedKey) VisualTransformation.None else PasswordVisualTransformation(),
                 )
                 TextButton(onClick = { runCatching { uriHandler.openUri(provider.keyPage) }.onFailure { message = "无法打开浏览器，请到提供商官网创建识别密钥" } }) {
-                    Text(if (provider.needsAppId) "打开 ${provider.label} 控制台获取 APP ID 与 Access Token ↗" else "获取 ${provider.label} 识别密钥 ↗")
+                    Text("打开 ${provider.label} 控制台获取 API Key ↗")
                 }
                 var advancedModel by remember { mutableStateOf(false) }
                 TextButton(onClick = { advancedModel = !advancedModel }) { Text((if (advancedModel) "▴ " else "▾ ") + "高级：选择识别模型", fontSize = 12.sp) }
@@ -205,7 +199,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                             title = "在线识别模型与语言",
                             body = when (provider) {
                                 SpeechProvider.QWEN -> "使用北京地域的密钥，支持下方「主要语言」设置。内置模型来自官方文档，不是聊天总结模型。"
-                                SpeechProvider.DOUBAO -> "使用火山引擎控制台「语音技术」应用的 APP ID 与 Access Token；Secret Key 不需要。识别在云端自动判断中英文与方言，不支持强制指定主要语言，也不使用本地「个人词汇」热词。"
+                                SpeechProvider.DOUBAO -> "填火山引擎控制台「API Key 管理」里的 API Key；旧版控制台的 APP ID、Access Token 和 Secret Key 都不需要。识别在云端自动判断中英文与方言，不支持强制指定主要语言，也不使用本地「个人词汇」热词。"
                                 else -> "此提供商自动判断语言，不支持强制指定主要语言。内置模型来自官方文档，不是聊天总结模型。"
                             },
                         )
@@ -253,11 +247,11 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                 val chosenMode = mode; val chosenProvider = provider; val chosenModel = model; val allowed = consent
                 // 未改动已保存的密钥时传空串，表示保留原值而不是把它覆盖成占位符。
                 val chosenKey = if (keyTouched) key else ""
-                val chosenEngine = localEngine; val chosenAppId = appId; val chosenCustom = customAsrId
+                val chosenEngine = localEngine; val chosenCustom = customAsrId
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenAppId, chosenEngine, chosenCustom)
+                            app.transcriptionSettings.save(chosenMode, chosenProvider, chosenModel, chosenKey, allowed, chosenEngine, chosenCustom)
                             try { app.recordingRepository.enqueuePendingAsr() }
                             catch (error: CancellationException) { throw error }
                             catch (_: Exception) { error("设置已保存，但待处理录音尚未重新排队；重新打开应用后会重试。") }
@@ -284,7 +278,7 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
             Text("本地测试只检查模型是否就绪；在线测试发送 1 秒静音样例，不读取真实录音，可能产生极少量调用。", fontSize = 11.sp)
             if (saved.hasKey) TextButton(enabled = !busy, onClick = {
                 runCatching { app.transcriptionSettings.clearKey() }.onSuccess {
-                    mode = TranscriptionMode.LOCAL; key = ""; appId = ""; message = "识别密钥已删除，已恢复本地识别"
+                    mode = TranscriptionMode.LOCAL; key = ""; message = "识别密钥已删除，已恢复本地识别"
                     scope.launch { app.recordingRepository.enqueuePendingAsr() }
                 }.onFailure { message = "删除密钥失败，请重试" }
             }) { Text("删除识别密钥") }
@@ -368,8 +362,11 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
             dismissButton = { TextButton(enabled = !busy, onClick = { treeLauncher.launch(null) }) { Text("选择文件夹") } },
         )
     }
-    if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text("如何获取识别密钥") },
-        text = { Text("点击卡片中的“获取识别密钥”进入官方控制台，登录并创建密钥，再粘贴到此处。密钥不是聊天 App 的密码，只在本机加密保存；请勿分享或公开截图。各提供商、各地域的密钥不能混用，请在官方设置费用限额。") },
+    if (keyHelp) AlertDialog(onDismissRequest = { keyHelp = false }, title = { Text(if (provider == SpeechProvider.DOUBAO) "豆包的 API Key 从哪里获取？" else "如何获取识别密钥") },
+        text = { Text(if (provider == SpeechProvider.DOUBAO)
+            "在火山引擎控制台进入「API Key 管理」创建或复制 API Key，粘贴到这里即可。只填这一个值：旧版控制台的 APP ID、Access Token 和 Secret Key 都不需要。密钥只在本机加密保存，请勿分享或公开截图；调用按音频时长计费，建议在控制台设置用量提醒。"
+        else
+            "点击卡片中的“打开控制台获取 API Key”进入官方控制台，登录并创建密钥，再粘贴到此处。密钥不是聊天 App 的密码，只在本机加密保存；请勿分享或公开截图。各提供商、各地域的密钥不能混用，请在官方设置费用限额。") },
         confirmButton = { TextButton(onClick = { keyHelp = false }) { Text("知道了") } })
 }
 

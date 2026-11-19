@@ -11,13 +11,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * 通过生产 `RemoteSpeechTransport` 真实调用豆包识别，验证 APP ID + Access Token、submit/query
+ * 通过生产 `RemoteSpeechTransport` 真实调用豆包识别，验证新版控制台的 API Key、submit/query
  * 与结果解析。凭据与音频都从 instrumentation 参数注入，不写入仓库；缺少参数时按假设跳过，
  * 避免把付费网络请求混进常规套件。
  *
  * 用法（凭据与素材仅存在于本次命令）：
  *   adb -s <serial> shell am instrument -w \
- *     -e doubaoAppId <APP_ID> -e doubaoToken <ACCESS_TOKEN> -e wavPath <设备上 WAV 路径> \
+ *     -e doubaoApiKey <API_KEY> -e wavPath <设备上 WAV 路径> \
  *     -e class com.gongfpp.sonfolio.DoubaoSpeechLiveTest \
  *     com.gongfpp.sonfolio.test/androidx.test.runner.AndroidJUnitRunner
  */
@@ -25,11 +25,10 @@ import org.junit.runner.RunWith
 class DoubaoSpeechLiveTest {
     @Test fun transcribesRealSpeechThroughProductionTransport() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
-        val appId = args.getString("doubaoAppId")
-        val token = args.getString("doubaoToken")
+        val token = args.getString("doubaoApiKey")
         val wavPath = args.getString("wavPath")
-        if (appId.isNullOrBlank() || token.isNullOrBlank() || wavPath.isNullOrBlank()) {
-            println("DOUBAO_LIVE_SKIPPED：未提供 doubaoAppId/doubaoToken/wavPath")
+        if (token.isNullOrBlank() || wavPath.isNullOrBlank()) {
+            println("DOUBAO_LIVE_SKIPPED：未提供 doubaoApiKey/wavPath")
             return@runBlocking
         }
         val file = File(wavPath)
@@ -42,7 +41,7 @@ class DoubaoSpeechLiveTest {
         val store = TranscriptionSettingsStore(context, name)
         try {
             store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, SpeechProvider.DOUBAO.models.first(),
-                token, true, appId = appId)
+                token, true)
             val config = store.read()
             store.authorizeChunk("live", config.revision)
             val transport = RemoteSpeechTransport(store)

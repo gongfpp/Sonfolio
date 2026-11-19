@@ -60,20 +60,18 @@ class RemoteSpeechIntegrationTest {
         val file = File(context.cacheDir, "$name.wav")
         try {
             file.writeBytes(RemoteSpeechTransport.wav(FloatArray(16_000)))
-            assertThrows(IllegalArgumentException::class.java) {
-                store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true)
-            }
-            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true, appId = "1000000001")
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true)
             val config = store.read()
             assertTrue(config.hasKey)
-            assertEquals("1000000001", config.appId)
             store.authorizeChunk("chunk", config.revision)
             val submit = FakeConnection(URL(config.provider.endpoint), 200, "{}", mapOf("X-Api-Status-Code" to "20000000"))
             val query = FakeConnection(URL(config.provider.queryEndpoint!!), 200, "{\"result\":{\"text\":\"豆包转写\"}}", mapOf("X-Api-Status-Code" to "20000000"))
             val connections = ArrayDeque(listOf(submit, query))
             val transport = RemoteSpeechTransport(store) { connections.removeFirst() }
             assertEquals(listOf("豆包转写"), transport.transcribe(file, listOf(DetectedSpeechWindow(0, 1_000)), config, "chunk", 0, "zh"))
-            assertEquals("1000000001", submit.sentHeaders["X-Api-App-Key"])
+            assertEquals("qa-token", submit.sentHeaders["X-Api-Key"])
+            assertNull(submit.sentHeaders["X-Api-App-Key"])
+            assertNull(submit.sentHeaders["X-Api-Access-Key"])
             assertEquals("volc.seedasr.auc", submit.sentHeaders["X-Api-Resource-Id"])
             assertEquals(submit.sentHeaders["X-Api-Request-Id"], query.sentHeaders["X-Api-Request-Id"])
             val body = JSONObject(submit.sent.toString("UTF-8"))
@@ -101,7 +99,7 @@ class RemoteSpeechIntegrationTest {
             assertTrue(RemoteSpeechTransport(store) { qwenConn }.test(qwen, "chunk", 0).startsWith("连通成功"))
             assertTrue(qwenConn.sent.size() > 44) // 发送了 1 秒静音 WAV
 
-            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true, appId = "1000000001")
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true)
             val doubao = store.read()
             store.authorizeChunk("chunk2", doubao.revision)
             val submit = FakeConnection(URL(doubao.provider.endpoint), 200, "{}", mapOf("X-Api-Status-Code" to "20000000"))
@@ -121,7 +119,7 @@ class RemoteSpeechIntegrationTest {
         val file = File(context.cacheDir, "$name.wav")
         try {
             file.writeBytes(RemoteSpeechTransport.wav(FloatArray(16_000 * 3)))
-            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true, appId = "1000000001")
+            store.save(TranscriptionMode.REMOTE, SpeechProvider.DOUBAO, "volc.seedasr.auc", "qa-token", true)
             val config = store.read()
             store.authorizeChunk("chunk", config.revision)
             val submit = FakeConnection(URL(config.provider.endpoint), 200, "{}", mapOf("X-Api-Status-Code" to "20000000"))
