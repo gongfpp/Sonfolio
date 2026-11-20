@@ -152,9 +152,19 @@ internal fun SummaryModeStep(
             )
             Spacer(Modifier.height(16.dp))
             if (download.running) {
-                Text(downloadSummaryText(download), fontSize = 11.sp, color = InkSoft)
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(progress = { download.progress ?: 0f }, modifier = Modifier.fillMaxWidth())
+                if (download.waitingForNetwork) {
+                    Text(
+                        download.message ?: "等待网络后自动开始",
+                        fontSize = 11.sp,
+                        color = AmberInk,
+                        lineHeight = 17.sp,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                } else {
+                    Text(downloadSummaryText(download), fontSize = 11.sp, color = InkSoft)
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(progress = { download.progress ?: 0f }, modifier = Modifier.fillMaxWidth())
+                }
                 TextButton(onClick = { download.cancel(); enableLocalWhenReady = false }) {
                     Text("取消下载（保留已下载部分）")
                 }
@@ -163,19 +173,22 @@ internal fun SummaryModeStep(
             InlineMessage(message, failed)
         },
         bottom = {
+            val waiting = download.waitingForNetwork
             val label = when {
+                waiting -> "改用移动数据继续"
                 choice == null -> "继续"
                 choice == SummaryMode.REMOTE -> "继续 · 填写在线配置"
                 choice == SummaryMode.LOCAL && download.installed != true -> "下载并启用 · ${formatModelSize(localModel.bytes)}"
-                choice == SummaryMode.LOCAL -> "继续"
                 else -> "继续"
             }
             PrimaryAction(
                 label = label,
-                enabled = choice != null && !busy && !download.running,
+                enabled = !busy && if (waiting) true else choice != null && !download.running,
                 loading = busy,
                 onClick = {
-                    when (choice) {
+                    if (waiting) {
+                        download.start(false)
+                    } else when (choice) {
                         null -> Unit
                         SummaryMode.BASIC -> saveMode(SummaryMode.BASIC)
                         SummaryMode.LOCAL ->
@@ -185,7 +198,9 @@ internal fun SummaryModeStep(
                     }
                 },
             )
-            if (choice == null) {
+            if (waiting) {
+                Hint("也可以等连上 Wi‑Fi 后自动继续。", centered = true)
+            } else if (choice == null) {
                 Hint("必须选择一项才能继续", centered = true)
             }
         },
@@ -441,12 +456,25 @@ internal fun ReadyStep(
             Spacer(Modifier.height(48.dp))
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.size(64.dp).clip(CircleShape).background(PaleGreen), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Check, contentDescription = null, tint = Green, modifier = Modifier.size(30.dp))
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = if (result.unverified) AmberInk else Green,
+                        modifier = Modifier.size(30.dp),
+                    )
                 }
                 Spacer(Modifier.height(20.dp))
                 Text("已启用", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Spacer(Modifier.height(8.dp))
-                Text("识别与总结都已保存并生效", fontSize = 13.sp, color = InkSoft, textAlign = TextAlign.Center)
+                Text(
+                    when {
+                        result.unverified -> "识别已保存，在线密钥尚未验证"
+                        else -> "识别与总结都已保存并生效"
+                    },
+                    fontSize = 13.sp,
+                    color = if (result.unverified) AmberInk else InkSoft,
+                    textAlign = TextAlign.Center,
+                )
                 Spacer(Modifier.height(26.dp))
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardSurface)
@@ -461,13 +489,16 @@ internal fun ReadyStep(
                 }
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    if (result.localModelMissing) {
-                        "模型尚未下载，录音与回听不受影响；下载完成后会自动转写。随时可在设置中更改。"
-                    } else {
-                        "只影响之后新转写的录音；已有文字不会重做。随时可在设置中更改。"
+                    when {
+                        result.unverified ->
+                            "在线密钥没通过探测：第一次真实转写时才知道是否可用，可在设置里重新验证。"
+                        result.localModelMissing ->
+                            "模型尚未下载，录音与回听不受影响；下载完成后会自动转写。随时可在设置中更改。"
+                        else ->
+                            "只影响之后新转写的录音；已有文字不会重做。随时可在设置中更改。"
                     },
                     fontSize = 11.sp,
-                    color = if (result.localModelMissing) AmberInk else InkSoft,
+                    color = if (result.localModelMissing || result.unverified) AmberInk else InkSoft,
                     textAlign = TextAlign.Center,
                     lineHeight = 17.sp,
                 )

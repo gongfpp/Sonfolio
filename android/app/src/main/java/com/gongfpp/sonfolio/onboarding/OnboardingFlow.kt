@@ -49,6 +49,18 @@ internal fun shouldShowOnboarding(
 }
 
 /**
+ * 录音目录里是否真有录音。
+ *
+ * 只查两层（`recordings/<天>/<文件>`），不递归。空的天目录必须不算历史：
+ * 启动时可能已建好当天目录但一条录音都没有，若按目录列表非空判定，
+ * 全新安装会被误判成老用户而跳过引导。
+ */
+internal fun containsRecordings(root: File): Boolean {
+    val days = root.listFiles() ?: return false
+    return days.any { day -> day.isDirectory && day.listFiles()?.any { it.isFile } == true }
+}
+
+/**
  * 是否拦截主界面并展示引导。
  *
  * 判定顺序：已完成 → 不展示；7 天内选过“稍后”→ 不展示；
@@ -73,8 +85,7 @@ internal object OnboardingGate {
 
     /** 只做文件名级检查，不哈希模型，避免在主线程读取上百 MB 的权重。 */
     private fun hasHistory(app: SonfolioApplication): Boolean {
-        val recordings = File(app.filesDir, "recordings")
-        if (recordings.list()?.isNotEmpty() == true) return true
+        if (containsRecordings(File(app.filesDir, "recordings"))) return true
         val config = app.transcriptionSettings.read()
         if (config.hasKey) return true
         val engine = ModelCatalog.byId(config.localEngine.artifactId) ?: return false
@@ -91,6 +102,8 @@ internal data class OnboardingResult(
     val summary: String,
     /** 选了本地识别但模型尚未落盘；就绪页必须说清“暂不转文字”，不能假装已生效。 */
     val localModelMissing: Boolean = false,
+    /** 在线识别密钥只保存未验证（用户选了“仍然继续（未验证）”）。 */
+    val unverified: Boolean = false,
 )
 
 internal fun readOnboardingResult(app: SonfolioApplication): OnboardingResult {
@@ -128,5 +141,6 @@ internal fun readOnboardingResult(app: SonfolioApplication): OnboardingResult {
             SummaryMode.REMOTE -> "在线 · ${summary.model.ifBlank { SummaryProvider.DEEPSEEK.defaults.first() }}"
         },
         localModelMissing = localMissing,
+        unverified = speech.mode == TranscriptionMode.REMOTE && app.preferences.onboardingUnverifiedRecognition,
     )
 }

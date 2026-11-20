@@ -152,7 +152,7 @@ internal fun SettingsScreen(
         Text("声迹 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", color = InkSoft, fontSize = 12.sp)
         savedMessage?.let { Text(it, color = Green, modifier = Modifier.padding(top = 8.dp)) }
         SectionTitle("识别与总结")
-        SettingsModeEntry("转文字方式", "已生效：${activeTranscription.mode.label} · ${if (activeTranscription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) activeTranscription.provider.label else activeTranscription.localEngine.displayName}") {
+        SettingsModeEntry("转文字方式", "已生效：${activeTranscription.mode.label} · ${if (activeTranscription.mode == com.gongfpp.sonfolio.processing.TranscriptionMode.REMOTE) activeTranscription.provider.label + if (preferences.onboardingUnverifiedRecognition) " · 密钥待验证" else "" else activeTranscription.localEngine.displayName}") {
             editorDirty = false; editorBusy = false; editor = "transcription"
         }
         SettingsModeEntry("总结方式", "已生效：${activeSummary.mode.label}${if (activeSummary.mode == com.gongfpp.sonfolio.summary.SummaryMode.REMOTE) " · ${com.gongfpp.sonfolio.summary.SummaryProvider.fromEndpoint(activeSummary.endpoint).label}" else ""}") {

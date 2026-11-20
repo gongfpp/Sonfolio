@@ -40,6 +40,8 @@ import java.util.Locale
 internal data class ModelDownloadState(
     val installed: Boolean?,
     val running: Boolean,
+    /** 任务已入队但约束未满足（多为“仅在非计费网络下载”且当前无 Wi‑Fi）；此时没有任何字节在流动。 */
+    val waitingForNetwork: Boolean,
     val progress: Float?,
     val bytes: Long,
     val totalBytes: Long,
@@ -86,6 +88,7 @@ internal fun rememberModelDownload(model: ModelArtifact): ModelDownloadState {
     return ModelDownloadState(
         installed = installed,
         running = running,
+        waitingForNetwork = info?.state == WorkInfo.State.ENQUEUED,
         progress = if (model.bytes > 0) (bytes.toFloat() / model.bytes).coerceIn(0f, 1f) else null,
         bytes = bytes,
         totalBytes = model.bytes,
@@ -94,7 +97,9 @@ internal fun rememberModelDownload(model: ModelArtifact): ModelDownloadState {
             info == null -> null
             info.state == WorkInfo.State.RUNNING -> info.progress.getString("message")
             info.state == WorkInfo.State.ENQUEUED ->
-                if (info.constraints.requiredNetworkType == NetworkType.UNMETERED) "等待非计费网络；手机热点可能仍被系统视为计费网络" else "等待网络与系统调度"
+                if (info.constraints.requiredNetworkType == NetworkType.UNMETERED)
+                    "已开启“仅在非计费网络下载”，当前没有可用 Wi‑Fi，下载在等待；手机热点也可能被系统视为计费网络"
+                else "等待网络与系统调度"
             info.state == WorkInfo.State.CANCELLED -> "已取消，重新下载会续传已下载部分"
             info.state == WorkInfo.State.FAILED -> info.outputData.getString("message") ?: "下载失败，请检查网络后重试"
             else -> info.outputData.getString("message")

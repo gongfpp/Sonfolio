@@ -75,6 +75,17 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
         preferences.edit().remove(KEY_ONBOARDING_COMPLETED).remove(KEY_ONBOARDING_DEFERRED_AT).apply()
     }
 
+    /**
+     * 引导里选择“仍然继续（未验证）”时置位：密钥已保存但没通过探测。
+     * 就绪页据此改口径，不能把未验证的在线密钥写成“已生效”。
+     */
+    val onboardingUnverifiedRecognition: Boolean
+        get() = preferences.getBoolean(KEY_ONBOARDING_UNVERIFIED, false)
+
+    fun setOnboardingUnverifiedRecognition(value: Boolean) {
+        preferences.edit().putBoolean(KEY_ONBOARDING_UNVERIFIED, value).apply()
+    }
+
     fun setPreferredLanguage(value: String) {
         preferences.edit().putString(KEY_LANGUAGE, value).apply()
     }
@@ -117,6 +128,7 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
         private const val KEY_CORRECTION_ONLINE = "correction-online-enabled"
         private const val KEY_ONBOARDING_COMPLETED = "onboarding-completed"
         private const val KEY_ONBOARDING_DEFERRED_AT = "onboarding-deferred-at"
+        private const val KEY_ONBOARDING_UNVERIFIED = "onboarding-unverified-recognition"
     }
 }
 

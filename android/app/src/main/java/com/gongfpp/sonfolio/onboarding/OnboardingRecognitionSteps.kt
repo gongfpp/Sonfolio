@@ -173,9 +173,20 @@ internal fun LocalEngineStep(
             }
             Spacer(Modifier.height(6.dp))
             if (download.running) {
-                Text(downloadSummaryText(download), fontSize = 11.sp, color = InkSoft)
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(progress = { download.progress ?: 0f }, modifier = Modifier.fillMaxWidth())
+                if (download.waitingForNetwork) {
+                    // 约束未满足时没有字节流动，不能显示 0% 进度条假装在下载。
+                    Text(
+                        download.message ?: "等待网络后自动开始",
+                        fontSize = 11.sp,
+                        color = AmberInk,
+                        lineHeight = 17.sp,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                } else {
+                    Text(downloadSummaryText(download), fontSize = 11.sp, color = InkSoft)
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(progress = { download.progress ?: 0f }, modifier = Modifier.fillMaxWidth())
+                }
                 TextButton(onClick = { download.cancel(); enableWhenReady = false }) {
                     Text("取消下载（保留已下载部分）")
                 }
@@ -189,6 +200,14 @@ internal fun LocalEngineStep(
         },
         bottom = {
             when {
+                download.waitingForNetwork -> {
+                    PrimaryAction(
+                        label = "改用移动数据继续",
+                        enabled = !busy,
+                        onClick = { download.start(false) },
+                    )
+                    Hint("也可以等连上 Wi‑Fi 后自动继续。", centered = true)
+                }
                 download.running -> {
                     PrimaryAction(label = "正在下载…", enabled = false, loading = true, onClick = {})
                     Hint("可以留在这一页等待，也可以稍后回到设置继续。", centered = true)
@@ -207,7 +226,12 @@ internal fun LocalEngineStep(
                 )
             }
             if (download.installed != true) {
-                SecondaryAction("稍后再说", enabled = !busy && !download.running, onClick = onDone)
+                // 等待网络时不应把出口也关掉：用户可以先去记录，下载会在联网后继续。
+                SecondaryAction(
+                    "稍后再说",
+                    enabled = !busy && (!download.running || download.waitingForNetwork),
+                    onClick = onDone,
+                )
             }
         },
     )
@@ -261,6 +285,8 @@ internal fun RemoteSpeechStep(
                 }
                 message = result
                 key = ""
+                // 探测通过：这次配置是已验证的，清掉可能残留的未验证标记。
+                app.preferences.setOnboardingUnverifiedRecognition(false)
                 onDone()
             } catch (error: CancellationException) {
                 throw error
@@ -322,7 +348,11 @@ internal fun RemoteSpeechStep(
                 onClick = { saveAndTest() },
             )
             if (failed && saved) {
-                SecondaryAction("仍然继续（未验证）", enabled = !busy, onClick = onDone)
+                SecondaryAction("仍然继续（未验证）", enabled = !busy, onClick = {
+                    // 记住这是“保存了但没验证通过”的配置，就绪页不能写成已生效。
+                    app.preferences.setOnboardingUnverifiedRecognition(true)
+                    onDone()
+                })
             } else {
                 SecondaryAction("改用本地识别", enabled = !busy, onClick = onBack)
             }

@@ -270,6 +270,10 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                 scope.launch {
                     try {
                         message = withContext(Dispatchers.IO) { runTranscriptionTest(app, current) }
+                        // 测试通过即视为已验证，清掉引导里留下的“密钥待验证”标记。
+                        if (current.mode == TranscriptionMode.REMOTE) {
+                            app.preferences.setOnboardingUnverifiedRecognition(false)
+                        }
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) { message = "连通失败：${error.message ?: "未知错误"}" }
                     finally { busy = false }

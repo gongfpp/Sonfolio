@@ -66,7 +66,9 @@ internal fun OnboardingFrame(
 ) {
     Column(
         Modifier.fillMaxSize().background(Paper).statusBarsPadding().navigationBarsPadding().imePadding()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
+            // 真机实测：手势导航下 navigationBarsPadding 可能为 0，吸底按钮会贴到手势条上。
+            // 这里补一个最小底部安全距，保证没有次级按钮时主按钮也不被系统手势压住。
+            .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp),
     ) {
         if (step.title != null) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
