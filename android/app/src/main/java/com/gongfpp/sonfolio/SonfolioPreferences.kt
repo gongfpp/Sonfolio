@@ -55,6 +55,26 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
     val correctionOnlineEnabled: Boolean get() = preferences.getBoolean(KEY_CORRECTION_ONLINE, false)
     fun setCorrectionOnlineEnabled(value: Boolean) { preferences.edit().putBoolean(KEY_CORRECTION_ONLINE, value).apply() }
 
+    /**
+     * 首次启动引导：完成后不再整页拦截；选择“稍后”只记时间戳，7 天内不再拦截，
+     * 但设置页仍可主动重新进入。两个标记互斥，完成时清掉延后标记。
+     */
+    val onboardingCompleted: Boolean get() = preferences.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    val onboardingDeferredAt: Long get() = preferences.getLong(KEY_ONBOARDING_DEFERRED_AT, 0L)
+
+    fun completeOnboarding() {
+        check(preferences.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).remove(KEY_ONBOARDING_DEFERRED_AT).commit())
+    }
+
+    fun deferOnboarding(now: Long = System.currentTimeMillis()) {
+        preferences.edit().putLong(KEY_ONBOARDING_DEFERRED_AT, now).apply()
+    }
+
+    /** 用户主动从设置重看引导时清掉完成标记，让路由重新判定。 */
+    fun reopenOnboarding() {
+        preferences.edit().remove(KEY_ONBOARDING_COMPLETED).remove(KEY_ONBOARDING_DEFERRED_AT).apply()
+    }
+
     fun setPreferredLanguage(value: String) {
         preferences.edit().putString(KEY_LANGUAGE, value).apply()
     }
@@ -95,6 +115,8 @@ class SonfolioPreferences(context: Context, fileName: String = FILE_NAME) {
         private const val KEY_CONVERSATION_GAP_MINUTES = "conversation-gap-minutes"
         private const val KEY_TITLE_MODE = "title-mode"
         private const val KEY_CORRECTION_ONLINE = "correction-online-enabled"
+        private const val KEY_ONBOARDING_COMPLETED = "onboarding-completed"
+        private const val KEY_ONBOARDING_DEFERRED_AT = "onboarding-deferred-at"
     }
 }
 

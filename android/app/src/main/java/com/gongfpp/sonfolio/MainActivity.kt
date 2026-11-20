@@ -117,12 +117,16 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         if (!screen.isMainScreen) screenStates.removeState(screen.toSavedRoute())
         navigation = navigation.back()
     }
-    BackHandler(enabled = navigation.canGoBack, onBack = goBack)
+    val context = LocalContext.current
+    val application = context.applicationContext as SonfolioApplication
+    // 首次启动引导：在 Scaffold 之外整页展示，不显示底部导航。每个进程只在首次组合时判定一次。
+    var onboardingPending by rememberSaveable {
+        mutableStateOf(com.gongfpp.sonfolio.onboarding.OnboardingGate.isPending(application))
+    }
+    BackHandler(enabled = !onboardingPending && navigation.canGoBack, onBack = goBack)
     val aliases by viewModel.conversationAliases.collectAsStateWithLifecycle()
     val recordingStatus by viewModel.recordingStatus.collectAsStateWithLifecycle()
     val recordingGaps by viewModel.recordingGaps.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val application = context.applicationContext as SonfolioApplication
     val markerState by com.gongfpp.sonfolio.recording.RecordingController.markerState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         viewModel.recordingFeedback.collectLatest { feedback ->
@@ -174,6 +178,22 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
         }
     }
     val isMainScreen = screen.isMainScreen
+    if (onboardingPending) {
+        com.gongfpp.sonfolio.onboarding.OnboardingScreen(
+            app = application,
+            onExit = { exit ->
+                onboardingPending = false
+                when (exit) {
+                    com.gongfpp.sonfolio.onboarding.OnboardingExit.StartRecording -> requestRecordingStart()
+                    com.gongfpp.sonfolio.onboarding.OnboardingExit.OpenSettings ->
+                        navigation = navigation.selectTab(AppScreen.Settings)
+                    com.gongfpp.sonfolio.onboarding.OnboardingExit.Finish,
+                    com.gongfpp.sonfolio.onboarding.OnboardingExit.Deferred -> Unit
+                }
+            },
+        )
+        return
+    }
     var settingsSubpage by remember { mutableStateOf(false) }
     val editingSettings = screen is AppScreen.Settings && settingsSubpage
 
@@ -242,6 +262,7 @@ private fun SonfolioApp(viewModel: SonfolioViewModel) {
                         onOpenRawRecordings = { openScreen(AppScreen.RawRecordings()) },
                         onRebuildConversations = viewModel::rebuildConversations,
                         onSubpageChange = { settingsSubpage = it },
+                        onReplayOnboarding = { onboardingPending = true },
                     )
                     is AppScreen.Daily -> DailyScreen(viewModel = viewModel, initialDate = current.date, onBack = goBack, onOpenConversation = { openScreen(AppScreen.Conversation(id = it)) })
                     is AppScreen.RawRecordings -> RawRecordingsScreen(

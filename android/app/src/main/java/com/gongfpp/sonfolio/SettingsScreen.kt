@@ -84,6 +84,7 @@ internal fun SettingsScreen(
     onOpenRawRecordings: () -> Unit,
     onRebuildConversations: () -> Unit,
     onSubpageChange: (Boolean) -> Unit = {},
+    onReplayOnboarding: () -> Unit = {},
 ) {
     var chargeOnly by remember { mutableStateOf(preferences.chargeOnly) }
     val settingsScope = rememberCoroutineScope()
@@ -164,7 +165,11 @@ internal fun SettingsScreen(
         SettingsModeEntry("后台运行", "检查电池限制、通知与自启动设置") { section = "后台运行" }
         SettingsModeEntry("存储与备份", "空间占用、保留策略、完整备份") { section = "存储与备份" }
         SettingsModeEntry("用量记录", "查看在线调用与用量") { section = "用量记录" }
-        Text("外观跟随系统 · 原音保存在本机", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp))
+        androidx.compose.material3.TextButton(
+            onClick = { preferences.reopenOnboarding(); onReplayOnboarding() },
+            modifier = Modifier.padding(top = 8.dp),
+        ) { Text("重新运行首次引导", fontSize = 12.sp) }
+        Text("外观跟随系统 · 原音保存在本机", color = InkSoft, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 12.dp))
         }
         if (section == "用量记录") UsageCard()
         if (section == "后台运行") BackgroundSettingsCard()
