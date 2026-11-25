@@ -80,7 +80,18 @@ internal class RemoteSummaryTransport(
                 val choice = body.getJSONArray("choices").getJSONObject(0)
                 verifyTransport(choice.optString("finish_reason") != "length") { "模型输出被截断，请重试或更换模型" }
                 val text = choice.getJSONObject("message").getString("content")
-                usage?.recordLlm(config.model, body.optJSONObject("usage")?.optLong("total_tokens") ?: 0L, SummaryProvider.fromEndpoint(config.endpoint).label, feature)
+                // 输入与输出分开计价才有意义：输出单价通常是输入的 3 倍左右。
+                val usageBody = body.optJSONObject("usage")
+                val prompt = usageBody?.optLong("prompt_tokens") ?: 0L
+                val completion = usageBody?.optLong("completion_tokens") ?: 0L
+                val total = usageBody?.optLong("total_tokens") ?: 0L
+                usage?.recordLlm(
+                    config.model,
+                    if (prompt + completion == 0L) total else prompt,
+                    if (prompt + completion == 0L) 0L else completion,
+                    SummaryProvider.fromEndpoint(config.endpoint).label,
+                    feature,
+                )
                 if (continuation.isActive) continuation.resume(text)
             } catch (error: Throwable) {
                 val message = when (error) {
