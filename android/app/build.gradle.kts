@@ -39,8 +39,8 @@ android {
         applicationId = "com.gongfpp.sonfolio"
         minSdk = 29
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.2.4-dev4"
+        versionCode = 18
+        versionName = "0.2.4"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake {
             arguments += "-DANDROID_STL=c++_shared"
