@@ -49,9 +49,35 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
             if (model.kind == ModelKind.SPEECH) app.recordingRepository.enqueuePendingAsr()
             Result.success(workDataOf("message" to "下载与 SHA-256 校验完成"))
         } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { Result.failure(workDataOf("message" to (error.message?.take(160) ?: "下载失败，请检查网络后重试"))) }
+        catch (error: Exception) { Result.failure(workDataOf("message" to downloadFailure(error))) }
         finally { activeConnection?.disconnect(); activeConnection = null }
     } }
+
+    /**
+     * 把网络异常翻译成用户能据此行动的中文。系统的英文原文（形如
+     * "failed to connect to huggingface.co/31.13.64.7 ... from /10.87.100.3 after 20000ms"）
+     * 既不可读，也会把运营商内网地址暴露在界面和截图里，不能直接上屏。
+     */
+    private fun downloadFailure(error: Exception): String {
+        // 已经写好的中文业务提示（如“下载源返回 HTTP 404”）原样保留。
+        if (error is IllegalStateException && error.message?.any { it.code > 127 } == true) {
+            return error.message!!.take(160)
+        }
+        return when (error) {
+            is java.net.UnknownHostException ->
+                "无法解析下载服务器地址，请检查网络（可能是 DNS 问题）后重试"
+            is java.net.ConnectException ->
+                "无法连接下载服务器，当前网络可能受限；已下载部分会保留，换网络后可续传"
+            is java.net.SocketTimeoutException ->
+                "连接下载服务器超时，网络不通畅；已下载部分会保留，可稍后重试"
+            is javax.net.ssl.SSLException ->
+                "与下载服务器的加密连接失败，网络可能被拦截"
+            is java.io.IOException ->
+                "下载中断，已下载部分会保留；请检查网络后重试，支持断点续传"
+            else -> error.message?.takeIf { it.any { c -> c.code > 127 } }?.take(160)
+                ?: "下载失败，请检查网络后重试"
+        }
+    }
 
     /** 依次尝试该文件登记的所有源（大陆镜像优先，上游回退）；每个源都能续传，全部失败才报错。 */
     private suspend fun downloadWithFallback(file: ModelFile, target: File, partial: File, completed: Long, initialOffset: Long) {
@@ -69,7 +95,11 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
                 lastError = error
             }
         }
-        throw lastError ?: error("没有可用的模型下载源")
+        throw lastError?.let {
+            IllegalStateException(
+                "${file.relativePath.substringAfterLast('/')} 的 ${file.urls.size} 个下载源均不可用：${downloadFailure(it)}"
+            )
+        } ?: error("没有可用的模型下载源")
     }
 
     private suspend fun downloadFrom(source: String, target: File, partial: File, file: ModelFile, completed: Long, initialOffset: Long, fallback: Boolean) {
@@ -80,7 +110,8 @@ class ModelDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
             require(url.protocol == "https") { "下载地址必须使用 HTTPS" }
             val request = url.openConnection() as HttpURLConnection
             activeConnection = request
-            request.instanceFollowRedirects = false; request.connectTimeout = 20_000; request.readTimeout = 30_000
+            // 连接超时从 20s 收到 10s：国内直连镜像通常 1s 内握手，久等只会拖长失败反馈。
+            request.instanceFollowRedirects = false; request.connectTimeout = 10_000; request.readTimeout = 30_000
             request.setRequestProperty("Accept-Encoding", "identity")
             if (offset > 0) request.setRequestProperty("Range", "bytes=$offset-")
             val status = request.responseCode

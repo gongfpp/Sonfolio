@@ -274,8 +274,14 @@ private fun importFileHint(kind: LocalAsrEngine): String = when (kind) {
                         if (current.mode == TranscriptionMode.REMOTE) {
                             app.preferences.setOnboardingUnverifiedRecognition(false)
                         }
-                    } catch (error: CancellationException) { throw error }
-                    catch (error: Exception) { message = "连通失败：${error.message ?: "未知错误"}" }
+                    }                     catch (error: CancellationException) { throw error }
+                    catch (error: Exception) {
+                        // 网络层异常原文是英文且带主机名/内网地址，不能直接上屏。
+                        message = "连通失败：" + when (error) {
+                            is java.io.IOException -> "无法连接服务，请检查网络或接口地址"
+                            else -> error.message ?: "未知错误"
+                        }
+                    }
                     finally { busy = false }
                 }
             }) { Text("测试已保存配置") }

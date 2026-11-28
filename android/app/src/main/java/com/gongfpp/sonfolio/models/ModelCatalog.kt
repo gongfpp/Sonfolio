@@ -4,7 +4,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /** 模型仓库中的一个文件；Qwen3-ASR 这类模型由多个文件（含 tokenizer 目录）组成。
- * urls 按优先级排列：默认第一个是大陆可访问的镜像，最后回退到上游 Hugging Face。
+ * urls 按优先级排列：国内可达的 ModelScope 镜像在前，最后回退到上游 Hugging Face。
  * 无论从哪个源下载，都必须通过 sha256 校验后才会启用。 */
 data class ModelFile(val relativePath: String, val bytes: Long, val sha256: String, val urls: List<String>)
 
@@ -27,21 +27,61 @@ object ModelCatalog {
     // Qwen3-ASR ONNX 导出的固定版本，避免上游改动导致校验失败。
     private const val QWEN3_REVISION = "68818b2313fe77bd06f6a7c5068ff3ef59d02b8a"
     private const val QWEN3_PREFIX = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
-
-    /**
-     * 同一份文件的可访问源，镜像优先。默认走 hf-mirror（大陆可访问），上游只作回退；
-     * 每个文件都会做 SHA-256 校验，所以从镜像下载同样可靠。
-     */
-    private fun sources(path: String): List<String> = listOf(
-        "https://hf-mirror.com/$path",
-        "https://huggingface.co/$path",
-    )
-    private fun qwen3(path: String) = sources("csukuangfj2/$QWEN3_PREFIX/resolve/$QWEN3_REVISION/$path")
-
-    // FireRedASR2 的 CTC 分支导出：单个 int8 模型，比 AED 小且非自回归解码更快。
     private const val FIRE_RED_PREFIX = "sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25"
     private const val FIRE_RED_REVISION = "423be1acfdc5d8aaa5a485fb6263fe4ea8570b06"
-    private fun fireRed(path: String) = sources("csukuangfj2/$FIRE_RED_PREFIX/resolve/$FIRE_RED_REVISION/$path")
+
+    /*
+     * 国内分发改用 ModelScope。2026-11-28 实测 hf-mirror.com 已停止直链镜像：
+     * 首页仍是 200，但所有 /<repo>/resolve/... 与 /api/... 一律 308 跳回 huggingface.co，
+     * 而 huggingface.co 在国内被 DNS 污染（解析到 31.13.64.x），连接必然超时。
+     * 因此原先的“镜像优先”实际是把请求又送回了境外，fallback 也走同一条死路。
+     *
+     * 提交号固定，避免镜像仓库后续更新导致文件漂移；每个文件仍做 SHA-256 校验，
+     * 镜像内容一旦不一致会被拒绝启用，不会用错权重。
+     */
+    private const val MS_SENSE_VOICE = "mariolux/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+    private const val MS_SENSE_VOICE_REV = "99b4224019087e0856cff3f5debbe5a8bb9bc3aa"
+    private const val MS_SENSE_VOICE_ALT = "WEAAEW/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+    private const val MS_SENSE_VOICE_ALT_REV = "59ee0bceb05d61d4148341323e509db2899bd9a2"
+
+    private const val MS_QWEN3 = "bujidc/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+    private const val MS_QWEN3_REV = "c0ceb543a0460b6404d2e1bf678535a6d0530008"
+    private const val MS_QWEN3_ALT = "fjqz177/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+    private const val MS_QWEN3_ALT_REV = "c3d026249b8e328b1bb7bc6f300aee0d4d0657b4"
+    private const val MS_QWEN3_ALT2 = "jkman2023/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+    private const val MS_QWEN3_ALT2_REV = "fb4dfc8713d81f913e21042e4d66e5b5cc27dc8a"
+
+    // FireRedASR2 的 CTC 分支导出：单个 int8 模型，比 AED 小且非自回归解码更快。
+    // 仓库由 sherpa-onnx 作者本人维护，ctc/ 子目录下是单文件，无需解压。
+    private const val MS_FIRE_RED = "csukuangfj/FireRedASR2-AED-onnx"
+    private const val MS_FIRE_RED_REV = "17b436e64415744f6423c46bef79c7b900e7b874"
+
+    private const val MS_SUMMARY = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+    private const val MS_SUMMARY_REV = "4537f71740dd2c56a15ffa12e5fbb9f15095f20c"
+
+    private fun scope(repo: String, revision: String, path: String) =
+        "https://modelscope.cn/models/$repo/resolve/$revision/$path"
+
+    /**
+     * 源顺序：ModelScope 镜像（国内直连）→ 上游 Hugging Face（仅在有代理时可用）。
+     * 上游保留是为了异地用户，不再是主要路径。
+     */
+    private fun sources(scopeUrls: List<String>, upstreamPath: String): List<String> =
+        scopeUrls + "https://huggingface.co/$upstreamPath"
+
+    private fun qwen3(path: String) = sources(
+        listOf(
+            scope(MS_QWEN3, MS_QWEN3_REV, path),
+            scope(MS_QWEN3_ALT, MS_QWEN3_ALT_REV, path),
+            scope(MS_QWEN3_ALT2, MS_QWEN3_ALT2_REV, path),
+        ),
+        "csukuangfj2/$QWEN3_PREFIX/resolve/$QWEN3_REVISION/$path",
+    )
+
+    private fun fireRed(path: String) = sources(
+        listOf(scope(MS_FIRE_RED, MS_FIRE_RED_REV, "ctc/$path")),
+        "csukuangfj2/$FIRE_RED_PREFIX/resolve/$FIRE_RED_REVISION/$path",
+    )
 
     val senseVoice = ModelArtifact(
         id = "sensevoice",
@@ -50,7 +90,13 @@ object ModelCatalog {
         files = listOf(
             ModelFile("speech/sense-voice-model.int8.onnx", 239233841,
                 "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
-                sources("csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx")),
+                sources(
+                    listOf(
+                        scope(MS_SENSE_VOICE, MS_SENSE_VOICE_REV, "model.int8.onnx"),
+                        scope(MS_SENSE_VOICE_ALT, MS_SENSE_VOICE_ALT_REV, "model.int8.onnx"),
+                    ),
+                    "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx",
+                )),
         ),
         license = ModelLicense(
             "SenseVoice 权重受独立的 FunASR 模型许可约束，含使用限制，不属于客户端的 GPL-3.0 许可。",
@@ -84,7 +130,8 @@ object ModelCatalog {
         ),
         license = ModelLicense(
             "Qwen3-ASR 权重来自 Qwen/Qwen3-ASR-0.6B，采用 Apache-2.0 许可；ONNX 导出与托管来自 sherpa-onnx 社区。",
-            "https://huggingface.co/Qwen/Qwen3-ASR-0.6B",
+            // 指向 ModelScope 而非 Hugging Face：后者在国内打不开，用户点开只有白屏。
+            "https://modelscope.cn/models/Qwen/Qwen3-ASR-0.6B",
         ),
     )
 
@@ -109,7 +156,10 @@ object ModelCatalog {
         files = listOf(
             ModelFile("summary/qwen2.5-0.5b-instruct-q4_k_m.gguf", 491400032,
                 "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
-                sources("Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf")),
+                sources(
+                    listOf(scope(MS_SUMMARY, MS_SUMMARY_REV, "qwen2.5-0.5b-instruct-q4_k_m.gguf")),
+                    "Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                )),
         ),
     )
 
